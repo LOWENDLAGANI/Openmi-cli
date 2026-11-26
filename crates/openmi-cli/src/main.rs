@@ -3,6 +3,7 @@ mod cmd;
 mod exit_codes;
 mod output;
 mod session;
+mod tui;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -10,17 +11,53 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use crate::cmd::run::RunOptions;
+use crate::cmd::tui::TuiOptions;
 use crate::exit_codes::{CliError, EXIT_OK, EXIT_USAGE};
 
 #[derive(Debug, Parser)]
 #[command(name = "openmi", version, about = "Openmi CLI coding agent")]
 struct Cli {
+    /// Model identifier override (when launching the default TUI).
+    #[arg(long, default_value = "openmi-default")]
+    model: String,
+
+    /// Permission mode (when launching the default TUI): read-only, ask, trusted, full-access.
+    #[arg(long, default_value = "ask")]
+    permission: String,
+
+    /// Working directory for the workspace root (when launching the default TUI).
+    #[arg(long)]
+    cwd: Option<PathBuf>,
+
+    /// Override the managed Openmi API base URL.
+    #[arg(long)]
+    api_url: Option<String>,
+
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Launch the interactive ratatui TUI (also the default when no subcommand is given).
+    Tui {
+        /// Model identifier override.
+        #[arg(long, default_value = "openmi-default")]
+        model: String,
+
+        /// Permission mode: read-only, ask, trusted, full-access.
+        #[arg(long, default_value = "ask")]
+        permission: String,
+
+        /// Working directory for the workspace root.
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+
+        /// Override the managed Openmi API base URL.
+        #[arg(long)]
+        api_url: Option<String>,
+    },
+
     /// Authenticate with Openmi using device-code pairing (or --token fallback).
     Login {
         /// Paste a Supabase JWT directly instead of running device-code pairing.
@@ -125,21 +162,44 @@ async fn main() -> ExitCode {
     };
 
     let result: Result<(), CliError> = match cli.command {
-        Commands::Login {
+        None => {
+            cmd::tui::execute(TuiOptions {
+                model: cli.model,
+                permission: cli.permission,
+                cwd: cli.cwd,
+                api_url: cli.api_url,
+            })
+            .await
+        }
+        Some(Commands::Tui {
+            model,
+            permission,
+            cwd,
+            api_url,
+        }) => {
+            cmd::tui::execute(TuiOptions {
+                model,
+                permission,
+                cwd,
+                api_url,
+            })
+            .await
+        }
+        Some(Commands::Login {
             token,
             refresh_token,
             api_url,
-        } => cmd::login::execute(token, refresh_token, api_url)
+        }) => cmd::login::execute(token, refresh_token, api_url)
             .await
             .map_err(map_anyhow_auth),
-        Commands::Logout => cmd::logout::execute().await.map_err(CliError::Other),
-        Commands::Whoami { api_url } => {
+        Some(Commands::Logout) => cmd::logout::execute().await.map_err(CliError::Other),
+        Some(Commands::Whoami { api_url }) => {
             cmd::whoami::execute(api_url).await.map_err(map_anyhow_auth)
         }
-        Commands::Models { json, api_url } => cmd::models::execute(json, api_url).await,
-        Commands::Credits { json, api_url } => cmd::credits::execute(json, api_url).await,
-        Commands::SmokeTest => cmd::smoke::execute().await.map_err(CliError::Other),
-        Commands::Run {
+        Some(Commands::Models { json, api_url }) => cmd::models::execute(json, api_url).await,
+        Some(Commands::Credits { json, api_url }) => cmd::credits::execute(json, api_url).await,
+        Some(Commands::SmokeTest) => cmd::smoke::execute().await.map_err(CliError::Other),
+        Some(Commands::Run {
             prompt,
             model,
             permission,
@@ -148,7 +208,7 @@ async fn main() -> ExitCode {
             yes,
             api_url,
             max_steps,
-        } => {
+        }) => {
             cmd::run::execute(RunOptions {
                 prompt,
                 model,
