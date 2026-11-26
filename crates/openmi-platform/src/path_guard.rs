@@ -183,7 +183,6 @@ fn lexical_normalize(path: &Path) -> Result<PathBuf, PathGuardError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Read;
 
     #[test]
     fn allows_existing_file_inside_workspace() {
@@ -296,6 +295,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn open_existing_read_uses_nofollow_to_guard_toctou() {
+        use std::io::Read;
         use std::os::unix::fs::symlink;
 
         let parent = tempfile::tempdir().unwrap();

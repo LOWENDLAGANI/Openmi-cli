@@ -261,21 +261,25 @@ mod tests {
     async fn updates_and_verifies_sha256_against_mock_release_server() {
         // Build an in-memory `.tar.gz` containing a fake `openmi` binary.
         let new_bin = b"#!/bin/sh\necho openmi-0.2.0\n";
-        let mut tar_buf = Vec::new();
-        {
-            let gz = GzEncoder::new(&mut tar_buf, Compression::default());
-            let mut builder = tar::Builder::new(gz);
-            let mut header = tar::Header::new_gnu();
-            header.set_size(new_bin.len() as u64);
-            header.set_mode(0o755);
-            header.set_cksum();
-            builder
-                .append_data(&mut header, "openmi", &new_bin[..])
-                .unwrap();
-            builder.into_inner().unwrap().finish().unwrap();
-        }
-        let archive_bytes = Arc::new(tar_buf);
         let asset_name = current_target_asset_name().to_string();
+        let archive_bytes = if asset_name.ends_with(".tar.gz") {
+            let mut tar_buf = Vec::new();
+            {
+                let gz = GzEncoder::new(&mut tar_buf, Compression::default());
+                let mut builder = tar::Builder::new(gz);
+                let mut header = tar::Header::new_gnu();
+                header.set_size(new_bin.len() as u64);
+                header.set_mode(0o755);
+                header.set_cksum();
+                builder
+                    .append_data(&mut header, "openmi", &new_bin[..])
+                    .unwrap();
+                builder.into_inner().unwrap().finish().unwrap();
+            }
+            Arc::new(tar_buf)
+        } else {
+            Arc::new(new_bin.to_vec())
+        };
         let expected_sha = sha256_hex(&archive_bytes);
         let sums_body = format!("{expected_sha}  {asset_name}\n");
 

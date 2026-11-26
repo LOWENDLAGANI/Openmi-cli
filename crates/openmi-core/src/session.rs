@@ -618,14 +618,15 @@ mod tests {
     #[tokio::test]
     async fn cancelling_running_command_kills_child_process() {
         let tmp = tempfile::tempdir().unwrap();
-        let endpoint = spawn_mock_sse_server(|_| {
-            (
-                200,
-                "data: {\"type\":\"tool_call\",\"call_id\":\"c1\",\"tool_name\":\"run_command\",\"arguments\":{\"command\":\"sleep 30\"}}\n\n"
-                    .to_string(),
-            )
-        })
-        .await;
+        let sleep_cmd = if cfg!(windows) {
+            "ping -n 10 127.0.0.1 >nul"
+        } else {
+            "sleep 30"
+        };
+        let payload = format!(
+            "data: {{\"type\":\"tool_call\",\"call_id\":\"c1\",\"tool_name\":\"run_command\",\"arguments\":{{\"command\":\"{sleep_cmd}\"}}}}\n\n"
+        );
+        let endpoint = spawn_mock_sse_server(move |_| (200, payload.clone())).await;
 
         let mut session = AgentSession::new(tmp.path(), "openmi-default").unwrap();
         session.set_permission_mode(PermissionMode::Trusted);
