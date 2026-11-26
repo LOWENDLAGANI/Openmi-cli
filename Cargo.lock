@@ -638,7 +638,11 @@ dependencies = [
  "openmi-checkpoints",
  "openmi-core",
  "openmi-platform",
+ "reqwest",
+ "serde",
+ "serde_json",
  "tempfile",
+ "thiserror",
  "tokio",
  "tokio-util",
 ]

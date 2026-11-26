@@ -1,3 +1,4 @@
+mod auth;
 mod cmd;
 mod session;
 
@@ -15,6 +16,31 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Authenticate with Openmi using device-code pairing (or --token fallback).
+    Login {
+        /// Paste a Supabase JWT directly instead of running device-code pairing.
+        #[arg(long)]
+        token: Option<String>,
+
+        /// Optional refresh token when using --token.
+        #[arg(long)]
+        refresh_token: Option<String>,
+
+        /// Override the managed Openmi API base URL.
+        #[arg(long)]
+        api_url: Option<String>,
+    },
+
+    /// Clear locally stored authentication credentials.
+    Logout,
+
+    /// Display the currently authenticated Openmi user.
+    Whoami {
+        /// Override the managed Openmi API base URL.
+        #[arg(long)]
+        api_url: Option<String>,
+    },
+
     /// Run a built-in portability and core-wiring smoke test.
     SmokeTest,
 
@@ -41,6 +67,13 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Commands::Login {
+            token,
+            refresh_token,
+            api_url,
+        } => cmd::login::execute(token, refresh_token, api_url).await,
+        Commands::Logout => cmd::logout::execute().await,
+        Commands::Whoami { api_url } => cmd::whoami::execute(api_url).await,
         Commands::SmokeTest => cmd::smoke::execute().await,
         Commands::Run {
             prompt,
