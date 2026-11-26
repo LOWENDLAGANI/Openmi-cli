@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
-    EventStream, KeyCode, KeyEvent, KeyModifiers, MouseEventKind,
+    DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyCode, KeyEvent,
+    KeyModifiers,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -58,12 +58,7 @@ impl Drop for TerminalGuard {
 
 fn restore_terminal() {
     let _ = disable_raw_mode();
-    let _ = execute!(
-        io::stdout(),
-        DisableBracketedPaste,
-        DisableMouseCapture,
-        LeaveAlternateScreen
-    );
+    let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
 }
 
 fn install_panic_hook() {
@@ -148,13 +143,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
     install_panic_hook();
     enable_raw_mode().map_err(anyhow::Error::from)?;
     let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        EnableMouseCapture,
-        EnableBracketedPaste
-    )
-    .map_err(anyhow::Error::from)?;
+    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste).map_err(anyhow::Error::from)?;
     let _guard = TerminalGuard;
 
     let backend = CrosstermBackend::new(stdout);
@@ -223,17 +212,6 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                     Event::Resize(_, _) => {
                         dirty = true;
                     }
-                    Event::Mouse(mouse) => match mouse.kind {
-                        MouseEventKind::ScrollUp => {
-                            app.scroll_up(3);
-                            dirty = true;
-                        }
-                        MouseEventKind::ScrollDown => {
-                            app.scroll_down(3);
-                            dirty = true;
-                        }
-                        _ => {}
-                    },
                     Event::Paste(text) => {
                         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
                         if let Some(modal) = app.full_access_modal.as_mut() {
@@ -925,7 +903,12 @@ fn handle_key_event(
             KeyAction::None
         }
         KeyCode::Up => {
-            if !app.slash_suggestions.is_empty() {
+            if key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            {
+                app.scroll_up(3);
+            } else if !app.slash_suggestions.is_empty() {
                 app.slash_move_up();
             } else {
                 app.input.history_prev();
@@ -933,7 +916,12 @@ fn handle_key_event(
             KeyAction::None
         }
         KeyCode::Down => {
-            if !app.slash_suggestions.is_empty() {
+            if key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            {
+                app.scroll_down(3);
+            } else if !app.slash_suggestions.is_empty() {
                 app.slash_move_down();
             } else {
                 app.input.history_next();

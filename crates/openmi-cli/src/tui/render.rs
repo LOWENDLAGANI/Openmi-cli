@@ -472,7 +472,7 @@ fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         ))
     } else if app.scroll_from_bottom > 0 {
         Line::from(Span::styled(
-            " ↑ Scrolled up  ·  Scroll down or PageDown to return",
+            " ↑ Scrolled up  ·  PageDown to return",
             Style::default().fg(ACCENT),
         ))
     } else if app.is_busy() {
