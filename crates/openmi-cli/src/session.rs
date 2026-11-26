@@ -76,17 +76,80 @@ pub fn select_headless_approval_handler(auto_yes: bool) -> Arc<dyn ApprovalHandl
     }
 }
 
-/// Read `OPENMI.md` from `workspace_root` if present (used as project system context).
+/// Read project instructions from `OPENMI.md`, falling back to `CLAUDE.md` or `AGENTS.md`
+/// so repositories configured for Claude Code or Codex work out of the box.
 pub fn load_project_instructions(workspace_root: &Path) -> Option<String> {
-    let candidate = workspace_root.join("OPENMI.md");
-    std::fs::read_to_string(candidate)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+    for filename in ["OPENMI.md", "CLAUDE.md", "AGENTS.md"] {
+        let candidate = workspace_root.join(filename);
+        if let Some(content) = std::fs::read_to_string(candidate)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            return Some(content);
+        }
+    }
+    None
+}
+
+/// Generate a friendly starter `OPENMI.md` tailored to the detected project stack.
+pub fn generate_starter_openmi_md(workspace_root: &Path) -> String {
+    let project_name = workspace_root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Project");
+
+    let mut stack_hints: Vec<&str> = Vec::new();
+    let mut commands: Vec<&str> = Vec::new();
+
+    if workspace_root.join("Cargo.toml").exists() {
+        stack_hints.push("Rust (Cargo)");
+        commands.push("- Build & test: `cargo test`");
+    }
+    if workspace_root.join("package.json").exists() {
+        stack_hints.push("Node.js / TypeScript");
+        commands.push("- Install deps: `npm install` (or `pnpm install`)");
+        commands.push("- Run tests: `npm test`");
+    }
+    if workspace_root.join("pyproject.toml").exists()
+        || workspace_root.join("requirements.txt").exists()
+    {
+        stack_hints.push("Python");
+        commands.push("- Run tests: `pytest`");
+    }
+    if workspace_root.join("go.mod").exists() {
+        stack_hints.push("Go");
+        commands.push("- Run tests: `go test ./...`");
+    }
+
+    let stack_line = if stack_hints.is_empty() {
+        "Describe your tech stack and project structure here.".to_string()
+    } else {
+        format!("Detected stack: {}", stack_hints.join(", "))
+    };
+
+    let commands_block = if commands.is_empty() {
+        "- Add your build, lint, and test commands here.".to_string()
+    } else {
+        commands.join("\n")
+    };
+
+    format!(
+        "# {project_name} — Openmi Project Guide\n\n\
+         Openmi automatically reads this file (as well as `CLAUDE.md` / `AGENTS.md`) at the start of every chat.\n\n\
+         ## Overview\n\
+         {stack_line}\n\n\
+         ## Common Commands\n\
+         {commands_block}\n\n\
+         ## Preferences\n\
+         - Keep explanations clear and concise.\n\
+         - Run relevant tests after making code changes.\n"
+    )
 }
 
 /// Construct an `AgentSession` wired with a shared `CheckpointStore` before-write hook,
-/// optional proxy configuration, project instructions (`OPENMI.md`), and approval handler.
+/// optional proxy configuration, project instructions (`OPENMI.md` / `CLAUDE.md` / `AGENTS.md`),
+/// and approval handler.
 pub fn build_session_with_options(
     cwd: &Path,
     model: &str,
@@ -152,6 +215,28 @@ mod tests {
         assert_eq!(
             session.system_prompt(),
             Some("# Project Rules\nAlways run cargo test.")
+        );
+    }
+
+    #[test]
+    fn falls_back_to_claude_md_and_agents_md() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("AGENTS.md"), "Agent instructions").unwrap();
+        assert_eq!(
+            load_project_instructions(tmp.path()).as_deref(),
+            Some("Agent instructions")
+        );
+
+        std::fs::write(tmp.path().join("CLAUDE.md"), "Claude instructions").unwrap();
+        assert_eq!(
+            load_project_instructions(tmp.path()).as_deref(),
+            Some("Claude instructions")
+        );
+
+        std::fs::write(tmp.path().join("OPENMI.md"), "Openmi instructions").unwrap();
+        assert_eq!(
+            load_project_instructions(tmp.path()).as_deref(),
+            Some("Openmi instructions")
         );
     }
 }

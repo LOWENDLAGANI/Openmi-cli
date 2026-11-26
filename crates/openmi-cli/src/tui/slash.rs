@@ -33,6 +33,18 @@ pub const SLASH_PALETTE: &[SlashSuggestion] = &[
         description: "Switch AI model",
     },
     SlashSuggestion {
+        command: "/resume",
+        description: "Continue a previous chat",
+    },
+    SlashSuggestion {
+        command: "/new",
+        description: "Start a fresh chat",
+    },
+    SlashSuggestion {
+        command: "/init",
+        description: "Create a starter OPENMI.md guide",
+    },
+    SlashSuggestion {
         command: "/diff",
         description: "View recent file changes",
     },
@@ -41,12 +53,8 @@ pub const SLASH_PALETTE: &[SlashSuggestion] = &[
         description: "Undo the last file edit",
     },
     SlashSuggestion {
-        command: "/clear",
-        description: "Start a fresh chat",
-    },
-    SlashSuggestion {
         command: "/mode",
-        description: "Change permission mode",
+        description: "Change permission mode (or Shift+Tab)",
     },
     SlashSuggestion {
         command: "/credits",
@@ -87,6 +95,8 @@ pub fn filter_slash_suggestions(input: &str) -> Vec<SlashSuggestion> {
 pub enum SlashCommand {
     Folder(Option<String>),
     Model(Option<String>),
+    Resume,
+    Init,
     Mode(Option<String>),
     Undo(Option<String>),
     Diff,
@@ -108,6 +118,8 @@ pub enum SlashOutcome {
     SetFolder(String),
     OpenModelSelector,
     SetModel(String),
+    OpenResumePicker,
+    InitProjectGuide,
     SetMode(PermissionMode),
     RequireFullAccessConfirm,
     ClearHistory,
@@ -135,10 +147,12 @@ pub fn parse_slash(input: &str) -> Option<SlashCommand> {
     let parsed = match cmd.as_str() {
         "/folder" | "/project" | "/cd" => SlashCommand::Folder(arg),
         "/model" => SlashCommand::Model(arg),
+        "/resume" => SlashCommand::Resume,
+        "/init" => SlashCommand::Init,
         "/mode" => SlashCommand::Mode(arg),
         "/undo" => SlashCommand::Undo(arg),
         "/diff" => SlashCommand::Diff,
-        "/clear" => SlashCommand::Clear,
+        "/clear" | "/new" => SlashCommand::Clear,
         "/credits" => SlashCommand::Credits,
         "/mcp" => SlashCommand::Mcp(arg),
         "/help" => SlashCommand::Help(arg),
@@ -162,6 +176,8 @@ pub fn execute_slash(
         SlashCommand::Folder(Some(path)) => SlashOutcome::SetFolder(path),
         SlashCommand::Model(None) => SlashOutcome::OpenModelSelector,
         SlashCommand::Model(Some(model)) => SlashOutcome::SetModel(model),
+        SlashCommand::Resume => SlashOutcome::OpenResumePicker,
+        SlashCommand::Init => SlashOutcome::InitProjectGuide,
         SlashCommand::Mode(None) => {
             SlashOutcome::Message(format!("Current permission mode: {current_mode:?}"))
         }
@@ -459,6 +475,37 @@ mod tests {
                 tmp.path()
             ),
             SlashOutcome::SetFolder("~/my-app".into())
+        );
+
+        assert_eq!(
+            execute_slash(
+                parse_slash("/resume").unwrap(),
+                "openmi-default",
+                PermissionMode::Ask,
+                &cp,
+                tmp.path()
+            ),
+            SlashOutcome::OpenResumePicker
+        );
+        assert_eq!(
+            execute_slash(
+                parse_slash("/init").unwrap(),
+                "openmi-default",
+                PermissionMode::Ask,
+                &cp,
+                tmp.path()
+            ),
+            SlashOutcome::InitProjectGuide
+        );
+        assert_eq!(
+            execute_slash(
+                parse_slash("/new").unwrap(),
+                "openmi-default",
+                PermissionMode::Ask,
+                &cp,
+                tmp.path()
+            ),
+            SlashOutcome::ClearHistory
         );
 
         // /model

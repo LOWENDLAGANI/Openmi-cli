@@ -132,7 +132,7 @@ pub fn remaining_minutes_from_rfc3339(iso: &str) -> Option<u64> {
     if diff <= 0 {
         None
     } else {
-        Some(((diff as u64) + 59) / 60)
+        Some((diff as u64).div_ceil(60))
     }
 }
 

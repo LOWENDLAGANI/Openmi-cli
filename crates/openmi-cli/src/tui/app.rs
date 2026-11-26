@@ -5,7 +5,9 @@ use openmi_core::{
     AgentEvent, ApprovalDecision, ControlState, CreditStatus, Message, ModelInfo, PermissionMode,
     Role,
 };
+use similar::TextDiff;
 
+use crate::session_store::SavedSession;
 use crate::tui::approval::PendingApproval;
 use crate::tui::input::InputState;
 use crate::tui::mention::{active_mention_query, collect_workspace_files, fuzzy_match_paths};
@@ -44,6 +46,7 @@ pub struct ToolTimelineItem {
     pub status: ToolStatus,
     pub summary: String,
     pub target_hint: String,
+    pub raw_args: Option<String>,
 }
 
 /// Typed confirmation modal state before enabling `PermissionMode::FullAccess`.
@@ -154,7 +157,7 @@ impl FolderPickerState {
                         Some((name, path))
                     })
                     .collect();
-                children.sort_by(|a, b| a.0.to_ascii_lowercase().cmp(&b.0.to_ascii_lowercase()));
+                children.sort_by_key(|a| a.0.to_ascii_lowercase());
                 for (name, path) in children {
                     self.entries.push(FolderEntry::Child { name, path });
                 }
@@ -219,6 +222,44 @@ impl FolderPickerState {
     }
 }
 
+/// Interactive `/resume` session picker modal state.
+#[derive(Debug, Clone)]
+pub struct ResumePickerState {
+    pub sessions: Vec<SavedSession>,
+    pub selected: usize,
+}
+
+impl ResumePickerState {
+    pub fn new(sessions: Vec<SavedSession>) -> Self {
+        Self {
+            sessions,
+            selected: 0,
+        }
+    }
+
+    pub fn move_up(&mut self) {
+        if self.sessions.is_empty() {
+            return;
+        }
+        if self.selected == 0 {
+            self.selected = self.sessions.len() - 1;
+        } else {
+            self.selected -= 1;
+        }
+    }
+
+    pub fn move_down(&mut self) {
+        if self.sessions.is_empty() {
+            return;
+        }
+        self.selected = (self.selected + 1) % self.sessions.len();
+    }
+
+    pub fn current(&self) -> Option<&SavedSession> {
+        self.sessions.get(self.selected)
+    }
+}
+
 /// Complete state of the interactive TUI (UI-only; core stays UI-agnostic).
 pub struct TuiApp {
     pub model: String,
@@ -232,9 +273,11 @@ pub struct TuiApp {
     pub input: InputState,
     pub scroll_from_bottom: u16,
     pub pending_approval: Option<PendingApproval>,
+    pub approval_selected: usize,
     pub full_access_modal: Option<FullAccessModalState>,
     pub model_selector: Option<ModelSelectorState>,
     pub folder_picker: Option<FolderPickerState>,
+    pub resume_picker: Option<ResumePickerState>,
     pub workspace_files: Vec<String>,
     pub mention_suggestions: Vec<String>,
     pub slash_suggestions: Vec<SlashSuggestion>,
@@ -264,9 +307,11 @@ impl TuiApp {
             input: InputState::new(),
             scroll_from_bottom: 0,
             pending_approval: None,
+            approval_selected: 0,
             full_access_modal: None,
             model_selector: None,
             folder_picker: None,
+            resume_picker: None,
             workspace_files,
             mention_suggestions: Vec::new(),
             slash_suggestions: Vec::new(),
@@ -276,6 +321,79 @@ impl TuiApp {
             tick: 0,
             armed_quit: false,
             model_names: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Cycle safe permission modes on `Shift+Tab`: Ask -> Trusted -> ReadOnly -> Ask.
+    pub fn cycle_permission_mode(&mut self) -> PermissionMode {
+        let next = match self.mode {
+            PermissionMode::Ask => PermissionMode::Trusted,
+            PermissionMode::Trusted => PermissionMode::ReadOnly,
+            PermissionMode::ReadOnly | PermissionMode::FullAccess => PermissionMode::Ask,
+        };
+        self.mode = next;
+        next
+    }
+
+    pub fn approval_move_up(&mut self) {
+        self.approval_selected = if self.approval_selected == 0 {
+            2
+        } else {
+            self.approval_selected - 1
+        };
+    }
+
+    pub fn approval_move_down(&mut self) {
+        self.approval_selected = (self.approval_selected + 1) % 3;
+    }
+
+    pub fn approval_selected_decision(&self) -> ApprovalDecision {
+        match self.approval_selected {
+            0 => ApprovalDecision::Approve,
+            1 => ApprovalDecision::ApproveAlways,
+            _ => ApprovalDecision::Deny,
+        }
+    }
+
+    /// Compute a concise unified diff preview for a pending `write_file` approval popup.
+    pub fn approval_preview_diff(&self) -> Option<String> {
+        let pending = self.pending_approval.as_ref()?;
+        if pending.request.tool_name != "write_file" {
+            return None;
+        }
+        let raw_args = self
+            .tools
+            .iter()
+            .rev()
+            .find(|t| t.call_id == pending.request.call_id)
+            .and_then(|t| t.raw_args.as_deref())?;
+        let val = serde_json::from_str::<serde_json::Value>(raw_args).ok()?;
+        let rel_path = val.get("path").and_then(|v| v.as_str())?;
+        let new_content = val.get("content").and_then(|v| v.as_str())?;
+
+        let full_path = self.cwd.join(rel_path);
+        let old_content = fs::read_to_string(&full_path).unwrap_or_default();
+        let diff = TextDiff::from_lines(old_content.as_str(), new_content);
+        let mut out = String::new();
+        let mut shown = 0usize;
+        for change in diff.iter_all_changes() {
+            let prefix = match change.tag() {
+                similar::ChangeTag::Delete => "-",
+                similar::ChangeTag::Insert => "+",
+                similar::ChangeTag::Equal => continue,
+            };
+            if shown >= 12 {
+                out.push_str("  … (more changes)\n");
+                break;
+            }
+            let line = change.value().trim_end_matches(['\r', '\n']);
+            out.push_str(&format!("{prefix}{line}\n"));
+            shown += 1;
+        }
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
         }
     }
 
@@ -405,9 +523,8 @@ impl TuiApp {
     /// Recompute live `/` slash command suggestions from the current input.
     pub fn refresh_slash_suggestions(&mut self) {
         self.slash_suggestions = filter_slash_suggestions(self.input.text());
-        if self.slash_suggestions.is_empty() {
-            self.slash_selected = 0;
-        } else if self.slash_selected >= self.slash_suggestions.len() {
+        if self.slash_suggestions.is_empty() || self.slash_selected >= self.slash_suggestions.len()
+        {
             self.slash_selected = 0;
         }
     }
@@ -514,8 +631,9 @@ impl TuiApp {
                     call_id,
                     tool_name,
                     status: ToolStatus::Requested,
-                    summary: arguments_json,
+                    summary: arguments_json.clone(),
                     target_hint,
+                    raw_args: Some(arguments_json),
                 });
             }
             AgentEvent::ApprovalRequired {
@@ -542,10 +660,13 @@ impl TuiApp {
                 };
                 let target_hint = self
                     .tools
-                    .iter()
+                    .iter_mut()
                     .rev()
                     .find(|t| t.call_id == call_id)
-                    .map(|t| t.target_hint.clone())
+                    .map(|t| {
+                        t.raw_args = None;
+                        t.target_hint.clone()
+                    })
                     .unwrap_or_default();
                 let inline_line = format_inline_tool_summary(&tool_name, &target_hint, ok);
                 self.update_or_push_tool(call_id, tool_name, status, first_line);
@@ -586,6 +707,7 @@ impl TuiApp {
                 status,
                 summary,
                 target_hint: String::new(),
+                raw_args: None,
             });
         }
     }
@@ -593,6 +715,7 @@ impl TuiApp {
     /// Resolve a pending approval popup with `decision`.
     pub fn resolve_approval(&mut self, decision: ApprovalDecision) -> bool {
         if let Some(pending) = self.pending_approval.take() {
+            self.approval_selected = 0;
             self.status_hint = match decision {
                 ApprovalDecision::Approve => "Allowed".to_string(),
                 ApprovalDecision::ApproveAlways => "Allowed for this session".to_string(),
@@ -607,6 +730,11 @@ impl TuiApp {
     /// Handle Esc or Ctrl-C: closes modals, cancels active turn, or quits on 2nd press.
     /// Returns `true` if the active turn should be cancelled now.
     pub fn handle_interrupt(&mut self) -> bool {
+        if self.resume_picker.is_some() {
+            self.resume_picker = None;
+            return false;
+        }
+
         if self.folder_picker.is_some() {
             self.folder_picker = None;
             return false;
@@ -670,7 +798,10 @@ pub fn resolve_folder_input(raw: &str, base: &Path) -> PathBuf {
         if trimmed == "~" {
             return home_path;
         }
-        if let Some(rest) = trimmed.strip_prefix("~/").or_else(|| trimmed.strip_prefix("~\\")) {
+        if let Some(rest) = trimmed
+            .strip_prefix("~/")
+            .or_else(|| trimmed.strip_prefix("~\\"))
+        {
             return home_path.join(rest);
         }
     }
@@ -884,5 +1015,38 @@ mod tests {
         // Entry 0 is UseCurrent -> Enter confirms the folder.
         assert_eq!(picker.selected, 0);
         assert_eq!(picker.enter(), Some(fs::canonicalize(&sub).unwrap()));
+    }
+
+    #[test]
+    fn cycle_mode_and_approval_diff_preview() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("hello.txt"), "old line\n").unwrap();
+
+        let mut app = TuiApp::new(
+            "openmi-default".into(),
+            PermissionMode::Ask,
+            tmp.path().to_path_buf(),
+        );
+        assert_eq!(app.cycle_permission_mode(), PermissionMode::Trusted);
+        assert_eq!(app.cycle_permission_mode(), PermissionMode::ReadOnly);
+        assert_eq!(app.cycle_permission_mode(), PermissionMode::Ask);
+
+        app.apply_agent_event(AgentEvent::ToolCallRequested {
+            call_id: "w1".into(),
+            tool_name: "write_file".into(),
+            arguments_json: r#"{"path":"hello.txt","content":"new line\n"}"#.into(),
+        });
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        app.pending_approval = Some(PendingApproval {
+            request: openmi_core::ApprovalRequest {
+                call_id: "w1".into(),
+                tool_name: "write_file".into(),
+                summary: "write_file hello.txt".into(),
+            },
+            responder: tx,
+        });
+        let diff = app.approval_preview_diff().unwrap();
+        assert!(diff.contains("-old line"));
+        assert!(diff.contains("+new line"));
     }
 }

@@ -80,6 +80,37 @@ impl SessionStore {
         Ok(sessions.into_iter().next())
     }
 
+    /// List recent non-empty sessions (current folder's sessions first, newest first).
+    pub fn list_recent(&self, cwd: Option<&Path>, limit: usize) -> Result<Vec<SavedSession>> {
+        if !self.dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut sessions = Vec::new();
+        for entry in fs::read_dir(&self.dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            if let Ok(raw) = fs::read(&path) {
+                if let Ok(parsed) = serde_json::from_slice::<SavedSession>(&raw) {
+                    if !parsed.messages.is_empty() {
+                        sessions.push(parsed);
+                    }
+                }
+            }
+        }
+        sessions.sort_by(|a, b| {
+            let a_match = cwd.map(|c| a.cwd == c).unwrap_or(false);
+            let b_match = cwd.map(|c| b.cwd == c).unwrap_or(false);
+            b_match
+                .cmp(&a_match)
+                .then_with(|| b.updated_at.cmp(&a.updated_at))
+        });
+        sessions.truncate(limit);
+        Ok(sessions)
+    }
+
     pub fn make_snapshot(
         id: String,
         model: String,

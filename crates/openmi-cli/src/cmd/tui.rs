@@ -28,10 +28,11 @@ use tokio_util::sync::CancellationToken;
 use crate::auth::device_flow::{resolve_api_base_url, DeviceAuthClient};
 use crate::auth::{default_token_store, TokenStore};
 use crate::exit_codes::CliError;
-use crate::session::build_session_with_options;
-use crate::session_store::SessionStore;
+use crate::session::{build_session_with_options, generate_starter_openmi_md};
+use crate::session_store::{SavedSession, SessionStore};
 use crate::tui::app::{
-    resolve_folder_input, FolderPickerState, FullAccessModalState, ModelSelectorState, TuiApp,
+    resolve_folder_input, FolderPickerState, FullAccessModalState, ModelSelectorState,
+    ResumePickerState, TuiApp,
 };
 use crate::tui::approval::{PendingApproval, TuiApprovalHandler};
 use crate::tui::render;
@@ -110,7 +111,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
         Some(Some(id)) => Some(session_store.load_by_id(id)?),
     };
 
-    let session_id = resumed
+    let mut session_id = resumed
         .as_ref()
         .map(|s| s.id.clone())
         .unwrap_or_else(SessionStore::new_session_id);
@@ -191,10 +192,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
     }
 
     // Fetch initial credit/pass status in background so status bar populates right away.
-    if let (Some(base), Some(tok)) = (
-        base_url_for_credits.clone(),
-        bearer_for_credits.clone(),
-    ) {
+    if let (Some(base), Some(tok)) = (base_url_for_credits.clone(), bearer_for_credits.clone()) {
         let tx = credit_tx.clone();
         tokio::spawn(async move {
             let ep = format!("{base}/functions/v1/credits");
@@ -244,6 +242,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                         } else if app.pending_approval.is_none()
                             && app.model_selector.is_none()
                             && app.folder_picker.is_none()
+                            && app.resume_picker.is_none()
                         {
                             for ch in normalized.chars() {
                                 if ch == '\n' {
@@ -284,6 +283,42 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                 )
                                 .await;
                             }
+                            KeyAction::CycleMode(next_mode) => {
+                                session.lock().await.set_permission_mode(next_mode);
+                                let label = match next_mode {
+                                    PermissionMode::Ask => "Ask (confirm edits)",
+                                    PermissionMode::Trusted => "Trusted (auto-approve workspace)",
+                                    PermissionMode::ReadOnly => "Read-only (no edits)",
+                                    PermissionMode::FullAccess => "Full access",
+                                };
+                                app.status_hint = format!("Mode: {label}");
+                            }
+                            KeyAction::SelectedSession(saved) => {
+                                session_id = saved.id.clone();
+                                app.model = saved.model.clone();
+                                app.transcript.clear();
+                                app.tools.clear();
+                                app.hydrate_from_history(&saved.messages);
+                                if saved.cwd.is_dir() && saved.cwd != workdir {
+                                    switch_project_folder(
+                                        saved.cwd.clone(),
+                                        &mut workdir,
+                                        &mut app,
+                                        &session,
+                                        &checkpoints,
+                                        &approval_handler,
+                                        &proxy_config,
+                                        &mut mcp_manager,
+                                    )
+                                    .await;
+                                }
+                                {
+                                    let mut guard = session.lock().await;
+                                    guard.set_model(saved.model);
+                                    guard.set_history(saved.messages);
+                                }
+                                app.push_system("Resumed your previous chat.");
+                            }
                             KeyAction::Submit(input_text) => {
                                 if let Some(slash_cmd) = parse_slash(&input_text) {
                                     let outcome = {
@@ -294,6 +329,44 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                         SlashOutcome::Message(msg) => app.push_system(msg),
                                         SlashOutcome::Diff(diff_txt) => app.push_diff(diff_txt),
                                         SlashOutcome::Error(err) => app.push_error(err),
+                                        SlashOutcome::OpenResumePicker => {
+                                            match session_store.list_recent(Some(&workdir), 20) {
+                                                Ok(sessions) => {
+                                                    app.resume_picker =
+                                                        Some(ResumePickerState::new(sessions));
+                                                }
+                                                Err(err) => app.push_error(format!(
+                                                    "Could not load saved chats: {err}"
+                                                )),
+                                            }
+                                        }
+                                        SlashOutcome::InitProjectGuide => {
+                                            let target = workdir.join("OPENMI.md");
+                                            if target.exists() {
+                                                app.push_system(
+                                                    "OPENMI.md already exists in this folder.",
+                                                );
+                                            } else {
+                                                let content = generate_starter_openmi_md(&workdir);
+                                                match openmi_platform::atomic_write(
+                                                    &target,
+                                                    content.as_bytes(),
+                                                ) {
+                                                    Ok(()) => {
+                                                        session
+                                                            .lock()
+                                                            .await
+                                                            .set_system_prompt(Some(content));
+                                                        app.push_system(
+                                                            "Created OPENMI.md in your project folder and loaded it.",
+                                                        );
+                                                    }
+                                                    Err(err) => app.push_error(format!(
+                                                        "Could not create OPENMI.md: {err}"
+                                                    )),
+                                                }
+                                            }
+                                        }
                                         SlashOutcome::OpenFolderPicker => {
                                             app.folder_picker =
                                                 Some(FolderPickerState::new(workdir.clone()));
@@ -543,7 +616,10 @@ fn format_credit_summary(status: &CreditStatus) -> String {
         status.balance, status.wallet_credit
     );
     if !status.is_paid {
-        out.push_str(&format!("\nUpgrade to Paid (15 cr/day + Paid models): {}", status.effective_upgrade_url()));
+        out.push_str(&format!(
+            "\nUpgrade to Paid (15 cr/day + Paid models): {}",
+            status.effective_upgrade_url()
+        ));
     }
     out
 }
@@ -645,7 +721,10 @@ async fn switch_project_folder(
     if app.transcript.is_empty() {
         app.status_hint = format!("Project folder: {}", app.friendly_cwd());
     } else {
-        app.push_system(format!("Switched project folder to {}.", app.friendly_cwd()));
+        app.push_system(format!(
+            "Switched project folder to {}.",
+            app.friendly_cwd()
+        ));
     }
 }
 
@@ -655,6 +734,8 @@ enum KeyAction {
     ConfirmedFullAccess,
     SelectedModel(ModelInfo),
     SelectedFolder(PathBuf),
+    CycleMode(PermissionMode),
+    SelectedSession(SavedSession),
 }
 
 fn handle_key_event(
@@ -676,9 +757,15 @@ fn handle_key_event(
 
     app.armed_quit = false;
 
-    // 1. Approval popup intercepts y / n / a.
+    // 1. Approval popup intercepts ↑/↓/Enter as well as y / a / n.
     if app.pending_approval.is_some() {
         match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.approval_move_up(),
+            KeyCode::Down | KeyCode::Char('j') => app.approval_move_down(),
+            KeyCode::Enter => {
+                let decision = app.approval_selected_decision();
+                app.resolve_approval(decision);
+            }
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 app.resolve_approval(ApprovalDecision::Approve);
             }
@@ -757,7 +844,32 @@ fn handle_key_event(
         return KeyAction::None;
     }
 
-    // 5. Normal prompt input + live `/` command palette + `@path` Tab completion.
+    // 5. Interactive `/resume` session picker modal.
+    if let Some(resume) = app.resume_picker.as_mut() {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => resume.move_up(),
+            KeyCode::Down | KeyCode::Char('j') => resume.move_down(),
+            KeyCode::Enter => {
+                if let Some(chosen) = resume.current().cloned() {
+                    app.resume_picker = None;
+                    return KeyAction::SelectedSession(chosen);
+                }
+                app.resume_picker = None;
+            }
+            _ => {}
+        }
+        return KeyAction::None;
+    }
+
+    // 6. Shift+Tab cycles safe permission modes (Ask -> Trusted -> Read-only -> Ask).
+    if key.code == KeyCode::BackTab
+        || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT))
+    {
+        let next = app.cycle_permission_mode();
+        return KeyAction::CycleMode(next);
+    }
+
+    // 7. Normal prompt input + live `/` command palette + `@path` Tab completion.
     let action = match key.code {
         KeyCode::Tab => {
             if !app.slash_suggestions.is_empty() {

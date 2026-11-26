@@ -30,14 +30,20 @@ pub async fn execute(json: bool, api_url: Option<String>) -> Result<(), CliError
             .unwrap_or(if status.is_paid { 15 } else { 6 });
         if status.is_paid {
             if let Some(ref until) = status.paid_until {
-                println!("Plan:          PAID (until {})", until.get(..10).unwrap_or(until));
+                println!(
+                    "Plan:          PAID (until {})",
+                    until.get(..10).unwrap_or(until)
+                );
             } else {
                 println!("Plan:          PAID");
             }
         } else {
             println!("Plan:          FREE");
         }
-        println!("Daily Credits: {} / {} (resets 00:00 UTC)", status.balance, daily_cap);
+        println!(
+            "Daily Credits: {} / {} (resets 00:00 UTC)",
+            status.balance, daily_cap
+        );
         println!("Wallet Credit: {} (never expires)", status.wallet_credit);
         if let Some((model, mins)) = status.active_pass_remaining() {
             println!("Active Pass:   {} ({}m remaining)", model, mins);

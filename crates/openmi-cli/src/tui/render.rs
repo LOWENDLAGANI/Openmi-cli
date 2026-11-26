@@ -1,13 +1,14 @@
-use openmi_core::PermissionMode;
+use openmi_core::{PermissionMode, Role};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 use ratatui::Frame;
 
+use crate::auth::store::now_unix_secs;
 use crate::tui::app::{
     format_friendly_path, friendly_tool_title, FolderEntry, FolderPickerState,
-    FullAccessModalState, ModelSelectorState, TranscriptKind, TuiApp,
+    FullAccessModalState, ModelSelectorState, ResumePickerState, TranscriptKind, TuiApp,
 };
 use crate::tui::markdown::{render_markdown_lines, MarkdownTheme};
 use crate::tui::slash::FULL_ACCESS_MODAL_WARNING;
@@ -26,8 +27,7 @@ const BORDER_SUBTLE: Color = Color::Rgb(78, 86, 102); // Quiet border / divider
 pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = frame.area();
     if area.width < 10 || area.height < 6 {
-        let msg = Paragraph::new("Terminal too small (min 10x6)")
-            .style(Style::default().fg(MUTED));
+        let msg = Paragraph::new("Terminal too small (min 10x6)").style(Style::default().fg(MUTED));
         frame.render_widget(msg, area);
         return;
     }
@@ -76,13 +76,20 @@ pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
     render_footer(frame, app, root[5]);
 
     if let Some(pending) = &app.pending_approval {
-        render_approval_popup(frame, &pending.request.tool_name, &pending.request.summary);
+        render_approval_popup(
+            frame,
+            app,
+            &pending.request.tool_name,
+            &pending.request.summary,
+        );
     } else if let Some(modal) = &app.full_access_modal {
         render_full_access_modal(frame, modal);
     } else if let Some(selector) = &app.model_selector {
         render_model_selector_modal(frame, app, selector);
     } else if let Some(picker) = &app.folder_picker {
         render_folder_picker_modal(frame, picker);
+    } else if let Some(resume) = &app.resume_picker {
+        render_resume_picker_modal(frame, app, resume);
     }
 }
 
@@ -193,9 +200,7 @@ fn render_chat(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             TranscriptKind::User => {
                 lines.push(Line::from(Span::styled(
                     "You",
-                    Style::default()
-                        .fg(USER_COLOR)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(USER_COLOR).add_modifier(Modifier::BOLD),
                 )));
                 for line_text in entry.text.lines() {
                     lines.push(Line::from(Span::raw(format!("  {line_text}"))));
@@ -392,7 +397,10 @@ fn render_mention_suggestions(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                     Span::styled("  (Tab to pick)", Style::default().fg(MUTED)),
                 ])
             } else {
-                Line::from(Span::styled(format!("  @{path}"), Style::default().fg(MUTED)))
+                Line::from(Span::styled(
+                    format!("  @{path}"),
+                    Style::default().fg(MUTED),
+                ))
             }
         })
         .collect();
@@ -445,6 +453,7 @@ fn render_input(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         && app.full_access_modal.is_none()
         && app.model_selector.is_none()
         && app.folder_picker.is_none()
+        && app.resume_picker.is_none()
     {
         let (row, col) = app.input.cursor_row_col();
         let max_x = area.x + area.width.saturating_sub(2);
@@ -463,7 +472,7 @@ fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         ))
     } else if app.scroll_from_bottom > 0 {
         Line::from(Span::styled(
-            " ↑ Scrolled up  ·  PageDown to return to bottom",
+            " ↑ Scrolled up  ·  Scroll down or PageDown to return",
             Style::default().fg(ACCENT),
         ))
     } else if app.is_busy() {
@@ -478,14 +487,12 @@ fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         ))
     } else {
         Line::from(vec![
-            Span::styled(" Enter", Style::default().fg(ACCENT)),
-            Span::styled(" send  ·  ", Style::default().fg(MUTED)),
+            Span::styled(" /", Style::default().fg(ACCENT)),
+            Span::styled(" commands  ·  ", Style::default().fg(MUTED)),
+            Span::styled("Shift+Tab", Style::default().fg(ACCENT)),
+            Span::styled(" mode  ·  ", Style::default().fg(MUTED)),
             Span::styled("/folder", Style::default().fg(ACCENT)),
             Span::styled(" project  ·  ", Style::default().fg(MUTED)),
-            Span::styled("/model", Style::default().fg(ACCENT)),
-            Span::styled(" AI  ·  ", Style::default().fg(MUTED)),
-            Span::styled("/help", Style::default().fg(ACCENT)),
-            Span::styled(" tips  ·  ", Style::default().fg(MUTED)),
             Span::styled("Esc ×2", Style::default().fg(ACCENT)),
             Span::styled(" quit", Style::default().fg(MUTED)),
         ])
@@ -494,30 +501,68 @@ fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
-fn render_approval_popup(frame: &mut Frame<'_>, tool_name: &str, summary: &str) {
-    let popup_area = centered_rect(72, 42, frame.area());
+fn render_approval_popup(frame: &mut Frame<'_>, app: &TuiApp, tool_name: &str, summary: &str) {
+    let preview = app.approval_preview_diff();
+    let height_pct = if preview.is_some() { 68 } else { 44 };
+    let popup_area = centered_rect(78, height_pct, frame.area());
     frame.render_widget(Clear, popup_area);
 
     let action_title = friendly_tool_title(tool_name);
-    let lines = vec![
+    let mut lines = vec![
         Line::from(Span::styled(
             format!("Openmi wants to: {action_title}"),
-            Style::default()
-                .fg(WARNING)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(WARNING).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            summary.to_string(),
+            Style::default().fg(MUTED),
         )),
         Line::from(""),
-        Line::from(Span::raw(summary.to_string())),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("[y]", Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD)),
-            Span::styled(" Allow once   ", Style::default().fg(Color::Reset)),
-            Span::styled("[a]", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
-            Span::styled(" Always allow   ", Style::default().fg(Color::Reset)),
-            Span::styled("[n]", Style::default().fg(DANGER).add_modifier(Modifier::BOLD)),
-            Span::styled(" Cancel", Style::default().fg(Color::Reset)),
-        ]),
     ];
+
+    if let Some(diff_txt) = preview {
+        lines.push(Line::from(Span::styled(
+            "Preview of changes:",
+            Style::default().fg(MUTED),
+        )));
+        for dline in diff_txt.lines() {
+            let style = if dline.starts_with('+') {
+                Style::default().fg(SUCCESS)
+            } else if dline.starts_with('-') {
+                Style::default().fg(DANGER)
+            } else {
+                Style::default().fg(MUTED)
+            };
+            lines.push(Line::from(Span::styled(format!("  {dline}"), style)));
+        }
+        lines.push(Line::from(""));
+    }
+
+    let choices = [
+        ("[y]", "Allow once", SUCCESS),
+        ("[a]", "Always allow this session", ACCENT),
+        ("[n]", "Cancel", DANGER),
+    ];
+    for (idx, (key_lbl, text_lbl, color)) in choices.iter().enumerate() {
+        let is_sel = idx == app.approval_selected;
+        let prefix = if is_sel { "▸ " } else { "  " };
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{prefix}{key_lbl} "),
+                Style::default().fg(*color).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                *text_lbl,
+                if is_sel {
+                    Style::default()
+                        .fg(Color::Reset)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(MUTED)
+                },
+            ),
+        ]));
+    }
 
     let modal = Paragraph::new(lines)
         .block(
@@ -527,7 +572,7 @@ fn render_approval_popup(frame: &mut Frame<'_>, tool_name: &str, summary: &str) 
                 .border_style(Style::default().fg(WARNING))
                 .padding(Padding::uniform(1))
                 .title(Span::styled(
-                    " Permission needed ",
+                    " Permission needed (↑/↓ · Enter · y/a/n) ",
                     Style::default().fg(WARNING).add_modifier(Modifier::BOLD),
                 )),
         )
@@ -546,9 +591,7 @@ fn render_full_access_modal(frame: &mut Frame<'_>, modal: &FullAccessModalState)
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         format!("> {}", modal.typed),
-        Style::default()
-            .fg(WARNING)
-            .add_modifier(Modifier::BOLD),
+        Style::default().fg(WARNING).add_modifier(Modifier::BOLD),
     )));
     if let Some(err) = &modal.error {
         lines.push(Line::from(Span::styled(
@@ -680,9 +723,7 @@ fn render_folder_picker_modal(frame: &mut Frame<'_>, picker: &FolderPickerState)
         Span::styled("Current: ", Style::default().fg(MUTED)),
         Span::styled(
             format_friendly_path(&picker.current_dir),
-            Style::default()
-                .fg(USER_COLOR)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(USER_COLOR).add_modifier(Modifier::BOLD),
         ),
     ]));
     lines.push(Line::from(""));
@@ -739,7 +780,10 @@ fn render_folder_picker_modal(frame: &mut Frame<'_>, picker: &FolderPickerState)
 
     if total > max_visible {
         lines.push(Line::from(Span::styled(
-            format!("  ({} folders — use ↑/↓ to scroll)", total.saturating_sub(2)),
+            format!(
+                "  ({} folders — use ↑/↓ to scroll)",
+                total.saturating_sub(2)
+            ),
             Style::default().fg(MUTED),
         )));
     }
@@ -772,6 +816,114 @@ fn render_folder_picker_modal(frame: &mut Frame<'_>, picker: &FolderPickerState)
         )
         .wrap(Wrap { trim: true });
     frame.render_widget(widget, popup_area);
+}
+
+fn render_resume_picker_modal(frame: &mut Frame<'_>, app: &TuiApp, picker: &ResumePickerState) {
+    let popup_area = centered_rect(82, 62, frame.area());
+    frame.render_widget(Clear, popup_area);
+
+    let now = now_unix_secs();
+    let mut lines: Vec<Line<'_>> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "Pick a previous conversation to continue:",
+        Style::default().fg(MUTED),
+    )));
+    lines.push(Line::from(""));
+
+    if picker.sessions.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No saved chats yet. Your chats are saved automatically as you talk.",
+            Style::default().fg(MUTED),
+        )));
+    } else {
+        let max_visible = (popup_area.height.saturating_sub(8) / 2).max(2) as usize;
+        let total = picker.sessions.len();
+        let start = if picker.selected >= max_visible {
+            (picker.selected + 1).saturating_sub(max_visible)
+        } else {
+            0
+        };
+        let end = (start + max_visible).min(total);
+
+        for idx in start..end {
+            let sess = &picker.sessions[idx];
+            let is_sel = idx == picker.selected;
+            let prefix = if is_sel { "▸ " } else { "  " };
+            let preview_raw = sess
+                .messages
+                .iter()
+                .find(|m| m.role == Role::User)
+                .map(|m| m.content.lines().next().unwrap_or("").trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("(empty chat)");
+            let preview: String = preview_raw.chars().take(52).collect();
+            let ellipsis = if preview_raw.chars().count() > 52 {
+                "…"
+            } else {
+                ""
+            };
+            let age = format_relative_age(now, sess.updated_at);
+            let folder_note = if sess.cwd == app.cwd {
+                "this folder".to_string()
+            } else {
+                format_friendly_path(&sess.cwd)
+            };
+
+            lines.push(Line::from(vec![Span::styled(
+                format!("{prefix}{preview}{ellipsis}"),
+                if is_sel {
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Reset)
+                },
+            )]));
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "    {age}  ·  {} msgs  ·  {folder_note}",
+                    sess.messages.len()
+                ),
+                Style::default().fg(MUTED),
+            )));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("↑/↓", Style::default().fg(ACCENT)),
+        Span::styled(" Move  ·  ", Style::default().fg(MUTED)),
+        Span::styled("Enter", Style::default().fg(ACCENT)),
+        Span::styled(" Resume  ·  ", Style::default().fg(MUTED)),
+        Span::styled("Esc", Style::default().fg(ACCENT)),
+        Span::styled(" Close", Style::default().fg(MUTED)),
+    ]));
+
+    let widget = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(ACCENT))
+                .padding(Padding::uniform(1))
+                .title(Span::styled(
+                    " Resume a Previous Chat ",
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                )),
+        )
+        .wrap(Wrap { trim: true });
+    frame.render_widget(widget, popup_area);
+}
+
+fn format_relative_age(now: u64, then: u64) -> String {
+    let diff = now.saturating_sub(then);
+    if diff < 60 {
+        "just now".to_string()
+    } else if diff < 3600 {
+        format!("{}m ago", diff / 60)
+    } else if diff < 86_400 {
+        format!("{}h ago", diff / 3600)
+    } else {
+        format!("{}d ago", diff / 86_400)
+    }
 }
 
 pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
