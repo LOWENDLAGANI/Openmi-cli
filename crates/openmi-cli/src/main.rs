@@ -240,6 +240,12 @@ async fn main() -> ExitCode {
         }
     };
 
+    if !matches!(cli.command, Some(Commands::Update { .. })) {
+        if let Some(exit_code) = cmd::update::auto_update_before_boot().await {
+            return exit_code;
+        }
+    }
+
     let result: Result<(), CliError> = match cli.command {
         None => {
             cmd::tui::execute(TuiOptions {

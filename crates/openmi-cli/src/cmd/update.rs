@@ -96,6 +96,96 @@ pub fn find_expected_sha256(checksums_text: &str, asset_name: &str) -> Option<St
     None
 }
 
+pub const AUTO_UPDATE_DISABLE_ENV: &str = "OPENMI_NO_AUTO_UPDATE";
+const AUTO_UPDATED_GUARD_ENV: &str = "OPENMI_AUTO_UPDATED";
+
+fn auto_update_disabled() -> bool {
+    if std::env::var(AUTO_UPDATED_GUARD_ENV).as_deref() == Ok("1") {
+        return true;
+    }
+    if let Ok(val) = std::env::var(AUTO_UPDATE_DISABLE_ENV) {
+        let trimmed = val.trim().to_ascii_lowercase();
+        if !trimmed.is_empty() && trimmed != "0" && trimmed != "false" {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check for a newer release before booting the CLI.
+///
+/// Uses a short 3-second timeout for the version check so offline or slow networks never
+/// stall startup. If a newer release exists, downloads, verifies SHA-256, replaces the
+/// binary in place, and re-launches the updated binary with the original arguments.
+/// Returns `Some(exit_code)` when the updated binary was re-launched and has finished;
+/// returns `None` to continue booting the current binary normally.
+pub async fn auto_update_before_boot() -> Option<std::process::ExitCode> {
+    if auto_update_disabled() {
+        return None;
+    }
+
+    let current_exe = std::env::current_exe().ok()?;
+    let url = std::env::var("OPENMI_RELEASE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_RELEASE_API_URL.to_string());
+    let current_version = env!("CARGO_PKG_VERSION");
+
+    // Fast metadata check — fail open if offline or GitHub is slow/rate-limited.
+    let check_client = reqwest::Client::builder()
+        .user_agent(format!("openmi-cli/{current_version}"))
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .ok()?;
+
+    let release: ReleaseInfo = check_client
+        .get(&url)
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+
+    if !is_newer_version(current_version, &release.tag_name) {
+        return None;
+    }
+
+    let latest = release.tag_name.trim_start_matches('v');
+    eprintln!("Updating openmi v{current_version} -> v{latest}...");
+
+    let download_client = reqwest::Client::builder()
+        .user_agent(format!("openmi-cli/{current_version}"))
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .ok()?;
+
+    if let Err(err) = install_release(&download_client, &release, &current_exe).await {
+        eprintln!("Warning: auto-update failed ({err}); continuing with v{current_version}.");
+        return None;
+    }
+
+    eprintln!("Updated openmi to v{latest}. Starting new version...");
+
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    match std::process::Command::new(&current_exe)
+        .args(&args)
+        .env(AUTO_UPDATED_GUARD_ENV, "1")
+        .status()
+    {
+        Ok(status) => {
+            let code = status.code().unwrap_or(1).clamp(0, 255) as u8;
+            Some(std::process::ExitCode::from(code))
+        }
+        Err(err) => {
+            eprintln!("Warning: failed to restart updated binary ({err}); continuing.");
+            None
+        }
+    }
+}
+
 pub async fn execute(check_only: bool, release_url: Option<String>) -> Result<(), CliError> {
     let current_exe = std::env::current_exe().map_err(anyhow::Error::from)?;
     let url = release_url
@@ -142,6 +232,19 @@ pub async fn run_update(
         return Ok(true);
     }
 
+    install_release(&client, &release, target_binary).await?;
+    println!(
+        "Updated openmi to v{latest} at {}.",
+        target_binary.display()
+    );
+    Ok(true)
+}
+
+async fn install_release(
+    client: &reqwest::Client,
+    release: &ReleaseInfo,
+    target_binary: &Path,
+) -> Result<()> {
     let asset_name = current_target_asset_name();
     let asset = release
         .assets
@@ -185,12 +288,7 @@ pub async fn run_update(
         archive_bytes.to_vec()
     };
 
-    replace_executable(target_binary, &binary_bytes)?;
-    println!(
-        "Updated openmi to v{latest} at {}.",
-        target_binary.display()
-    );
-    Ok(true)
+    replace_executable(target_binary, &binary_bytes)
 }
 
 fn extract_binary_from_tar_gz(archive_bytes: &[u8]) -> Result<Vec<u8>> {
