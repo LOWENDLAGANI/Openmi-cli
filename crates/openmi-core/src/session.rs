@@ -1,33 +1,59 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::events::{AgentEvent, ControlState};
-use crate::permissions::{ApprovalHandler, DenyAllApprovalHandler, PermissionMode};
+use crate::llm::{stream_step, ProxyConfig};
+use crate::permissions::{
+    ApprovalDecision, ApprovalHandler, ApprovalRequest, DenyAllApprovalHandler, PermissionMode,
+};
+use crate::tools::{execute_tool, needs_approval};
 use openmi_platform::{PathGuard, PathGuardError};
+
+pub const DEFAULT_MAX_STEPS: u32 = 16;
 
 #[derive(Debug, Error)]
 pub enum CoreError {
     #[error("turn cancelled")]
     Cancelled,
 
+    #[error("authentication required or expired (HTTP 401/403)")]
+    Unauthorized,
+
+    #[error("insufficient credits (HTTP 402)")]
+    OutOfCredits,
+
+    #[error("loop cap exceeded after {0} steps")]
+    LoopCapExceeded(u32),
+
     #[error("path guard rejected access: {0}")]
     PathGuard(#[from] PathGuardError),
 
     #[error("before-write hook failed: {0}")]
     BeforeWriteHook(String),
+
+    #[error("LLM error: {0}")]
+    Llm(String),
+
+    #[error("tool error: {0}")]
+    Tool(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Role {
     System,
     User,
     Assistant,
+    Tool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
     pub content: String,
@@ -42,8 +68,12 @@ pub struct AgentSession {
     permission_mode: PermissionMode,
     path_guard: PathGuard,
     history: Vec<Message>,
+    system_prompt: Option<String>,
     approval_handler: Arc<dyn ApprovalHandler>,
     before_write_hook: Option<BeforeWriteHook>,
+    proxy_config: Option<ProxyConfig>,
+    max_steps: u32,
+    always_approved_tools: HashSet<String>,
 }
 
 impl AgentSession {
@@ -54,8 +84,12 @@ impl AgentSession {
             permission_mode: PermissionMode::Ask,
             path_guard,
             history: Vec::new(),
+            system_prompt: None,
             approval_handler: Arc::new(DenyAllApprovalHandler),
             before_write_hook: None,
+            proxy_config: None,
+            max_steps: DEFAULT_MAX_STEPS,
+            always_approved_tools: HashSet::new(),
         })
     }
 
@@ -83,12 +117,33 @@ impl AgentSession {
         self.before_write_hook = Some(hook);
     }
 
+    pub fn set_proxy_config(&mut self, config: Option<ProxyConfig>) {
+        self.proxy_config = config;
+    }
+
+    pub fn set_max_steps(&mut self, max_steps: u32) {
+        self.max_steps = max_steps.max(1);
+    }
+
+    pub fn set_system_prompt(&mut self, prompt: Option<String>) {
+        self.system_prompt = prompt;
+    }
+
+    pub fn system_prompt(&self) -> Option<&str> {
+        self.system_prompt.as_deref()
+    }
+
     pub fn clear_history(&mut self) {
         self.history.clear();
+        self.always_approved_tools.clear();
     }
 
     pub fn history(&self) -> &[Message] {
         &self.history
+    }
+
+    pub fn set_history(&mut self, messages: Vec<Message>) {
+        self.history = messages;
     }
 
     pub fn workspace_root(&self) -> &Path {
@@ -112,10 +167,23 @@ impl AgentSession {
         Ok(resolved)
     }
 
+    fn build_request_messages(&self) -> Vec<Message> {
+        let mut msgs = Vec::with_capacity(self.history.len() + 1);
+        if let Some(sys) = &self.system_prompt {
+            msgs.push(Message {
+                role: Role::System,
+                content: sys.clone(),
+            });
+        }
+        msgs.extend(self.history.iter().cloned());
+        msgs
+    }
+
     /// Run a single turn, streaming `AgentEvent`s to `event_tx` and honoring `cancel`.
     ///
-    /// In M0 this provides the deterministic local baseline loop; M2 wires the managed Supabase
-    /// SSE proxy transport into this turn loop without changing the UI-facing contract.
+    /// When `proxy_config` is configured, streams from the managed SSE endpoint and executes
+    /// requested tools up to `max_steps`. When unconfigured (e.g. `smoke-test`), runs a local
+    /// deterministic baseline step.
     pub async fn run_turn(
         &mut self,
         prompt: &str,
@@ -132,14 +200,31 @@ impl AgentSession {
                 state: ControlState::Running,
             })
             .await;
+
+        let result = if let Some(proxy) = self.proxy_config.clone() {
+            self.run_proxy_loop(&proxy, &event_tx, &cancel).await
+        } else {
+            self.run_offline_baseline(prompt, &event_tx, &cancel).await
+        };
+
+        let _ = event_tx
+            .send(AgentEvent::ControlStateChanged {
+                state: ControlState::Idle,
+            })
+            .await;
+
+        result
+    }
+
+    async fn run_offline_baseline(
+        &mut self,
+        prompt: &str,
+        event_tx: &mpsc::Sender<AgentEvent>,
+        cancel: &CancellationToken,
+    ) -> Result<(), CoreError> {
         let _ = event_tx.send(AgentEvent::StepStarted { step: 1 }).await;
 
         if cancel.is_cancelled() {
-            let _ = event_tx
-                .send(AgentEvent::ControlStateChanged {
-                    state: ControlState::Idle,
-                })
-                .await;
             return Err(CoreError::Cancelled);
         }
 
@@ -164,19 +249,220 @@ impl AgentSession {
                 finish_reason: "stop".to_string(),
             })
             .await;
+        Ok(())
+    }
+
+    async fn run_proxy_loop(
+        &mut self,
+        proxy: &ProxyConfig,
+        event_tx: &mpsc::Sender<AgentEvent>,
+        cancel: &CancellationToken,
+    ) -> Result<(), CoreError> {
+        for step in 1..=self.max_steps {
+            if cancel.is_cancelled() {
+                return Err(CoreError::Cancelled);
+            }
+
+            let _ = event_tx.send(AgentEvent::StepStarted { step }).await;
+
+            let req_messages = self.build_request_messages();
+            let resp = stream_step(proxy, &self.model, &req_messages, event_tx, cancel).await?;
+
+            if !resp.text.is_empty() {
+                self.history.push(Message {
+                    role: Role::Assistant,
+                    content: resp.text.clone(),
+                });
+            }
+
+            if resp.tool_calls.is_empty() {
+                let _ = event_tx
+                    .send(AgentEvent::TurnCompleted {
+                        finish_reason: resp.finish_reason,
+                    })
+                    .await;
+                return Ok(());
+            }
+
+            for call in resp.tool_calls {
+                if cancel.is_cancelled() {
+                    return Err(CoreError::Cancelled);
+                }
+
+                let require_approval = match needs_approval(&call.tool_name, self.permission_mode) {
+                    Ok(v) => v && !self.always_approved_tools.contains(&call.tool_name),
+                    Err(denied_msg) => {
+                        let _ = event_tx
+                            .send(AgentEvent::ToolCompleted {
+                                call_id: call.call_id.clone(),
+                                tool_name: call.tool_name.clone(),
+                                ok: false,
+                                output: denied_msg.clone(),
+                            })
+                            .await;
+                        self.history.push(Message {
+                            role: Role::Tool,
+                            content: format!("tool `{}` denied: {denied_msg}", call.tool_name),
+                        });
+                        continue;
+                    }
+                };
+
+                if require_approval {
+                    let summary = format!("{} {}", call.tool_name, call.arguments_json);
+                    let _ = event_tx
+                        .send(AgentEvent::ControlStateChanged {
+                            state: ControlState::WaitingForApproval,
+                        })
+                        .await;
+                    let _ = event_tx
+                        .send(AgentEvent::ApprovalRequired {
+                            call_id: call.call_id.clone(),
+                            tool_name: call.tool_name.clone(),
+                            summary: summary.clone(),
+                        })
+                        .await;
+
+                    let decision = tokio::select! {
+                        _ = cancel.cancelled() => return Err(CoreError::Cancelled),
+                        d = self.approval_handler.request_approval(ApprovalRequest {
+                            call_id: call.call_id.clone(),
+                            tool_name: call.tool_name.clone(),
+                            summary,
+                        }) => d,
+                    };
+
+                    let _ = event_tx
+                        .send(AgentEvent::ControlStateChanged {
+                            state: ControlState::Running,
+                        })
+                        .await;
+
+                    match decision {
+                        ApprovalDecision::Approve => {}
+                        ApprovalDecision::ApproveAlways => {
+                            self.always_approved_tools.insert(call.tool_name.clone());
+                        }
+                        ApprovalDecision::Deny => {
+                            let msg = format!("user denied tool `{}`", call.tool_name);
+                            let _ = event_tx
+                                .send(AgentEvent::ToolCompleted {
+                                    call_id: call.call_id.clone(),
+                                    tool_name: call.tool_name.clone(),
+                                    ok: false,
+                                    output: msg.clone(),
+                                })
+                                .await;
+                            self.history.push(Message {
+                                role: Role::Tool,
+                                content: msg,
+                            });
+                            continue;
+                        }
+                    }
+                }
+
+                let _ = event_tx
+                    .send(AgentEvent::ToolStarted {
+                        call_id: call.call_id.clone(),
+                        tool_name: call.tool_name.clone(),
+                    })
+                    .await;
+
+                let exec = execute_tool(
+                    &call.tool_name,
+                    &call.arguments_json,
+                    &self.path_guard,
+                    self.before_write_hook.as_ref(),
+                    cancel,
+                )
+                .await;
+
+                match exec {
+                    Ok(output) => {
+                        let _ = event_tx
+                            .send(AgentEvent::ToolCompleted {
+                                call_id: call.call_id.clone(),
+                                tool_name: call.tool_name.clone(),
+                                ok: true,
+                                output: output.clone(),
+                            })
+                            .await;
+                        self.history.push(Message {
+                            role: Role::Tool,
+                            content: output,
+                        });
+                    }
+                    Err(CoreError::Cancelled) => return Err(CoreError::Cancelled),
+                    Err(err) => {
+                        let msg = err.to_string();
+                        let _ = event_tx
+                            .send(AgentEvent::ToolCompleted {
+                                call_id: call.call_id.clone(),
+                                tool_name: call.tool_name.clone(),
+                                ok: false,
+                                output: msg.clone(),
+                            })
+                            .await;
+                        self.history.push(Message {
+                            role: Role::Tool,
+                            content: format!("error: {msg}"),
+                        });
+                    }
+                }
+            }
+        }
+
         let _ = event_tx
-            .send(AgentEvent::ControlStateChanged {
-                state: ControlState::Idle,
+            .send(AgentEvent::Error {
+                code: "loop_cap".to_string(),
+                message: format!("exceeded maximum step limit ({})", self.max_steps),
             })
             .await;
-        Ok(())
+        Err(CoreError::LoopCapExceeded(self.max_steps))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    async fn spawn_mock_sse_server(
+        responder: impl Fn(usize) -> (u16, String) + Send + Sync + 'static,
+    ) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let counter = Arc::new(AtomicUsize::new(0));
+        let responder = Arc::new(responder);
+
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let c = Arc::clone(&counter);
+                let r = Arc::clone(&responder);
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 16384];
+                    let _ = socket.read(&mut buf).await;
+                    let idx = c.fetch_add(1, Ordering::SeqCst);
+                    let (status, body) = r(idx);
+                    let content_type = if status == 200 {
+                        "text/event-stream"
+                    } else {
+                        "application/json"
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 {status} OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+
+        format!("http://{addr}/functions/v1/chat")
+    }
 
     #[tokio::test]
     async fn run_turn_emits_expected_event_sequence() {
@@ -240,5 +526,129 @@ mod tests {
         let resolved = session.prepare_write("notes.txt").unwrap();
         assert!(resolved.ends_with("notes.txt"));
         assert!(called.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn proxy_sse_streams_tool_call_and_respects_402_and_loop_cap() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // 1. Tool call write_file + follow-up text delta
+        let endpoint = spawn_mock_sse_server(|step| {
+            if step == 0 {
+                (
+                    200,
+                    concat!(
+                        "data: {\"type\":\"tool_call\",\"call_id\":\"c1\",\"tool_name\":\"write_file\",\"arguments\":{\"path\":\"out.txt\",\"content\":\"hi\"}}\n\n",
+                        "data: {\"type\":\"done\",\"finish_reason\":\"tool_calls\"}\n\n"
+                    )
+                    .to_string(),
+                )
+            } else {
+                (
+                    200,
+                    concat!(
+                        "data: {\"type\":\"text_delta\",\"text\":\"Done!\"}\n\n",
+                        "data: {\"type\":\"done\",\"finish_reason\":\"stop\"}\n\n"
+                    )
+                    .to_string(),
+                )
+            }
+        })
+        .await;
+
+        let mut session = AgentSession::new(tmp.path(), "openmi-default").unwrap();
+        session.set_permission_mode(PermissionMode::Trusted);
+        session.set_proxy_config(Some(ProxyConfig {
+            endpoint,
+            bearer_token: "tok".to_string(),
+        }));
+
+        let (tx, mut rx) = mpsc::channel(32);
+        session
+            .run_turn("create out.txt", tx, CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("out.txt")).unwrap(),
+            "hi"
+        );
+
+        let mut saw_tool_ok = false;
+        while let Some(ev) = rx.recv().await {
+            if let AgentEvent::ToolCompleted { ok: true, .. } = ev {
+                saw_tool_ok = true;
+            }
+        }
+        assert!(saw_tool_ok);
+
+        // 2. HTTP 402 -> OutOfCredits
+        let ep_402 = spawn_mock_sse_server(|_| (402, r#"{"error":"out_of_credits"}"#.into())).await;
+        session.set_proxy_config(Some(ProxyConfig {
+            endpoint: ep_402,
+            bearer_token: "tok".to_string(),
+        }));
+        let (tx, _rx) = mpsc::channel(8);
+        let err = session
+            .run_turn("bill me", tx, CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, CoreError::OutOfCredits));
+
+        // 3. Loop cap exceeded
+        let ep_loop = spawn_mock_sse_server(|_| {
+            (
+                200,
+                "data: {\"type\":\"tool_call\",\"call_id\":\"c\",\"tool_name\":\"list_dir\",\"arguments\":{\"path\":\".\"}}\n\n".into(),
+            )
+        })
+        .await;
+        session.set_max_steps(2);
+        session.set_proxy_config(Some(ProxyConfig {
+            endpoint: ep_loop,
+            bearer_token: "tok".to_string(),
+        }));
+        let (tx, _rx) = mpsc::channel(16);
+        let err = session
+            .run_turn("loop forever", tx, CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, CoreError::LoopCapExceeded(2)));
+    }
+
+    #[tokio::test]
+    async fn cancelling_running_command_kills_child_process() {
+        let tmp = tempfile::tempdir().unwrap();
+        let endpoint = spawn_mock_sse_server(|_| {
+            (
+                200,
+                "data: {\"type\":\"tool_call\",\"call_id\":\"c1\",\"tool_name\":\"run_command\",\"arguments\":{\"command\":\"sleep 30\"}}\n\n"
+                    .to_string(),
+            )
+        })
+        .await;
+
+        let mut session = AgentSession::new(tmp.path(), "openmi-default").unwrap();
+        session.set_permission_mode(PermissionMode::Trusted);
+        session.set_proxy_config(Some(ProxyConfig {
+            endpoint,
+            bearer_token: "tok".to_string(),
+        }));
+
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+        let (tx, mut rx) = mpsc::channel(32);
+
+        tokio::spawn(async move {
+            while let Some(ev) = rx.recv().await {
+                if matches!(ev, AgentEvent::ToolStarted { .. }) {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    cancel_clone.cancel();
+                    break;
+                }
+            }
+        });
+
+        let err = session.run_turn("run sleep", tx, cancel).await.unwrap_err();
+        assert!(matches!(err, CoreError::Cancelled));
     }
 }

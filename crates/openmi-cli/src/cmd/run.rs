@@ -1,47 +1,253 @@
 use std::env;
+use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, Result};
 use openmi_checkpoints::CheckpointStore;
-use openmi_core::{AgentEvent, PermissionMode};
+use openmi_core::{PermissionMode, ProxyConfig};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::session::build_session;
+use crate::auth::device_flow::{resolve_api_base_url, DeviceAuthClient};
+use crate::auth::{default_token_store, TokenStore};
+use crate::exit_codes::CliError;
+use crate::output::jsonl::JsonlRenderer;
+use crate::output::text::TextRenderer;
+use crate::output::EventRenderer;
+use crate::session::{build_session_with_options, select_headless_approval_handler};
 
-pub async fn execute(
-    prompt: String,
-    model: String,
-    permission: String,
-    cwd: Option<PathBuf>,
-) -> Result<()> {
-    let mode: PermissionMode = permission.parse().map_err(|e: String| anyhow!(e))?;
-    let workdir = match cwd {
+#[derive(Debug, Clone)]
+pub struct RunOptions {
+    pub prompt: String,
+    pub model: String,
+    pub permission: String,
+    pub cwd: Option<PathBuf>,
+    pub json: bool,
+    pub yes: bool,
+    pub api_url: Option<String>,
+    pub max_steps: Option<u32>,
+}
+
+pub async fn execute(opts: RunOptions) -> Result<(), CliError> {
+    let mode: PermissionMode = opts.permission.parse().map_err(CliError::Usage)?;
+    let workdir = match opts.cwd {
         Some(dir) => dir,
-        None => env::current_dir()?,
+        None => env::current_dir().map_err(anyhow::Error::from)?,
+    };
+
+    // Resolve optional managed proxy config if logged in or explicit API URL is provided.
+    let store = default_token_store()?;
+    let stored = store.load()?;
+    let proxy_config = if let Some(ref tok) = stored {
+        let base_url = resolve_api_base_url(opts.api_url.as_deref(), Some(tok));
+        let client = DeviceAuthClient::new(&base_url)?;
+        let valid = client.ensure_valid_tokens(&store).await?;
+        Some(ProxyConfig {
+            endpoint: format!("{base_url}/functions/v1/chat"),
+            bearer_token: valid.access_token,
+        })
+    } else {
+        opts.api_url.as_deref().map(|explicit| ProxyConfig {
+            endpoint: format!("{}/functions/v1/chat", explicit.trim_end_matches('/')),
+            bearer_token: String::new(),
+        })
     };
 
     let checkpoints = Arc::new(Mutex::new(CheckpointStore::new()));
-    {
-        let mut guard = checkpoints.lock().expect("checkpoint mutex");
-        guard.begin_run();
+    checkpoints.lock().expect("checkpoint mutex").begin_run();
+
+    let approval_handler = select_headless_approval_handler(opts.yes);
+    let mut session = build_session_with_options(
+        &workdir,
+        &opts.model,
+        mode,
+        checkpoints,
+        approval_handler,
+        proxy_config,
+    )?;
+    if let Some(steps) = opts.max_steps {
+        session.set_max_steps(steps);
     }
 
-    let mut session = build_session(&workdir, &model, mode, checkpoints)?;
-    let (tx, mut rx) = mpsc::channel(32);
-    let cancel = CancellationToken::new();
+    let renderer: Box<dyn EventRenderer> = if opts.json {
+        Box::new(JsonlRenderer::new(io::stdout()))
+    } else {
+        Box::new(TextRenderer::new(io::stdout()))
+    };
 
-    let reader = tokio::spawn(async move {
-        while let Some(ev) = rx.recv().await {
-            if let AgentEvent::TextDelta { text } = ev {
-                print!("{text}");
-            }
+    let cancel = CancellationToken::new();
+    let cancel_sig = cancel.clone();
+    let ctrl_c_task = tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            cancel_sig.cancel();
         }
-        println!();
     });
 
-    session.run_turn(&prompt, tx, cancel).await?;
-    reader.await?;
-    Ok(())
+    let res = run_with_renderer(&mut session, &opts.prompt, renderer, cancel).await;
+    ctrl_c_task.abort();
+    res
+}
+
+pub async fn run_with_renderer(
+    session: &mut openmi_core::AgentSession,
+    prompt: &str,
+    mut renderer: Box<dyn EventRenderer>,
+    cancel: CancellationToken,
+) -> Result<(), CliError> {
+    let (tx, mut rx) = mpsc::channel(64);
+    let render_task = tokio::spawn(async move {
+        while let Some(ev) = rx.recv().await {
+            let _ = renderer.render_event(&ev);
+        }
+        let _ = renderer.finish();
+    });
+
+    let turn_res = session.run_turn(prompt, tx, cancel).await;
+    let _ = render_task.await;
+    turn_res.map_err(CliError::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for SharedBuf {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    async fn mock_sse(handler: impl Fn(usize) -> (u16, String) + Send + Sync + 'static) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let count = Arc::new(AtomicUsize::new(0));
+        let handler = Arc::new(handler);
+
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let c = Arc::clone(&count);
+                let h = Arc::clone(&handler);
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 16384];
+                    let _ = sock.read(&mut buf).await;
+                    let idx = c.fetch_add(1, Ordering::SeqCst);
+                    let (status, body) = h(idx);
+                    let resp = format!(
+                        "HTTP/1.1 {status} OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+        format!("http://{addr}/functions/v1/chat")
+    }
+
+    #[tokio::test]
+    async fn snapshot_mock_sse_jsonl_and_text_renderers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let endpoint = mock_sse(|_| {
+            (
+                200,
+                concat!(
+                    "data: {\"type\":\"text_delta\",\"text\":\"Hello \"}\n\n",
+                    "data: {\"type\":\"text_delta\",\"text\":\"Openmi!\"}\n\n",
+                    "data: {\"type\":\"done\",\"finish_reason\":\"stop\"}\n\n"
+                )
+                .to_string(),
+            )
+        })
+        .await;
+
+        let cp = Arc::new(Mutex::new(CheckpointStore::new()));
+        let mut session = build_session_with_options(
+            tmp.path(),
+            "openmi-default",
+            PermissionMode::Ask,
+            cp,
+            select_headless_approval_handler(true),
+            Some(ProxyConfig {
+                endpoint,
+                bearer_token: "tok".into(),
+            }),
+        )
+        .unwrap();
+
+        let out = Arc::new(Mutex::new(Vec::new()));
+        run_with_renderer(
+            &mut session,
+            "say hello",
+            Box::new(JsonlRenderer::new(SharedBuf(Arc::clone(&out)))),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+        let jsonl = String::from_utf8(out.lock().unwrap().clone()).unwrap();
+        let lines: Vec<&str> = jsonl.lines().collect();
+        assert!(lines
+            .iter()
+            .all(|l| l.starts_with(r#"{"schema_version":"1","event":"#)));
+        assert!(jsonl.contains(r#""type":"text_delta","text":"Hello ""#));
+        assert!(jsonl.contains(r#""type":"text_delta","text":"Openmi!""#));
+        assert!(jsonl.contains(r#""type":"turn_completed","finish_reason":"stop""#));
+    }
+
+    #[tokio::test]
+    async fn non_interactive_ask_denies_write_unless_yes_flag() {
+        let tmp = tempfile::tempdir().unwrap();
+        let endpoint = mock_sse(|step| {
+            if step == 0 {
+                (
+                    200,
+                    "data: {\"type\":\"tool_call\",\"call_id\":\"c1\",\"tool_name\":\"write_file\",\"arguments\":{\"path\":\"a.txt\",\"content\":\"ok\"}}\n\n"
+                        .into(),
+                )
+            } else {
+                (
+                    200,
+                    "data: {\"type\":\"text_delta\",\"text\":\"done\"}\n\ndata: {\"type\":\"done\",\"finish_reason\":\"stop\"}\n\n"
+                        .into(),
+                )
+            }
+        })
+        .await;
+
+        // Without --yes and non-interactive deny handler -> file is NOT created.
+        let cp = Arc::new(Mutex::new(CheckpointStore::new()));
+        let mut session = build_session_with_options(
+            tmp.path(),
+            "openmi-default",
+            PermissionMode::Ask,
+            cp,
+            Arc::new(crate::session::NonInteractiveDenyHandler),
+            Some(ProxyConfig {
+                endpoint: endpoint.clone(),
+                bearer_token: "tok".into(),
+            }),
+        )
+        .unwrap();
+
+        let out = Arc::new(Mutex::new(Vec::new()));
+        run_with_renderer(
+            &mut session,
+            "write a.txt",
+            Box::new(TextRenderer::new(SharedBuf(Arc::clone(&out)))),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(!tmp.path().join("a.txt").exists());
+        let text = String::from_utf8(out.lock().unwrap().clone()).unwrap();
+        assert!(text.contains("[tool:err] write_file: user denied tool `write_file`"));
+    }
 }

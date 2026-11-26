@@ -1,11 +1,16 @@
 mod auth;
 mod cmd;
+mod exit_codes;
+mod output;
 mod session;
 
 use std::path::PathBuf;
+use std::process::ExitCode;
 
-use anyhow::Result;
 use clap::{Parser, Subcommand};
+
+use crate::cmd::run::RunOptions;
+use crate::exit_codes::{CliError, EXIT_OK, EXIT_USAGE};
 
 #[derive(Debug, Parser)]
 #[command(name = "openmi", version, about = "Openmi CLI coding agent")]
@@ -41,6 +46,28 @@ enum Commands {
         api_url: Option<String>,
     },
 
+    /// List available Openmi models (with local cache and offline fallback).
+    Models {
+        /// Emit raw JSON instead of a formatted table.
+        #[arg(long)]
+        json: bool,
+
+        /// Override the managed Openmi API base URL.
+        #[arg(long)]
+        api_url: Option<String>,
+    },
+
+    /// Show current Openmi credit balance and plan.
+    Credits {
+        /// Emit raw JSON instead of human-readable text.
+        #[arg(long)]
+        json: bool,
+
+        /// Override the managed Openmi API base URL.
+        #[arg(long)]
+        api_url: Option<String>,
+    },
+
     /// Run a built-in portability and core-wiring smoke test.
     SmokeTest,
 
@@ -60,26 +87,94 @@ enum Commands {
         /// Working directory for the workspace root.
         #[arg(long)]
         cwd: Option<PathBuf>,
+
+        /// Stream versioned JSONL events (one AgentEvent per line).
+        #[arg(long)]
+        json: bool,
+
+        /// Auto-approve tool prompts in Ask mode (useful in non-interactive pipelines).
+        #[arg(long, short = 'y')]
+        yes: bool,
+
+        /// Override the managed Openmi API base URL.
+        #[arg(long)]
+        api_url: Option<String>,
+
+        /// Maximum tool-calling steps before returning loop-cap exit code 5.
+        #[arg(long)]
+        max_steps: Option<u32>,
     },
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    let cli = Cli::parse();
-    match cli.command {
+async fn main() -> ExitCode {
+    let cli = match Cli::try_parse() {
+        Ok(c) => c,
+        Err(err) => {
+            let is_help_or_version = matches!(
+                err.kind(),
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+            );
+            let _ = err.print();
+            return if is_help_or_version {
+                ExitCode::from(EXIT_OK)
+            } else {
+                ExitCode::from(EXIT_USAGE)
+            };
+        }
+    };
+
+    let result: Result<(), CliError> = match cli.command {
         Commands::Login {
             token,
             refresh_token,
             api_url,
-        } => cmd::login::execute(token, refresh_token, api_url).await,
-        Commands::Logout => cmd::logout::execute().await,
-        Commands::Whoami { api_url } => cmd::whoami::execute(api_url).await,
-        Commands::SmokeTest => cmd::smoke::execute().await,
+        } => cmd::login::execute(token, refresh_token, api_url)
+            .await
+            .map_err(map_anyhow_auth),
+        Commands::Logout => cmd::logout::execute().await.map_err(CliError::Other),
+        Commands::Whoami { api_url } => {
+            cmd::whoami::execute(api_url).await.map_err(map_anyhow_auth)
+        }
+        Commands::Models { json, api_url } => cmd::models::execute(json, api_url).await,
+        Commands::Credits { json, api_url } => cmd::credits::execute(json, api_url).await,
+        Commands::SmokeTest => cmd::smoke::execute().await.map_err(CliError::Other),
         Commands::Run {
             prompt,
             model,
             permission,
             cwd,
-        } => cmd::run::execute(prompt, model, permission, cwd).await,
+            json,
+            yes,
+            api_url,
+            max_steps,
+        } => {
+            cmd::run::execute(RunOptions {
+                prompt,
+                model,
+                permission,
+                cwd,
+                json,
+                yes,
+                api_url,
+                max_steps,
+            })
+            .await
+        }
+    };
+
+    match result {
+        Ok(()) => ExitCode::from(EXIT_OK),
+        Err(err) => {
+            eprintln!("error: {err}");
+            err.exit_code()
+        }
+    }
+}
+
+fn map_anyhow_auth(err: anyhow::Error) -> CliError {
+    match err.downcast::<auth::AuthError>() {
+        Ok(auth_err) => CliError::Auth(auth_err),
+        Err(other) => CliError::Other(other),
     }
 }

@@ -652,6 +652,7 @@ name = "openmi-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "futures-util",
  "openmi-platform",
  "reqwest",
  "serde",
