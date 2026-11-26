@@ -15,8 +15,44 @@ use crate::cmd::run::RunOptions;
 use crate::cmd::tui::TuiOptions;
 use crate::exit_codes::{CliError, EXIT_OK, EXIT_USAGE};
 
+const AFTER_HELP: &str = "\
+PERMISSION MODES:
+  read-only    Allow read_file and list_dir only; block all mutating tools.
+  ask          Prompt for approval before writes/commands (default; denies without TTY unless --yes).
+  trusted      Auto-approve workspace tools within PathGuard boundaries.
+  full-access  Unrestricted tool execution (requires typed confirmation in TUI).
+
+EXIT CODES:
+  0    Success
+  1    General error
+  2    CLI usage / invalid arguments
+  3    Authentication required, expired, or revoked
+  4    Out of credits (HTTP 402)
+  5    Agent loop-cap exceeded
+  130  Cancelled (Ctrl-C / SIGINT)
+
+FILES:
+  ~/.config/openmi/credentials.json   Auth tokens (0600 permissions on Unix/Termux)
+  ~/.local/share/openmi/sessions/     Saved interactive sessions (--resume)
+  ~/.cache/openmi/models.json         Cached model catalog
+  OPENMI.md                           Project-specific system instructions in workspace root
+
+EXAMPLES:
+  openmi login
+  openmi
+  openmi --resume
+  openmi run \"explain src/main.rs\" --permission read-only
+  openmi run \"add unit tests\" --json --yes
+  openmi update --check";
+
 #[derive(Debug, Parser)]
-#[command(name = "openmi", version, about = "Openmi CLI coding agent")]
+#[command(
+    name = "openmi",
+    version,
+    about = "Openmi CLI — interactive TUI and headless coding agent",
+    long_about = "Openmi CLI is a cross-platform coding agent for Windows, Linux, macOS, and Termux (Android aarch64).\nRun `openmi` with no subcommand to launch the interactive ratatui TUI, or `openmi run` for headless scripting.",
+    after_help = AFTER_HELP
+)]
 struct Cli {
     /// Model identifier override (when launching the default TUI).
     #[arg(long, default_value = "openmi-default")]
@@ -112,6 +148,17 @@ enum Commands {
         /// Override the managed Openmi API base URL.
         #[arg(long)]
         api_url: Option<String>,
+    },
+
+    /// Check for updates and replace the `openmi` binary from GitHub Releases.
+    Update {
+        /// Check for a newer version without modifying the installed binary.
+        #[arg(long)]
+        check: bool,
+
+        /// Override the GitHub Releases JSON endpoint (useful for testing/mirrors).
+        #[arg(long)]
+        release_url: Option<String>,
     },
 
     /// Run a built-in portability and core-wiring smoke test.
@@ -210,6 +257,9 @@ async fn main() -> ExitCode {
         }
         Some(Commands::Models { json, api_url }) => cmd::models::execute(json, api_url).await,
         Some(Commands::Credits { json, api_url }) => cmd::credits::execute(json, api_url).await,
+        Some(Commands::Update { check, release_url }) => {
+            cmd::update::execute(check, release_url).await
+        }
         Some(Commands::SmokeTest) => cmd::smoke::execute().await.map_err(CliError::Other),
         Some(Commands::Run {
             prompt,
