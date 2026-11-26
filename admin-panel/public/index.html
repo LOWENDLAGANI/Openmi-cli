@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="description" content="Openmi CLI live operations console for AI availability, provider API keys, model catalog, and user credits." />
+  <title>Openmi Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">O</span>
+        <div>
+          <h1>Openmi Control</h1>
+          <p class="brand-sub" id="project-url">Connecting to Supabase…</p>
+        </div>
+      </div>
+
+      <div class="topbar-actions">
+        <div class="status-switch" id="status-switch-wrap">
+          <span class="status-dot" id="ai-status-dot"></span>
+          <span class="status-label" id="ai-status-label">Checking…</span>
+          <label class="toggle" aria-label="Toggle global AI availability">
+            <input type="checkbox" id="ai-enabled-toggle" />
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+        <button type="button" class="btn btn-secondary" id="refresh-btn">Refresh</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <div id="global-error" class="alert alert-error hidden" role="alert"></div>
+
+    <section class="summary-strip" aria-label="Overview metrics">
+      <div class="metric">
+        <span class="metric-label">AI Service</span>
+        <strong class="metric-value" id="metric-ai">—</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">API Key</span>
+        <strong class="metric-value mono" id="metric-key">—</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Cost / Step</span>
+        <strong class="metric-value" id="metric-cost">—</strong>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Registered Users</span>
+        <strong class="metric-value" id="metric-users">—</strong>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="provider-heading">
+      <div class="panel-head">
+        <div>
+          <h2 id="provider-heading">Provider &amp; API Key</h2>
+          <p class="panel-desc">Changes apply immediately to all CLI users. Your API key stays server-side in Supabase.</p>
+        </div>
+        <div class="panel-head-actions">
+          <button type="button" class="btn btn-secondary" id="test-llm-btn">Test Connection</button>
+          <button type="button" class="btn btn-primary" id="save-provider-btn">Save Settings</button>
+        </div>
+      </div>
+
+      <div class="preset-row" role="group" aria-label="Provider presets">
+        <span class="preset-label">Quick preset:</span>
+        <button type="button" class="preset-btn" data-url="https://openrouter.ai/api/v1" data-model="openai/gpt-4o-mini">OpenRouter</button>
+        <button type="button" class="preset-btn" data-url="https://api.openai.com/v1" data-model="gpt-4o-mini">OpenAI</button>
+        <button type="button" class="preset-btn" data-url="https://api.groq.com/openai/v1" data-model="llama-3.3-70b-versatile">Groq</button>
+        <button type="button" class="preset-btn" data-url="https://api.deepseek.com/v1" data-model="deepseek-chat">DeepSeek</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="field">
+          <label for="llm-base-url">LLM Base URL (OpenAI-compatible)</label>
+          <input id="llm-base-url" type="url" class="input mono" placeholder="https://openrouter.ai/api/v1" autocomplete="off" />
+        </div>
+
+        <div class="field">
+          <label for="llm-default-model">Default Model (<code>openmi-default</code>)</label>
+          <input id="llm-default-model" type="text" class="input mono" placeholder="openai/gpt-4o-mini" autocomplete="off" />
+        </div>
+
+        <div class="field field-span-2">
+          <div class="label-row">
+            <label for="llm-api-key">LLM API Key</label>
+            <span class="hint mono" id="current-key-hint">No key stored</span>
+          </div>
+          <div class="input-group">
+            <input id="llm-api-key" type="password" class="input mono" placeholder="Paste new API key to replace stored key…" autocomplete="off" />
+            <button type="button" class="btn btn-ghost" id="toggle-key-vis">Show</button>
+            <button type="button" class="btn btn-danger-ghost" id="clear-key-btn">Clear Key</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="credit-cost">Credit Cost per Chat Step</label>
+          <input id="credit-cost" type="number" min="0" step="1" class="input mono" />
+          <span class="field-help">Set to <code>0</code> to make AI unlimited/free.</span>
+        </div>
+
+        <div class="field">
+          <label for="starter-credits">Starter Credits for New Users</label>
+          <input id="starter-credits" type="number" min="0" step="1" class="input mono" />
+          <span class="field-help">Set to <code>0</code> to require manual top-up before chatting.</span>
+        </div>
+      </div>
+
+      <div id="test-result" class="inline-status hidden"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="models-heading">
+      <div class="panel-head">
+        <div>
+          <h2 id="models-heading">Model Catalog</h2>
+          <p class="panel-desc">Models returned by <code>openmi models</code>. Keep <code>openmi-default</code> as the first entry.</p>
+        </div>
+        <div class="panel-head-actions">
+          <button type="button" class="btn btn-secondary" id="add-model-btn">+ Add Model</button>
+          <button type="button" class="btn btn-primary" id="save-models-btn">Save Catalog</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table" id="models-table">
+          <thead>
+            <tr>
+              <th>Model ID</th>
+              <th>Display Label</th>
+              <th class="col-num">Context Window</th>
+              <th class="col-actions"></th>
+            </tr>
+          </thead>
+          <tbody id="models-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="users-heading">
+      <div class="panel-head">
+        <div>
+          <h2 id="users-heading">Users &amp; Credits</h2>
+          <p class="panel-desc">Manage per-user credit balances, plans, and access. Setting balance to 0 stops AI chat immediately.</p>
+        </div>
+        <div class="panel-head-actions">
+          <input id="user-search" type="search" class="input input-search" placeholder="Filter by email or ID…" />
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table" id="users-table">
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Plan</th>
+              <th>Credits</th>
+              <th>Status</th>
+              <th class="col-actions">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="users-tbody">
+            <tr><td colspan="5" class="empty-cell">Loading users…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

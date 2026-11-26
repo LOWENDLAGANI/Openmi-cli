@@ -3,11 +3,11 @@
 //   GET /functions/v1/credits -> { balance: number, plan: string }
 //
 // Requires `Authorization: Bearer <supabase_access_token>`.
-// Auto-provisions a starter row (free plan, 100 credits) on first access.
+// Auto-provisions a starter row using `public.app_settings.starter_credits` (or env default).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const DEFAULT_STARTER_CREDITS = Number(Deno.env.get("OPENMI_STARTER_CREDITS") ?? "100");
+const ENV_STARTER_CREDITS = Number(Deno.env.get("OPENMI_STARTER_CREDITS") ?? "100");
 const DEFAULT_PLAN = Deno.env.get("OPENMI_DEFAULT_PLAN") ?? "free";
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -66,7 +66,20 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  const starterBalance = Number.isFinite(DEFAULT_STARTER_CREDITS) ? DEFAULT_STARTER_CREDITS : 100;
+  let starterBalance = Number.isFinite(ENV_STARTER_CREDITS) ? ENV_STARTER_CREDITS : 100;
+  try {
+    const { data: cfg } = await admin
+      .from("app_settings")
+      .select("starter_credits")
+      .eq("id", 1)
+      .maybeSingle();
+    if (typeof cfg?.starter_credits === "number" && cfg.starter_credits >= 0) {
+      starterBalance = cfg.starter_credits;
+    }
+  } catch (_) {
+    // Ignore if app_settings is not migrated yet.
+  }
+
   const { data: created, error: insertErr } = await admin
     .from("user_credits")
     .upsert(

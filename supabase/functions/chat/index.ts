@@ -161,19 +161,58 @@ Deno.serve(async (req: Request) => {
   }
   const userId = userData.user.id;
 
-  // 2. Check upstream LLM configuration
-  const llmApiKey = (Deno.env.get("LLM_API_KEY") ?? "").trim();
-  if (!llmApiKey) {
+  // 2. Load live admin settings from public.app_settings (falling back to env secrets)
+  let aiEnabled = true;
+  let dbApiKey = "";
+  let dbBaseUrl = "";
+  let dbDefaultModel = "";
+  let dbCreditCost: number | null = null;
+  let dbStarterCredits: number | null = null;
+
+  try {
+    const { data: cfg } = await admin
+      .from("app_settings")
+      .select("ai_enabled, llm_base_url, llm_api_key, llm_default_model, credit_cost, starter_credits")
+      .eq("id", 1)
+      .maybeSingle();
+    if (cfg) {
+      if (typeof cfg.ai_enabled === "boolean") aiEnabled = cfg.ai_enabled;
+      if (typeof cfg.llm_api_key === "string") dbApiKey = cfg.llm_api_key.trim();
+      if (typeof cfg.llm_base_url === "string") dbBaseUrl = cfg.llm_base_url.trim();
+      if (typeof cfg.llm_default_model === "string") dbDefaultModel = cfg.llm_default_model.trim();
+      if (typeof cfg.credit_cost === "number") dbCreditCost = cfg.credit_cost;
+      if (typeof cfg.starter_credits === "number") dbStarterCredits = cfg.starter_credits;
+    }
+  } catch (_) {
+    // Fall back to env secrets if app_settings is not migrated yet.
+  }
+
+  if (!aiEnabled) {
     return jsonResponse(
       {
-        error: "llm_not_configured",
-        message: "Server missing LLM_API_KEY secret. Configure it in Supabase Edge Function secrets.",
+        error: "ai_disabled",
+        message: "AI is temporarily paused by the administrator.",
       },
       503,
     );
   }
-  const llmBaseUrl = (Deno.env.get("LLM_BASE_URL") ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
-  const defaultModel = (Deno.env.get("LLM_DEFAULT_MODEL") ?? DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+
+  const llmApiKey = dbApiKey || (Deno.env.get("LLM_API_KEY") ?? "").trim();
+  if (!llmApiKey) {
+    return jsonResponse(
+      {
+        error: "llm_not_configured",
+        message: "Server missing LLM API key. Set it in the Admin Panel or Supabase Secrets.",
+      },
+      503,
+    );
+  }
+  const llmBaseUrl = (dbBaseUrl || Deno.env.get("LLM_BASE_URL") || DEFAULT_BASE_URL).replace(
+    /\/+$/,
+    "",
+  );
+  const defaultModel =
+    (dbDefaultModel || Deno.env.get("LLM_DEFAULT_MODEL") || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
 
   // 3. Parse request body
   const body = await req.json().catch(() => null);
@@ -190,9 +229,13 @@ Deno.serve(async (req: Request) => {
     !requestedModel || requestedModel === "openmi-default" ? defaultModel : requestedModel;
 
   // 4. Ensure user_credits row exists and atomically deduct step cost
-  const creditCostRaw = Number(Deno.env.get("OPENMI_CREDIT_COST") ?? "1");
+  const creditCostRaw =
+    dbCreditCost !== null ? dbCreditCost : Number(Deno.env.get("OPENMI_CREDIT_COST") ?? "1");
   const creditCost = Number.isFinite(creditCostRaw) && creditCostRaw >= 0 ? Math.floor(creditCostRaw) : 1;
-  const starterCreditsRaw = Number(Deno.env.get("OPENMI_STARTER_CREDITS") ?? "100");
+  const starterCreditsRaw =
+    dbStarterCredits !== null
+      ? dbStarterCredits
+      : Number(Deno.env.get("OPENMI_STARTER_CREDITS") ?? "100");
   const starterCredits = Number.isFinite(starterCreditsRaw) ? Math.floor(starterCreditsRaw) : 100;
 
   if (creditCost > 0) {

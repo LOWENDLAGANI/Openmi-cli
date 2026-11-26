@@ -1,0 +1,7 @@
+{
+  "name": "openmi-admin-panel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Zero-dependency Vercel admin panel for Openmi CLI (AI kill switch, API key, models, credits, and users)."
+}
