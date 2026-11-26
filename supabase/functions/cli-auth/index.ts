@@ -128,11 +128,11 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ ok: true }, 200);
   }
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const supabaseUrl = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const publicVerifyBase =
-    Deno.env.get("OPENMI_CLI_VERIFY_URL") ??
-    `${new URL(req.url).origin}/functions/v1/cli-auth/verify`;
+    (Deno.env.get("OPENMI_CLI_VERIFY_URL") ?? "").trim() ||
+    `${supabaseUrl || new URL(req.url).origin.replace(/^http:\/\//, "https://")}/functions/v1/cli-auth/verify`;
 
   const admin = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
