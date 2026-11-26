@@ -21,7 +21,7 @@ function jsonResponse(body: unknown, status = 200): Response {
       "Content-Type": "application/json",
       "Cache-Control": "no-store",
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "authorization, content-type",
+      "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     },
   });
@@ -42,6 +42,21 @@ function generateUserCode(): string {
     out += USER_CODE_ALPHABET[bytes[i] % USER_CODE_ALPHABET.length];
   }
   return out;
+}
+
+// Read the `exp` claim (unix seconds) from a JWT without verifying it; the token itself was
+// already validated via `admin.auth.getUser`. Falls back to `fallbackSecs` from now.
+function jwtExpiryIso(token: string, fallbackSecs: number): string {
+  try {
+    const payload = token.split(".")[1] ?? "";
+    const json = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+    if (typeof json.exp === "number" && json.exp > 0) {
+      return new Date(json.exp * 1000).toISOString();
+    }
+  } catch (_) {
+    // ignore malformed payloads
+  }
+  return new Date(Date.now() + fallbackSecs * 1000).toISOString();
 }
 
 async function sha256Hex(value: string): Promise<string> {
@@ -75,6 +90,8 @@ function renderVerifyHtml(prefillCode: string, approveUrl: string): string {
     <input id="code" value="${safeCode}" placeholder="ABCD-EFGH" autocomplete="off" />
     <label for="token">Supabase Access Token (from your signed-in Openmi session)</label>
     <input id="token" type="password" placeholder="Paste session access token" />
+    <label for="refresh">Refresh Token (optional, keeps the CLI signed in past 1 hour)</label>
+    <input id="refresh" type="password" placeholder="Paste session refresh token" />
     <button id="approve">Approve Device</button>
     <button id="deny" class="deny">Deny</button>
     <div id="status"></div>
@@ -83,6 +100,7 @@ function renderVerifyHtml(prefillCode: string, approveUrl: string): string {
     async function submitDecision(action) {
       const code = document.getElementById("code").value.trim().toUpperCase();
       const token = document.getElementById("token").value.trim();
+      const refresh = document.getElementById("refresh").value.trim();
       const status = document.getElementById("status");
       status.textContent = "Submitting...";
       const res = await fetch(${JSON.stringify(approveUrl)}, {
@@ -91,7 +109,7 @@ function renderVerifyHtml(prefillCode: string, approveUrl: string): string {
           "Content-Type": "application/json",
           "Authorization": "Bearer " + token
         },
-        body: JSON.stringify({ user_code: code, action })
+        body: JSON.stringify(refresh ? { user_code: code, action, refresh_token: refresh } : { user_code: code, action })
       });
       const data = await res.json().catch(() => ({}));
       status.textContent = res.ok
@@ -213,7 +231,7 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ status: "denied" });
     }
 
-    const tokenExpiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
+    const tokenExpiresAt = jwtExpiryIso(bearer, 3600);
     const { error: updateErr } = await admin
       .from("device_codes")
       .update({

@@ -1,0 +1,9 @@
+# Supabase CLI project configuration (partial). Only function-level overrides live here.
+project_id = "umjlmqeghfrfpduhkits"
+
+# `cli-auth` must accept unauthenticated requests: the CLI calls /start and /poll before it
+# has a user session, and browsers open GET /verify without a JWT. The publishable key
+# (sb_publishable_…) is not a JWT, so gateway JWT verification would reject those calls.
+# /approve still validates the user's bearer token itself via `admin.auth.getUser`.
+[functions.cli-auth]
+verify_jwt = false

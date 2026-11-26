@@ -6,7 +6,36 @@ use tokio::time::sleep;
 
 use crate::auth::store::{now_unix_secs, TokenSet, TokenStore};
 
-pub const DEFAULT_API_BASE_URL: &str = "https://api.openmi.dev";
+/// Production Openmi backend (Supabase project). Used when neither `--api-url`,
+/// `OPENMI_API_URL`, nor a stored credential base URL is available.
+pub const DEFAULT_API_BASE_URL: &str = "https://umjlmqeghfrfpduhkits.supabase.co";
+
+/// Public (publishable) Supabase key for the production project. Required as the `apikey`
+/// header by the Supabase API gateway for GoTrue routes (`/auth/v1/*`). It is safe to embed:
+/// it grants no privileges beyond what RLS / Edge Function auth already allow.
+pub const DEFAULT_SUPABASE_ANON_KEY: &str = "sb_publishable_5VfWWlMRio4X-dCfq8IZnw_oYPbh6db";
+
+/// Env var that overrides the publishable/anon key (e.g. for staging projects).
+pub const ANON_KEY_ENV: &str = "OPENMI_SUPABASE_ANON_KEY";
+
+/// Choose the `apikey` header value for `base_url`.
+///
+/// An explicit env override always wins. The built-in key is only used for the default
+/// production project, since sending it to another Supabase project would be rejected.
+pub fn select_anon_key(base_url: &str, env_override: Option<String>) -> Option<String> {
+    if let Some(key) = env_override.filter(|k| !k.trim().is_empty()) {
+        return Some(key.trim().to_string());
+    }
+    if base_url.trim_end_matches('/') == DEFAULT_API_BASE_URL {
+        return Some(DEFAULT_SUPABASE_ANON_KEY.to_string());
+    }
+    None
+}
+
+/// Resolve the `apikey` header value for `base_url` using `OPENMI_SUPABASE_ANON_KEY`.
+pub fn resolve_anon_key(base_url: &str) -> Option<String> {
+    select_anon_key(base_url, std::env::var(ANON_KEY_ENV).ok())
+}
 
 #[derive(Debug, Error)]
 pub enum AuthError {
@@ -115,6 +144,7 @@ pub struct DeviceAuthClient {
     base_url: String,
     http: reqwest::Client,
     min_poll_delay: Duration,
+    anon_key: Option<String>,
 }
 
 impl DeviceAuthClient {
@@ -122,11 +152,34 @@ impl DeviceAuthClient {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()?;
+        let base_url = base_url.into().trim_end_matches('/').to_string();
+        let anon_key = resolve_anon_key(&base_url);
         Ok(Self {
-            base_url: base_url.into().trim_end_matches('/').to_string(),
+            base_url,
             http,
             min_poll_delay: Duration::from_secs(1),
+            anon_key,
         })
+    }
+
+    /// Override the Supabase `apikey` header value (`None` disables it).
+    #[cfg(test)]
+    pub fn with_anon_key(mut self, key: Option<String>) -> Self {
+        self.anon_key = key.filter(|k| !k.trim().is_empty());
+        self
+    }
+
+    /// Build a request, attaching the Supabase `apikey` header when configured.
+    ///
+    /// The gateway requires `apikey` on `/auth/v1/*`; it is harmless on `/functions/v1/*`.
+    /// Publishable keys (`sb_publishable_…`) are not JWTs, so they are never sent as
+    /// `Authorization: Bearer` — only the user's access token is.
+    fn request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
+        let mut req = self.http.request(method, url);
+        if let Some(key) = &self.anon_key {
+            req = req.header("apikey", key);
+        }
+        req
     }
 
     #[cfg(test)]
@@ -139,8 +192,7 @@ impl DeviceAuthClient {
     pub async fn start_device_flow(&self) -> Result<DeviceStartResponse, AuthError> {
         let url = format!("{}/functions/v1/cli-auth/start", self.base_url);
         let resp = self
-            .http
-            .post(&url)
+            .request(reqwest::Method::POST, &url)
             .json(&serde_json::json!({}))
             .send()
             .await?;
@@ -159,8 +211,7 @@ impl DeviceAuthClient {
     pub async fn poll_once(&self, device_code: &str) -> Result<DevicePollResponse, AuthError> {
         let url = format!("{}/functions/v1/cli-auth/poll", self.base_url);
         let resp = self
-            .http
-            .post(&url)
+            .request(reqwest::Method::POST, &url)
             .json(&serde_json::json!({ "device_code": device_code }))
             .send()
             .await?;
@@ -253,8 +304,7 @@ impl DeviceAuthClient {
         }
         let url = format!("{}/auth/v1/token?grant_type=refresh_token", self.base_url);
         let resp = self
-            .http
-            .post(&url)
+            .request(reqwest::Method::POST, &url)
             .json(&serde_json::json!({ "refresh_token": current.refresh_token }))
             .send()
             .await?;
@@ -291,7 +341,11 @@ impl DeviceAuthClient {
     /// Fetch the authenticated user profile using a bearer access token.
     pub async fn whoami(&self, access_token: &str) -> Result<WhoAmI, AuthError> {
         let url = format!("{}/auth/v1/user", self.base_url);
-        let resp = self.http.get(&url).bearer_auth(access_token).send().await?;
+        let resp = self
+            .request(reqwest::Method::GET, &url)
+            .bearer_auth(access_token)
+            .send()
+            .await?;
         let status = resp.status().as_u16();
         if status == 401 || status == 403 {
             return Err(AuthError::Revoked);
@@ -502,5 +556,70 @@ mod tests {
         let err = client.ensure_valid_tokens(&store).await.unwrap_err();
         assert!(matches!(err, AuthError::Revoked));
         assert!(err.to_string().contains("openmi login"));
+    }
+
+    #[test]
+    fn default_api_url_is_production_supabase() {
+        assert_eq!(
+            DEFAULT_API_BASE_URL,
+            "https://umjlmqeghfrfpduhkits.supabase.co"
+        );
+        // Explicit override always wins and is normalized.
+        assert_eq!(
+            resolve_api_base_url(Some("https://example.test/"), None),
+            "https://example.test"
+        );
+    }
+
+    #[test]
+    fn anon_key_only_defaults_for_production_project() {
+        assert_eq!(
+            select_anon_key(DEFAULT_API_BASE_URL, None).as_deref(),
+            Some(DEFAULT_SUPABASE_ANON_KEY)
+        );
+        assert_eq!(
+            select_anon_key(&format!("{DEFAULT_API_BASE_URL}/"), None).as_deref(),
+            Some(DEFAULT_SUPABASE_ANON_KEY)
+        );
+        assert_eq!(select_anon_key("http://127.0.0.1:9999", None), None);
+        assert_eq!(
+            select_anon_key("http://127.0.0.1:9999", Some("custom".into())).as_deref(),
+            Some("custom")
+        );
+        assert_eq!(
+            select_anon_key(DEFAULT_API_BASE_URL, Some("  ".into())).as_deref(),
+            Some(DEFAULT_SUPABASE_ANON_KEY)
+        );
+    }
+
+    #[tokio::test]
+    async fn whoami_sends_apikey_and_bearer_headers() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 8192];
+            let n = socket.read(&mut buf).await.unwrap_or(0);
+            let _ = tx.send(String::from_utf8_lossy(&buf[..n]).to_string());
+            let body = r#"{"id":"u-1","email":"a@b.c","aud":"authenticated"}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = socket.write_all(resp.as_bytes()).await;
+        });
+
+        let client = DeviceAuthClient::new(format!("http://{addr}"))
+            .unwrap()
+            .with_anon_key(Some("sb_publishable_test".into()));
+        let me = client.whoami("user-jwt").await.unwrap();
+        assert_eq!(me.id, "u-1");
+        assert_eq!(me.plan, None);
+
+        let raw = rx.await.unwrap().to_ascii_lowercase();
+        assert!(raw.starts_with("get /auth/v1/user "));
+        assert!(raw.contains("apikey: sb_publishable_test"));
+        assert!(raw.contains("authorization: bearer user-jwt"));
     }
 }

@@ -116,7 +116,7 @@ mod tests {
             expires_at: now_unix_secs() + 3600,
             user_id: Some("u-1".to_string()),
             email: Some("dev@openmi.dev".to_string()),
-            api_base_url: Some("https://api.openmi.dev".to_string()),
+            api_base_url: Some("https://umjlmqeghfrfpduhkits.supabase.co".to_string()),
         };
 
         store.save(&tokens).unwrap();

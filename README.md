@@ -45,6 +45,20 @@ openmi credits
 openmi update
 ```
 
+### Backend configuration
+
+By default the CLI talks to the production Openmi backend at
+`https://umjlmqeghfrfpduhkits.supabase.co`. Resolution order for the API base URL:
+
+1. `--api-url <URL>`
+2. `OPENMI_API_URL`
+3. The base URL saved with your credentials at `openmi login`
+4. The built-in production URL
+
+The Supabase publishable key (sent as the `apikey` header, required by `/auth/v1/*`) is built in
+for the production project. Set `OPENMI_SUPABASE_ANON_KEY` to override it when pointing at
+another Supabase project.
+
 ## Interactive TUI Features
 
 - **Layout**: Scrollable transcript, live tool timeline, multiline prompt (`Enter` send, `Shift+Enter` / `Alt+Enter` newline, `↑`/`↓` prompt history), and status bar (`model | mode | credits | cwd | git`).
