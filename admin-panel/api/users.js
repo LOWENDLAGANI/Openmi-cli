@@ -11,7 +11,9 @@ export default async function handler(req, res) {
     if (req.method === "GET") {
       const [authData, creditRows] = await Promise.all([
         supabaseFetch("/auth/v1/admin/users?page=1&per_page=200"),
-        supabaseFetch("/rest/v1/user_credits?select=user_id,plan,balance,updated_at"),
+        supabaseFetch(
+          "/rest/v1/user_credits?select=user_id,plan,balance,wallet_credit,paid_until,has_paid,active_model,pass_expires_at,updated_at",
+        ),
       ]);
 
       const creditMap = new Map();
@@ -21,17 +23,27 @@ export default async function handler(req, res) {
         }
       }
 
+      const nowMs = Date.now();
       const rawUsers = Array.isArray(authData?.users) ? authData.users : [];
       const users = rawUsers.map((u) => {
         const c = creditMap.get(u.id);
+        const paidUntil = c?.paid_until || null;
+        const isPaid = Boolean(paidUntil && Date.parse(paidUntil) > nowMs);
+        const passActive = Boolean(c?.active_model && c?.pass_expires_at && Date.parse(c.pass_expires_at) > nowMs);
         return {
           id: u.id,
           email: u.email || "(no email)",
           created_at: u.created_at || null,
           last_sign_in_at: u.last_sign_in_at || null,
           banned: isCurrentlyBanned(u),
-          plan: c ? String(c.plan) : "free",
+          plan: isPaid ? "paid" : "free",
+          is_paid: isPaid,
+          has_paid: Boolean(c?.has_paid),
+          paid_until: paidUntil,
           balance: c ? Number(c.balance) : null,
+          wallet_credit: c ? Number(c.wallet_credit || 0) : 0,
+          active_model: passActive ? c.active_model : null,
+          pass_expires_at: passActive ? c.pass_expires_at : null,
           credits_updated_at: c ? c.updated_at : null,
         };
       });
@@ -59,9 +71,9 @@ export default async function handler(req, res) {
           }),
         });
         const newId = created?.id;
-        if (newId && (body.balance !== undefined || body.plan)) {
-          const balance = Math.max(0, Math.floor(Number(body.balance) || 0));
-          const plan = String(body.plan || "free").trim() || "free";
+        if (newId) {
+          const balance = Math.max(0, Math.floor(Number(body.balance) || 6));
+          const plan = String(body.plan || "free").trim() === "paid" ? "paid" : "free";
           await supabaseFetch("/rest/v1/user_credits?on_conflict=user_id", {
             method: "POST",
             headers: { Prefer: "resolution=merge-duplicates" },
@@ -69,9 +81,16 @@ export default async function handler(req, res) {
               user_id: newId,
               plan,
               balance,
+              wallet_credit: 0,
               updated_at: new Date().toISOString(),
             }),
           });
+          if (plan === "paid") {
+            await supabaseFetch("/rest/v1/rpc/admin_set_pass", {
+              method: "POST",
+              body: JSON.stringify({ p_user_id: newId, p_days: 30, p_note: "Created as Paid", p_actor: "admin-panel" }),
+            });
+          }
         }
         return sendJson(res, 200, { ok: true, id: newId, email });
       }
@@ -97,21 +116,52 @@ export default async function handler(req, res) {
         return sendJson(res, 200, { ok: true, user_id: userId, banned });
       }
 
+      if (body.action === "grant_wallet") {
+        const delta = Math.floor(Number(body.delta) || 0);
+        const result = await supabaseFetch("/rest/v1/rpc/admin_grant_credit", {
+          method: "POST",
+          body: JSON.stringify({
+            p_user_id: userId,
+            p_wallet_delta: delta,
+            p_note: String(body.note || "Admin wallet adjustment").trim(),
+            p_actor: "admin-panel",
+          }),
+        });
+        return sendJson(res, 200, { ok: true, user_credits: result });
+      }
+
+      if (body.action === "set_pass") {
+        const days = Math.floor(Number(body.days) || 0);
+        const result = await supabaseFetch("/rest/v1/rpc/admin_set_pass", {
+          method: "POST",
+          body: JSON.stringify({
+            p_user_id: userId,
+            p_days: days,
+            p_note: String(body.note || "").trim(),
+            p_actor: "admin-panel",
+          }),
+        });
+        return sendJson(res, 200, { ok: true, user_credits: result });
+      }
+
       if (body.action === "update_credits") {
         const balance = Number(body.balance);
+        const wallet = body.wallet_credit !== undefined ? Number(body.wallet_credit) : undefined;
         if (!Number.isFinite(balance) || balance < 0) {
           return sendJson(res, 400, { error: "balance must be a non-negative number" });
         }
-        const plan = String(body.plan || "free").trim() || "free";
+        const payload = {
+          user_id: userId,
+          balance: Math.floor(balance),
+          updated_at: new Date().toISOString(),
+        };
+        if (wallet !== undefined && Number.isFinite(wallet) && wallet >= 0) {
+          payload.wallet_credit = Math.floor(wallet);
+        }
         const row = await supabaseFetch("/rest/v1/user_credits?on_conflict=user_id", {
           method: "POST",
           headers: { Prefer: "return=representation,resolution=merge-duplicates" },
-          body: JSON.stringify({
-            user_id: userId,
-            plan,
-            balance: Math.floor(balance),
-            updated_at: new Date().toISOString(),
-          }),
+          body: JSON.stringify(payload),
         });
         const saved = Array.isArray(row) ? row[0] : row;
         return sendJson(res, 200, { ok: true, user_credits: saved });

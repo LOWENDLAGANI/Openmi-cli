@@ -9,18 +9,21 @@
 //     data: {"type":"done","finish_reason":"stop"|"tool_calls"|...}
 //     data: {"type":"error","code":"...","message":"..."}
 //
-// Required secret:
-//   LLM_API_KEY               -> API key for your OpenAI-compatible LLM provider
-// Optional secrets:
-//   LLM_BASE_URL              -> Defaults to "https://openrouter.ai/api/v1"
-//   LLM_DEFAULT_MODEL         -> Model used when CLI sends "openmi-default" (default: "openai/gpt-4o-mini")
-//   OPENMI_CREDIT_COST        -> Credits deducted per step (default: 1; set 0 to disable)
-//   OPENMI_STARTER_CREDITS    -> Starter credits auto-provisioned for new users (default: 100)
+// Billing model:
+//   - Free tier: 6 credits/day (00:00 UTC reset, no rollover)
+//   - Paid pass (paid_until > now): 15 credits/day + unlocks paid_only models
+//   - Wallet credit: never expires; spent only after daily balance is exhausted
+//   - Hourly model pass: first prompt to a model deducts its hourly credit_cost and
+//     grants 60 minutes (server time) of unlimited prompts to that model.
+//     Single active pass at a time (prompting another model replaces the previous pass).
+//   - Automatic metering refund: if upstream LLM fails on the exact request that started
+//     a brand-new pass, refund_hour_session returns exact daily & wallet portions and ends the hour.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_MODEL = "openai/gpt-4o-mini";
+const DEFAULT_PAYMENT_LINK = "https://sociabuzz.com/minetallestmc/tribe";
 
 const BUILTIN_TOOLS = [
   {
@@ -85,6 +88,8 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Expose-Headers":
+    "X-Openmi-Plan, X-Openmi-Credits-Remaining, X-Openmi-Wallet-Credit, X-Openmi-Active-Model, X-Openmi-Pass-Expires-At",
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -107,6 +112,13 @@ interface IncomingMessage {
   content: string;
 }
 
+interface CatalogModel {
+  id: string;
+  label?: string;
+  credit_cost?: number;
+  paid_only?: boolean;
+}
+
 function normalizeMessages(raw: unknown): Array<{ role: string; content: string }> {
   if (!Array.isArray(raw)) return [];
   const out: Array<{ role: string; content: string }> = [];
@@ -116,8 +128,6 @@ function normalizeMessages(raw: unknown): Array<{ role: string; content: string 
     const role = typeof msg.role === "string" ? msg.role.toLowerCase() : "user";
     const content = typeof msg.content === "string" ? msg.content : "";
     if (role === "tool") {
-      // Openmi's wire schema sends `{ role: "tool", content }` without `tool_call_id`.
-      // Translating to a labeled user message keeps all OpenAI-compatible providers happy.
       out.push({ role: "user", content: `[Tool Result]\n${content}` });
     } else if (role === "system" || role === "user" || role === "assistant") {
       out.push({ role, content });
@@ -132,6 +142,24 @@ interface PendingToolCall {
   id: string;
   name: string;
   arguments: string;
+}
+
+function resolveModelPricing(
+  catalog: CatalogModel[],
+  requestedModel: string,
+  upstreamModel: string,
+  fallbackCost: number,
+): { passModelId: string; creditCost: number; paidOnly: boolean } {
+  const byRequested = catalog.find((m) => m.id === requestedModel);
+  const byUpstream = catalog.find((m) => m.id === upstreamModel);
+  const matched = byRequested ?? byUpstream;
+  const passModelId = requestedModel || "openmi-default";
+  const creditCost =
+    matched && typeof matched.credit_cost === "number" && Number.isFinite(matched.credit_cost) && matched.credit_cost >= 0
+      ? Math.floor(matched.credit_cost)
+      : fallbackCost;
+  const paidOnly = Boolean(matched?.paid_only);
+  return { passModelId, creditCost, paidOnly };
 }
 
 Deno.serve(async (req: Request) => {
@@ -166,13 +194,17 @@ Deno.serve(async (req: Request) => {
   let dbApiKey = "";
   let dbBaseUrl = "";
   let dbDefaultModel = "";
-  let dbCreditCost: number | null = null;
-  let dbStarterCredits: number | null = null;
+  let dbCreditCost = 3;
+  let dbPassDurationMinutes = 60;
+  let dbPaymentLink = DEFAULT_PAYMENT_LINK;
+  let dbModels: CatalogModel[] = [];
 
   try {
     const { data: cfg } = await admin
       .from("app_settings")
-      .select("ai_enabled, llm_base_url, llm_api_key, llm_default_model, credit_cost, starter_credits")
+      .select(
+        "ai_enabled, llm_base_url, llm_api_key, llm_default_model, credit_cost, pass_duration_minutes, payment_link, models",
+      )
       .eq("id", 1)
       .maybeSingle();
     if (cfg) {
@@ -180,8 +212,16 @@ Deno.serve(async (req: Request) => {
       if (typeof cfg.llm_api_key === "string") dbApiKey = cfg.llm_api_key.trim();
       if (typeof cfg.llm_base_url === "string") dbBaseUrl = cfg.llm_base_url.trim();
       if (typeof cfg.llm_default_model === "string") dbDefaultModel = cfg.llm_default_model.trim();
-      if (typeof cfg.credit_cost === "number") dbCreditCost = cfg.credit_cost;
-      if (typeof cfg.starter_credits === "number") dbStarterCredits = cfg.starter_credits;
+      if (typeof cfg.credit_cost === "number" && cfg.credit_cost >= 0) dbCreditCost = Math.floor(cfg.credit_cost);
+      if (typeof cfg.pass_duration_minutes === "number" && cfg.pass_duration_minutes > 0) {
+        dbPassDurationMinutes = Math.floor(cfg.pass_duration_minutes);
+      }
+      if (typeof cfg.payment_link === "string" && /^https?:\/\//i.test(cfg.payment_link.trim())) {
+        dbPaymentLink = cfg.payment_link.trim();
+      }
+      if (Array.isArray(cfg.models)) {
+        dbModels = cfg.models as CatalogModel[];
+      }
     }
   } catch (_) {
     // Fall back to env secrets if app_settings is not migrated yet.
@@ -213,6 +253,7 @@ Deno.serve(async (req: Request) => {
   );
   const defaultModel =
     (dbDefaultModel || Deno.env.get("LLM_DEFAULT_MODEL") || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+  const upgradeLink = (Deno.env.get("OPENMI_PAY_URL") || dbPaymentLink || DEFAULT_PAYMENT_LINK).trim();
 
   // 3. Parse request body
   const body = await req.json().catch(() => null);
@@ -224,40 +265,80 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "invalid_request", message: "messages array is required" }, 400);
   }
 
-  const requestedModel = String((body as Record<string, unknown>).model ?? "").trim();
-  const upstreamModel =
-    !requestedModel || requestedModel === "openmi-default" ? defaultModel : requestedModel;
+  const requestedModel = String((body as Record<string, unknown>).model ?? "").trim() || "openmi-default";
+  const upstreamModel = requestedModel === "openmi-default" ? defaultModel : requestedModel;
+  const { passModelId, creditCost, paidOnly } = resolveModelPricing(
+    dbModels,
+    requestedModel,
+    upstreamModel,
+    dbCreditCost,
+  );
 
-  // 4. Ensure user_credits row exists and atomically deduct step cost
-  const creditCostRaw =
-    dbCreditCost !== null ? dbCreditCost : Number(Deno.env.get("OPENMI_CREDIT_COST") ?? "1");
-  const creditCost = Number.isFinite(creditCostRaw) && creditCostRaw >= 0 ? Math.floor(creditCostRaw) : 1;
-  const starterCreditsRaw =
-    dbStarterCredits !== null
-      ? dbStarterCredits
-      : Number(Deno.env.get("OPENMI_STARTER_CREDITS") ?? "100");
-  const starterCredits = Number.isFinite(starterCreditsRaw) ? Math.floor(starterCreditsRaw) : 100;
+  // 4. Acquire or reuse 1-hour model pass atomically in Postgres
+  let purchasedSessionId: string | null = null;
+  let passMeta: Record<string, unknown> = {};
 
-  if (creditCost > 0) {
-    await admin
-      .from("user_credits")
-      .upsert(
-        { user_id: userId, plan: "free", balance: starterCredits },
-        { onConflict: "user_id", ignoreDuplicates: true },
+  const { data: passResult, error: passErr } = await admin.rpc("acquire_model_pass", {
+    p_user_id: userId,
+    p_model_id: passModelId,
+    p_credit_cost: creditCost,
+    p_paid_only: paidOnly,
+    p_duration_minutes: dbPassDurationMinutes,
+  });
+
+  if (passErr) {
+    return jsonResponse({ error: "credit_check_failed", message: passErr.message }, 500);
+  }
+
+  if (passResult && typeof passResult === "object") {
+    const res = passResult as Record<string, unknown>;
+    passMeta = res;
+    const status = String(res.status ?? "");
+
+    if (status === "plan_required") {
+      return jsonResponse(
+        {
+          error: "plan_required",
+          message: `Model '${passModelId}' requires an active Paid pass. Upgrade at ${upgradeLink}`,
+          upgrade_url: upgradeLink,
+        },
+        403,
       );
-
-    const { data: newBalance, error: deductErr } = await admin.rpc("deduct_user_credits", {
-      p_user_id: userId,
-      p_amount: creditCost,
-    });
-
-    if (deductErr) {
-      return jsonResponse({ error: "credit_check_failed", message: deductErr.message }, 500);
     }
-    if (newBalance === null || newBalance === undefined) {
-      return jsonResponse({ error: "out_of_credits", message: "Insufficient credits" }, 402);
+
+    if (status === "insufficient_credits") {
+      const bal = Number(res.balance ?? 0);
+      const wallet = Number(res.wallet_credit ?? 0);
+      return jsonResponse(
+        {
+          error: "out_of_credits",
+          message: `Insufficient credits for '${passModelId}' (needs ${creditCost} cr/hr; you have ${bal} daily + ${wallet} wallet). Resets at 00:00 UTC or upgrade at ${upgradeLink}`,
+          balance: bal,
+          wallet_credit: wallet,
+          required: creditCost,
+          next_reset_at: res.next_reset_at ?? null,
+          upgrade_url: upgradeLink,
+        },
+        402,
+      );
+    }
+
+    if (status === "purchased" && typeof res.session_id === "string") {
+      purchasedSessionId = res.session_id;
     }
   }
+
+  const refundIfNewlyPurchased = async () => {
+    if (!purchasedSessionId) return;
+    try {
+      await admin.rpc("refund_hour_session", {
+        p_user_id: userId,
+        p_session_id: purchasedSessionId,
+      });
+    } catch (_) {
+      // Best-effort refund; never mask original upstream error.
+    }
+  };
 
   // 5. Call upstream OpenAI-compatible chat completions API with streaming
   let upstreamResp: Response;
@@ -278,6 +359,7 @@ Deno.serve(async (req: Request) => {
       }),
     });
   } catch (err) {
+    await refundIfNewlyPurchased();
     return jsonResponse(
       { error: "upstream_unreachable", message: err instanceof Error ? err.message : String(err) },
       502,
@@ -285,6 +367,7 @@ Deno.serve(async (req: Request) => {
   }
 
   if (!upstreamResp.ok || !upstreamResp.body) {
+    await refundIfNewlyPurchased();
     const errText = await upstreamResp.text().catch(() => "");
     return jsonResponse(
       {
@@ -414,6 +497,21 @@ Deno.serve(async (req: Request) => {
     },
   });
 
+  const extraHeaders: Record<string, string> = {};
+  if (typeof passMeta.plan === "string") extraHeaders["X-Openmi-Plan"] = passMeta.plan;
+  if (typeof passMeta.balance === "number") {
+    extraHeaders["X-Openmi-Credits-Remaining"] = String(passMeta.balance);
+  }
+  if (typeof passMeta.wallet_credit === "number") {
+    extraHeaders["X-Openmi-Wallet-Credit"] = String(passMeta.wallet_credit);
+  }
+  if (typeof passMeta.active_model === "string") {
+    extraHeaders["X-Openmi-Active-Model"] = passMeta.active_model;
+  }
+  if (typeof passMeta.pass_expires_at === "string") {
+    extraHeaders["X-Openmi-Pass-Expires-At"] = passMeta.pass_expires_at;
+  }
+
   return new Response(stream, {
     status: 200,
     headers: {
@@ -421,6 +519,7 @@ Deno.serve(async (req: Request) => {
       "Cache-Control": "no-cache, no-store",
       Connection: "keep-alive",
       ...CORS_HEADERS,
+      ...extraHeaders,
     },
   });
 });

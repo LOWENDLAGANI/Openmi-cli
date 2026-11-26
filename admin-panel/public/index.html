@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="robots" content="noindex, nofollow" />
-  <meta name="description" content="Openmi CLI live operations console for AI availability, provider API keys, model catalog, and user credits." />
+  <meta name="description" content="Openmi CLI live operations console for AI availability, provider API keys, model catalog, payment receipts, and user credits." />
   <title>Openmi Control</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -49,8 +49,8 @@
         <strong class="metric-value mono" id="metric-key">—</strong>
       </div>
       <div class="metric">
-        <span class="metric-label">Cost / Step</span>
-        <strong class="metric-value" id="metric-cost">—</strong>
+        <span class="metric-label">Pending Receipts</span>
+        <strong class="metric-value" id="metric-pending">—</strong>
       </div>
       <div class="metric">
         <span class="metric-label">Registered Users</span>
@@ -58,10 +58,36 @@
       </div>
     </section>
 
+    <section class="panel" aria-labelledby="payments-heading">
+      <div class="panel-head">
+        <div>
+          <h2 id="payments-heading">Payment Receipts Queue</h2>
+          <p class="panel-desc">Verify Sociabuzz receipts uploaded on <code>/pay</code>. Approving stacks <code>paid_until</code> (+15d / +30d), adds upfront wallet credit, and tops up today's daily allowance immediately.</p>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table" id="payments-table">
+          <thead>
+            <tr>
+              <th>Member</th>
+              <th>Plan &amp; Amount</th>
+              <th>Reference &amp; Receipt</th>
+              <th>Status</th>
+              <th class="col-actions">Review</th>
+            </tr>
+          </thead>
+          <tbody id="payments-tbody">
+            <tr><td colspan="5" class="empty-cell">Loading payment requests…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="panel" aria-labelledby="provider-heading">
       <div class="panel-head">
         <div>
-          <h2 id="provider-heading">Provider &amp; API Key</h2>
+          <h2 id="provider-heading">Provider, Billing &amp; Checkout</h2>
           <p class="panel-desc">Changes apply immediately to all CLI users. Your API key stays server-side in Supabase.</p>
         </div>
         <div class="panel-head-actions">
@@ -102,15 +128,36 @@
         </div>
 
         <div class="field">
-          <label for="credit-cost">Credit Cost per Chat Step</label>
-          <input id="credit-cost" type="number" min="0" step="1" class="input mono" />
-          <span class="field-help">Set to <code>0</code> to make AI unlimited/free.</span>
+          <label for="free-daily-credits">Free Daily Credits (00:00 UTC)</label>
+          <input id="free-daily-credits" type="number" min="0" step="1" class="input mono" />
+          <span class="field-help">Default: <code>6</code> credits/day (no rollover).</span>
         </div>
 
         <div class="field">
-          <label for="starter-credits">Starter Credits for New Users</label>
-          <input id="starter-credits" type="number" min="0" step="1" class="input mono" />
-          <span class="field-help">Set to <code>0</code> to require manual top-up before chatting.</span>
+          <label for="paid-daily-credits">Paid Daily Credits (00:00 UTC)</label>
+          <input id="paid-daily-credits" type="number" min="0" step="1" class="input mono" />
+          <span class="field-help">Default: <code>15</code> credits/day while pass is active.</span>
+        </div>
+
+        <div class="field">
+          <label for="pass-duration-minutes">Hourly Pass Duration (minutes)</label>
+          <input id="pass-duration-minutes" type="number" min="1" step="1" class="input mono" />
+          <span class="field-help">Default: <code>60</code> minutes per model purchase.</span>
+        </div>
+
+        <div class="field">
+          <label for="credit-cost">Fallback Hourly Cost (credits/hr)</label>
+          <input id="credit-cost" type="number" min="0" step="1" class="input mono" />
+          <span class="field-help">Used if a model has no custom cost set.</span>
+        </div>
+
+        <div class="field field-span-2">
+          <label for="payment-link">Sociabuzz Checkout URL</label>
+          <input id="payment-link" type="url" class="input mono" placeholder="https://sociabuzz.com/minetallestmc/tribe" autocomplete="off" />
+          <label style="display:inline-flex;align-items:center;gap:8px;margin-top:8px;font-weight:500;">
+            <input id="topup-paused" type="checkbox" />
+            Pause checkout &amp; receipt uploads on <code>/pay</code>
+          </label>
         </div>
       </div>
 
@@ -120,8 +167,8 @@
     <section class="panel" aria-labelledby="models-heading">
       <div class="panel-head">
         <div>
-          <h2 id="models-heading">Model Catalog</h2>
-          <p class="panel-desc">Models returned by <code>openmi models</code>. Keep <code>openmi-default</code> as the first entry.</p>
+          <h2 id="models-heading">Model Catalog &amp; Hourly Pricing</h2>
+          <p class="panel-desc">Models shown in <code>openmi models</code> and the TUI <code>/model</code> selector. Set hourly credit cost and Paid-only gating per model.</p>
         </div>
         <div class="panel-head-actions">
           <button type="button" class="btn btn-secondary" id="add-model-btn">+ Add Model</button>
@@ -135,7 +182,9 @@
             <tr>
               <th>Model ID</th>
               <th>Display Label</th>
-              <th class="col-num">Context Window</th>
+              <th class="col-num">Context</th>
+              <th class="col-num">Cost (cr/hr)</th>
+              <th>Paid Only</th>
               <th class="col-actions"></th>
             </tr>
           </thead>
@@ -147,8 +196,8 @@
     <section class="panel" aria-labelledby="users-heading">
       <div class="panel-head">
         <div>
-          <h2 id="users-heading">Users &amp; Credits</h2>
-          <p class="panel-desc">Manage per-user credit balances, plans, and access. Setting balance to 0 stops AI chat immediately.</p>
+          <h2 id="users-heading">Users, Passes &amp; Credits</h2>
+          <p class="panel-desc">Manage daily balance, non-expiring wallet credits, and Paid pass windows (<code>paid_until</code>).</p>
         </div>
         <div class="panel-head-actions">
           <input id="user-search" type="search" class="input input-search" placeholder="Filter by email or ID…" />
@@ -161,12 +210,10 @@
           <input id="new-user-email" type="email" class="input" placeholder="user@example.com" autocomplete="off" />
           <input id="new-user-password" type="password" class="input" placeholder="Password (min 6 chars)" autocomplete="new-password" />
           <select id="new-user-plan" class="select">
-            <option value="free">free</option>
-            <option value="pro">pro</option>
-            <option value="team">team</option>
-            <option value="enterprise">enterprise</option>
+            <option value="free">free (6/day)</option>
+            <option value="paid">paid (30d pass)</option>
           </select>
-          <input id="new-user-credits" type="number" min="0" step="1" class="input mono" placeholder="Credits" value="100" />
+          <input id="new-user-credits" type="number" min="0" step="1" class="input mono" placeholder="Daily credits" value="6" />
           <button type="button" class="btn btn-primary" id="create-user-submit">Create</button>
         </div>
       </div>
@@ -176,9 +223,9 @@
           <thead>
             <tr>
               <th>User</th>
-              <th>Plan</th>
-              <th>Credits</th>
-              <th>Status</th>
+              <th>Pass Window</th>
+              <th>Daily / Wallet</th>
+              <th>Active Model</th>
               <th class="col-actions">Actions</th>
             </tr>
           </thead>

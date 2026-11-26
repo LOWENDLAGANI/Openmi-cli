@@ -1,7 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use openmi_core::{AgentEvent, ApprovalDecision, ControlState, Message, PermissionMode, Role};
+use openmi_core::{
+    AgentEvent, ApprovalDecision, ControlState, CreditStatus, Message, ModelInfo, PermissionMode,
+    Role,
+};
 
 use crate::tui::approval::PendingApproval;
 use crate::tui::input::InputState;
@@ -46,11 +49,51 @@ pub struct FullAccessModalState {
     pub error: Option<String>,
 }
 
+/// Interactive `/model` selector modal state.
+#[derive(Debug, Clone)]
+pub struct ModelSelectorState {
+    pub models: Vec<ModelInfo>,
+    pub selected: usize,
+}
+
+impl ModelSelectorState {
+    pub fn new(models: Vec<ModelInfo>, current_model: &str) -> Self {
+        let selected = models
+            .iter()
+            .position(|m| m.id == current_model)
+            .unwrap_or(0);
+        Self { models, selected }
+    }
+
+    pub fn move_up(&mut self) {
+        if self.models.is_empty() {
+            return;
+        }
+        if self.selected == 0 {
+            self.selected = self.models.len() - 1;
+        } else {
+            self.selected -= 1;
+        }
+    }
+
+    pub fn move_down(&mut self) {
+        if self.models.is_empty() {
+            return;
+        }
+        self.selected = (self.selected + 1) % self.models.len();
+    }
+
+    pub fn current(&self) -> Option<&ModelInfo> {
+        self.models.get(self.selected)
+    }
+}
+
 /// Complete state of the interactive TUI (UI-only; core stays UI-agnostic).
 pub struct TuiApp {
     pub model: String,
     pub mode: PermissionMode,
     pub credits: Option<i64>,
+    pub credit_status: Option<CreditStatus>,
     pub cwd: PathBuf,
     pub branch: String,
     pub control_state: ControlState,
@@ -60,6 +103,7 @@ pub struct TuiApp {
     pub scroll_from_bottom: u16,
     pub pending_approval: Option<PendingApproval>,
     pub full_access_modal: Option<FullAccessModalState>,
+    pub model_selector: Option<ModelSelectorState>,
     pub workspace_files: Vec<String>,
     pub mention_suggestions: Vec<String>,
     pub should_quit: bool,
@@ -77,6 +121,7 @@ impl TuiApp {
             model,
             mode,
             credits: None,
+            credit_status: None,
             cwd,
             branch,
             control_state: ControlState::Idle,
@@ -86,17 +131,24 @@ impl TuiApp {
             scroll_from_bottom: 0,
             pending_approval: None,
             full_access_modal: None,
+            model_selector: None,
             workspace_files,
             mention_suggestions: Vec::new(),
             should_quit: false,
-            status_hint: "Enter: send | /help: commands | @path+Tab | Esc: cancel/quit".to_string(),
+            status_hint: "Enter: send | /model: pick model | /help: commands | Esc: cancel/quit"
+                .to_string(),
             tick: 0,
             armed_quit: false,
         };
         app.push_system(
-            "Welcome to Openmi CLI. Type a prompt, `/help` for commands, or Esc twice to quit.",
+            "Welcome to Openmi CLI. Type a prompt, `/model` to pick a model, `/help` for commands, or Esc twice to quit.",
         );
         app
+    }
+
+    pub fn apply_credit_status(&mut self, status: CreditStatus) {
+        self.credits = Some(status.balance);
+        self.credit_status = Some(status);
     }
 
     pub fn is_busy(&self) -> bool {
@@ -285,9 +337,14 @@ impl TuiApp {
         false
     }
 
-    /// Handle Esc or Ctrl-C: closes FullAccess modal, cancels active turn, or quits on 2nd press.
+    /// Handle Esc or Ctrl-C: closes modals, cancels active turn, or quits on 2nd press.
     /// Returns `true` if the active turn should be cancelled now.
     pub fn handle_interrupt(&mut self) -> bool {
+        if self.model_selector.is_some() {
+            self.model_selector = None;
+            return false;
+        }
+
         if self.full_access_modal.is_some() {
             self.full_access_modal = None;
             self.push_system("Cancelled FullAccess mode change.");

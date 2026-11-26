@@ -4,6 +4,7 @@ let state = {
   settings: null,
   models: [],
   users: [],
+  payments: [],
 };
 
 let toastTimer = null;
@@ -39,9 +40,28 @@ async function api(path, options = {}) {
   return data;
 }
 
+function fmtShortDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function fmtMinsLeft(iso) {
+  if (!iso) return "";
+  const ms = Date.parse(iso) - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return "";
+  const mins = Math.ceil(ms / 60000);
+  return `${mins}m left`;
+}
+
 function renderSettings(s) {
   state.settings = s;
-  state.models = (s.models || []).map((m) => ({ ...m }));
+  state.models = (s.models || []).map((m) => ({
+    ...m,
+    credit_cost: typeof m.credit_cost === "number" ? m.credit_cost : 3,
+    paid_only: Boolean(m.paid_only),
+  }));
 
   $("project-url").textContent = s.supabase_url || "Supabase";
 
@@ -56,12 +76,15 @@ function renderSettings(s) {
   $("metric-ai").textContent = s.ai_enabled ? "Online" : "Paused";
   $("metric-ai").style.color = s.ai_enabled ? "var(--ok)" : "var(--danger)";
   $("metric-key").textContent = s.has_api_key ? s.llm_api_key_masked : "Not set (env fallback)";
-  $("metric-cost").textContent = s.credit_cost === 0 ? "Free (0)" : `${s.credit_cost} / step`;
 
   $("llm-base-url").value = s.llm_base_url || "";
   $("llm-default-model").value = s.llm_default_model || "";
-  $("credit-cost").value = s.credit_cost ?? 1;
-  $("starter-credits").value = s.starter_credits ?? 100;
+  $("free-daily-credits").value = s.free_daily_credits ?? 6;
+  $("paid-daily-credits").value = s.paid_daily_credits ?? 15;
+  $("pass-duration-minutes").value = s.pass_duration_minutes ?? 60;
+  $("credit-cost").value = s.credit_cost ?? 3;
+  $("payment-link").value = s.payment_link || "https://sociabuzz.com/minetallestmc/tribe";
+  $("topup-paused").checked = Boolean(s.topup_paused);
   $("llm-api-key").value = "";
   $("current-key-hint").textContent = s.has_api_key
     ? `Stored: ${s.llm_api_key_masked}`
@@ -70,11 +93,107 @@ function renderSettings(s) {
   renderModels();
 }
 
+function renderPayments(requests, pendingCount) {
+  state.payments = requests || [];
+  $("metric-pending").textContent = String(pendingCount ?? 0);
+  $("metric-pending").style.color = pendingCount > 0 ? "var(--danger)" : "var(--ok)";
+
+  const tbody = $("payments-tbody");
+  if (state.payments.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-cell">No payment receipts submitted yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  for (const r of state.payments) {
+    const defaultCredit = r.plan_id === "pass-30" ? 3 : 2;
+    const badgeClass =
+      r.status === "approved"
+        ? "badge-active"
+        : r.status === "rejected"
+          ? "badge-banned"
+          : "badge-zero";
+    const receiptLink = r.receipt_url
+      ? `<a href="${escapeAttr(r.receipt_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-ghost">Open Receipt ↗</a>`
+      : `<span class="hint">Expired link</span>`;
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>
+        <div class="user-email">${escapeHtml(r.user_email)}</div>
+        <div class="user-id">Bal: ${r.user_balance}d + ${r.user_wallet_credit}w${r.user_paid_until ? ` · Paid until ${fmtShortDate(r.user_paid_until)}` : ""}</div>
+      </td>
+      <td>
+        <div><strong>${escapeHtml(r.plan_id)}</strong> · <span class="mono">RM ${Number(r.amount_myr).toFixed(2)}</span></div>
+        <div class="hint">${fmtShortDate(r.created_at)}</div>
+      </td>
+      <td>
+        <div class="mono">${escapeHtml(r.reference)}</div>
+        ${r.note ? `<div class="hint">${escapeHtml(r.note)}</div>` : ""}
+        <div style="margin-top:4px;">${receiptLink}</div>
+      </td>
+      <td>
+        <span class="badge ${badgeClass}">${escapeHtml(r.status)}</span>
+        ${r.decision_note ? `<div class="hint">${escapeHtml(r.decision_note)}</div>` : ""}
+      </td>
+      <td class="col-actions">
+        ${
+          r.status === "pending"
+            ? `<div style="display:flex;flex-direction:column;gap:6px;min-width:190px;">
+                 <div style="display:flex;gap:6px;align-items:center;">
+                   <input type="number" min="0" max="100000" step="1" class="input mono" style="width:70px;" data-credit value="${defaultCredit}" title="Upfront wallet credits" />
+                   <input type="text" class="input" style="flex:1;" data-note placeholder="Note (optional)" />
+                 </div>
+                 <div class="row-actions">
+                   <button type="button" class="btn btn-sm btn-primary" data-approve>Approve</button>
+                   <button type="button" class="btn btn-sm btn-danger-ghost" data-reject>Reject</button>
+                 </div>
+               </div>`
+            : `<span class="hint">${r.credit_granted ? `+${r.credit_granted} wallet cr` : "—"}</span>`
+        }
+      </td>
+    `;
+
+    if (r.status === "pending") {
+      const creditInput = tr.querySelector("[data-credit]");
+      const noteInput = tr.querySelector("[data-note]");
+      const approveBtn = tr.querySelector("[data-approve]");
+      const rejectBtn = tr.querySelector("[data-reject]");
+
+      const handleDecision = async (decision, btn) => {
+        btn.disabled = true;
+        try {
+          await api("/api/payments", {
+            method: "POST",
+            body: JSON.stringify({
+              action: "review",
+              id: r.id,
+              decision,
+              credit_granted: Number(creditInput.value),
+              decision_note: noteInput.value.trim(),
+            }),
+          });
+          showToast(decision === "approved" ? `Approved ${r.plan_id} for ${r.user_email}` : `Rejected receipt ${r.reference}`);
+          await loadAll();
+        } catch (err) {
+          showToast(err.message, true);
+          btn.disabled = false;
+        }
+      };
+
+      approveBtn.addEventListener("click", () => handleDecision("approved", approveBtn));
+      rejectBtn.addEventListener("click", () => handleDecision("rejected", rejectBtn));
+    }
+
+    tbody.appendChild(tr);
+  }
+}
+
 function renderModels() {
   const tbody = $("models-tbody");
   tbody.innerHTML = "";
   if (state.models.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="4" class="empty-cell">No models configured. Click "+ Add Model".</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-cell">No models configured. Click "+ Add Model".</td></tr>`;
     return;
   }
 
@@ -83,15 +202,25 @@ function renderModels() {
     tr.innerHTML = `
       <td><input type="text" class="input mono" data-field="id" value="${escapeAttr(m.id)}" placeholder="provider/model-id" /></td>
       <td><input type="text" class="input" data-field="label" value="${escapeAttr(m.label)}" placeholder="Display Name" /></td>
-      <td><input type="number" min="1000" step="1000" class="input mono" data-field="context_window" value="${Number(m.context_window) || 128000}" /></td>
+      <td><input type="number" min="1000" step="1000" class="input mono" style="width:105px;" data-field="context_window" value="${Number(m.context_window) || 128000}" /></td>
+      <td><input type="number" min="0" step="1" class="input mono" style="width:72px;" data-field="credit_cost" value="${Number(m.credit_cost ?? 3)}" /></td>
+      <td style="text-align:center;"><input type="checkbox" data-field="paid_only" ${m.paid_only ? "checked" : ""} aria-label="Paid only" /></td>
       <td class="col-actions"><button type="button" class="btn btn-sm btn-danger-ghost" data-remove="${idx}">Remove</button></td>
     `;
 
     tr.querySelectorAll("input").forEach((inp) => {
-      inp.addEventListener("input", () => {
+      const eventName = inp.type === "checkbox" ? "change" : "input";
+      inp.addEventListener(eventName, () => {
         const field = inp.dataset.field;
-        state.models[idx][field] =
-          field === "context_window" ? Number(inp.value) || 128000 : inp.value;
+        if (field === "context_window") {
+          state.models[idx][field] = Number(inp.value) || 128000;
+        } else if (field === "credit_cost") {
+          state.models[idx][field] = Math.max(0, Math.floor(Number(inp.value) || 0));
+        } else if (field === "paid_only") {
+          state.models[idx][field] = Boolean(inp.checked);
+        } else {
+          state.models[idx][field] = inp.value;
+        }
       });
     });
 
@@ -122,12 +251,17 @@ function renderUsers() {
 
   tbody.innerHTML = "";
   for (const u of list) {
-    const balanceVal = u.balance === null ? (state.settings?.starter_credits ?? 100) : u.balance;
-    const statusBadge = u.banned
+    const dailyVal = u.balance === null ? (state.settings?.free_daily_credits ?? 6) : u.balance;
+    const walletVal = u.wallet_credit ?? 0;
+    const tierBadge = u.banned
       ? `<span class="badge badge-banned">Banned</span>`
-      : balanceVal === 0
-        ? `<span class="badge badge-zero">0 Credits</span>`
-        : `<span class="badge badge-active">Active</span>`;
+      : u.is_paid
+        ? `<span class="badge badge-active">PAID</span>`
+        : `<span class="badge badge-zero">FREE</span>`;
+    const passInfo = u.is_paid && u.paid_until ? `Until ${fmtShortDate(u.paid_until)}` : "No active pass";
+    const activeModelInfo = u.active_model
+      ? `<div class="mono">${escapeHtml(u.active_model)}</div><div class="hint">${fmtMinsLeft(u.pass_expires_at)}</div>`
+      : `<span class="hint">—</span>`;
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -136,23 +270,25 @@ function renderUsers() {
         <div class="user-id">${escapeHtml(u.id)}</div>
       </td>
       <td>
-        <select class="select plan-select" data-plan>
-          ${["free", "pro", "team", "enterprise"]
-            .concat(["free", "pro", "team", "enterprise"].includes(u.plan) ? [] : [u.plan])
-            .map(
-              (p) => `<option value="${escapeAttr(p)}" ${u.plan === p ? "selected" : ""}>${escapeHtml(p)}</option>`,
-            )
-            .join("")}
-        </select>
-      </td>
-      <td>
-        <div class="credits-cell">
-          <input type="number" min="0" step="1" class="input mono credits-input" data-balance value="${balanceVal}" />
-          <button type="button" class="btn btn-sm btn-ghost" data-add="100" title="Add 100 credits">+100</button>
-          <button type="button" class="btn btn-sm btn-ghost" data-zero title="Set credits to 0">0</button>
+        <div>${tierBadge}</div>
+        <div class="hint">${escapeHtml(passInfo)}</div>
+        <div class="row-actions" style="margin-top:4px;">
+          <button type="button" class="btn btn-sm btn-ghost" data-pass-days="15">+15d</button>
+          <button type="button" class="btn btn-sm btn-ghost" data-pass-days="30">+30d</button>
+          ${u.is_paid ? `<button type="button" class="btn btn-sm btn-danger-ghost" data-pass-days="0">Revoke</button>` : ""}
         </div>
       </td>
-      <td>${statusBadge}</td>
+      <td>
+        <div class="credits-cell" style="margin-bottom:4px;">
+          <span class="hint" style="width:42px;">Daily</span>
+          <input type="number" min="0" step="1" class="input mono credits-input" data-balance value="${dailyVal}" />
+        </div>
+        <div class="credits-cell">
+          <span class="hint" style="width:42px;">Wallet</span>
+          <input type="number" min="0" step="1" class="input mono credits-input" data-wallet value="${walletVal}" />
+        </div>
+      </td>
+      <td>${activeModelInfo}</td>
       <td class="col-actions">
         <div class="row-actions">
           <button type="button" class="btn btn-sm btn-primary" data-save-user>Save</button>
@@ -165,16 +301,27 @@ function renderUsers() {
     `;
 
     const balInput = tr.querySelector("[data-balance]");
-    const planSelect = tr.querySelector("[data-plan]");
+    const walletInput = tr.querySelector("[data-wallet]");
     const saveBtn = tr.querySelector("[data-save-user]");
     const banBtn = tr.querySelector("[data-ban]");
     const delBtn = tr.querySelector("[data-delete-user]");
 
-    tr.querySelector("[data-add]").addEventListener("click", () => {
-      balInput.value = String((Number(balInput.value) || 0) + 100);
-    });
-    tr.querySelector("[data-zero]").addEventListener("click", () => {
-      balInput.value = "0";
+    tr.querySelectorAll("[data-pass-days]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const days = Number(btn.dataset.passDays);
+        btn.disabled = true;
+        try {
+          await api("/api/users", {
+            method: "POST",
+            body: JSON.stringify({ action: "set_pass", user_id: u.id, days }),
+          });
+          showToast(days > 0 ? `Granted +${days}d pass to ${u.email}` : `Revoked pass for ${u.email}`);
+          await loadAll();
+        } catch (err) {
+          showToast(err.message, true);
+          btn.disabled = false;
+        }
+      });
     });
 
     saveBtn.addEventListener("click", async () => {
@@ -186,13 +333,12 @@ function renderUsers() {
             action: "update_credits",
             user_id: u.id,
             balance: Number(balInput.value) || 0,
-            plan: planSelect.value,
+            wallet_credit: Number(walletInput.value) || 0,
           }),
         });
         u.balance = Number(balInput.value) || 0;
-        u.plan = planSelect.value;
-        renderUsers();
-        showToast(`Updated ${u.email}`);
+        u.wallet_credit = Number(walletInput.value) || 0;
+        showToast(`Updated credits for ${u.email}`);
       } catch (err) {
         showToast(err.message, true);
       } finally {
@@ -311,18 +457,20 @@ function escapeAttr(str) {
 async function loadAll() {
   setGlobalError(null);
   try {
-    const [settings, usersRes, devicesRes] = await Promise.all([
+    const [settings, usersRes, devicesRes, paymentsRes] = await Promise.all([
       api("/api/settings"),
       api("/api/users"),
       api("/api/devices").catch(() => ({ devices: [] })),
+      api("/api/payments").catch(() => ({ requests: [], pending_count: 0 })),
     ]);
     renderSettings(settings);
     state.users = usersRes.users || [];
     renderUsers();
     renderDevices(devicesRes.devices || []);
+    renderPayments(paymentsRes.requests || [], paymentsRes.pending_count || 0);
   } catch (err) {
     setGlobalError(
-      `Failed to load Supabase data: ${err.message}. Make sure migration 20261126000003_create_app_settings.sql is applied and SUPABASE_SERVICE_ROLE_KEY is set in Vercel.`,
+      `Failed to load Supabase data: ${err.message}. Make sure the latest Supabase migrations are applied and SUPABASE_SERVICE_ROLE_KEY is set in Vercel.`,
     );
   }
 }
@@ -350,8 +498,12 @@ $("save-provider-btn").addEventListener("click", async () => {
     const payload = {
       llm_base_url: $("llm-base-url").value.trim(),
       llm_default_model: $("llm-default-model").value.trim(),
+      free_daily_credits: Number($("free-daily-credits").value),
+      paid_daily_credits: Number($("paid-daily-credits").value),
+      pass_duration_minutes: Number($("pass-duration-minutes").value),
       credit_cost: Number($("credit-cost").value),
-      starter_credits: Number($("starter-credits").value),
+      payment_link: $("payment-link").value.trim(),
+      topup_paused: $("topup-paused").checked,
     };
     const typedKey = $("llm-api-key").value.trim();
     if (typedKey) payload.llm_api_key = typedKey;
@@ -361,7 +513,7 @@ $("save-provider-btn").addEventListener("click", async () => {
       body: JSON.stringify(payload),
     });
     renderSettings(updated);
-    showToast("Provider settings saved");
+    showToast("Provider & billing settings saved");
   } catch (err) {
     showToast(err.message, true);
   } finally {
@@ -427,12 +579,12 @@ document.querySelectorAll(".preset-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     $("llm-base-url").value = btn.dataset.url;
     $("llm-default-model").value = btn.dataset.model;
-    showToast(`Applied ${btn.textContent} preset — click Save Settings`);
+    showToast(`Applied ${btn.textContent} preset (click Save Settings)`);
   });
 });
 
 $("add-model-btn").addEventListener("click", () => {
-  state.models.push({ id: "", label: "", context_window: 128000 });
+  state.models.push({ id: "", label: "", context_window: 128000, credit_cost: 3, paid_only: false });
   renderModels();
 });
 
@@ -453,6 +605,8 @@ $("save-models-btn").addEventListener("click", async () => {
   }
 });
 
+$("user-search").addEventListener("input", renderUsers);
+
 $("toggle-create-user-btn").addEventListener("click", () => {
   $("create-user-form").classList.toggle("hidden");
 });
@@ -461,18 +615,20 @@ $("create-user-submit").addEventListener("click", async () => {
   const btn = $("create-user-submit");
   btn.disabled = true;
   try {
-    const email = $("new-user-email").value.trim();
-    const password = $("new-user-password").value;
-    const plan = $("new-user-plan").value;
-    const balance = Number($("new-user-credits").value) || 0;
     await api("/api/users", {
       method: "POST",
-      body: JSON.stringify({ action: "create_user", email, password, plan, balance }),
+      body: JSON.stringify({
+        action: "create_user",
+        email: $("new-user-email").value.trim(),
+        password: $("new-user-password").value,
+        plan: $("new-user-plan").value,
+        balance: Number($("new-user-credits").value) || 6,
+      }),
     });
     $("new-user-email").value = "";
     $("new-user-password").value = "";
     $("create-user-form").classList.add("hidden");
-    showToast(`Created user ${email}`);
+    showToast("User created");
     await loadAll();
   } catch (err) {
     showToast(err.message, true);
@@ -482,23 +638,18 @@ $("create-user-submit").addEventListener("click", async () => {
 });
 
 $("purge-devices-btn").addEventListener("click", async () => {
-  const btn = $("purge-devices-btn");
-  btn.disabled = true;
   try {
     await api("/api/devices", {
       method: "POST",
       body: JSON.stringify({ action: "purge_expired" }),
     });
-    showToast("Cleaned expired/consumed device codes");
+    showToast("Expired device codes cleaned");
     await loadAll();
   } catch (err) {
     showToast(err.message, true);
-  } finally {
-    btn.disabled = false;
   }
 });
 
-$("user-search").addEventListener("input", renderUsers);
 $("refresh-btn").addEventListener("click", loadAll);
 
 loadAll();

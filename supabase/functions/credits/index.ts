@@ -1,14 +1,14 @@
 // Supabase Edge Function: credits
 // Endpoint:
-//   GET /functions/v1/credits -> { balance: number, plan: string }
+//   GET /functions/v1/credits -> CreditStatus
 //
 // Requires `Authorization: Bearer <supabase_access_token>`.
-// Auto-provisions a starter row using `public.app_settings.starter_credits` (or env default).
+// Settles 00:00 UTC daily allowance via `sync_user_daily_credits` and returns
+// daily balance, wallet credit, paid_until window, active hourly pass, and checkout link.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const ENV_STARTER_CREDITS = Number(Deno.env.get("OPENMI_STARTER_CREDITS") ?? "100");
-const DEFAULT_PLAN = Deno.env.get("OPENMI_DEFAULT_PLAN") ?? "free";
+const DEFAULT_PAYMENT_LINK = "https://sociabuzz.com/minetallestmc/tribe";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -21,6 +21,12 @@ function jsonResponse(body: unknown, status = 200): Response {
       "Access-Control-Allow-Methods": "GET, OPTIONS",
     },
   });
+}
+
+function safeHttpUrl(raw: unknown, fallback: string): string {
+  const s = typeof raw === "string" ? raw.trim() : "";
+  if (/^https?:\/\//i.test(s)) return s;
+  return fallback;
 }
 
 Deno.serve(async (req: Request) => {
@@ -49,6 +55,34 @@ Deno.serve(async (req: Request) => {
   }
 
   const userId = userData.user.id;
+  const envPayUrl = safeHttpUrl(Deno.env.get("OPENMI_PAY_URL"), "");
+
+  // Preferred path: atomic UTC daily-reset + active pass sync RPC.
+  const { data: synced, error: rpcErr } = await admin.rpc("sync_user_daily_credits", {
+    p_user_id: userId,
+  });
+
+  if (!rpcErr && synced && typeof synced === "object") {
+    const s = synced as Record<string, unknown>;
+    const paymentLink = safeHttpUrl(s.payment_link, DEFAULT_PAYMENT_LINK);
+    return jsonResponse({
+      plan: String(s.plan ?? "free"),
+      is_paid: Boolean(s.is_paid),
+      has_paid: Boolean(s.has_paid),
+      paid_until: s.paid_until ?? null,
+      balance: Number(s.balance ?? 0),
+      wallet_credit: Number(s.wallet_credit ?? 0),
+      daily_limit: Number(s.daily_limit ?? 6),
+      next_reset_at: s.next_reset_at ?? null,
+      active_model: s.active_model ?? null,
+      pass_expires_at: s.pass_expires_at ?? null,
+      payment_link: paymentLink,
+      pay_url: envPayUrl || paymentLink,
+      topup_paused: Boolean(s.topup_paused),
+    });
+  }
+
+  // Fallback for pre-migration databases.
   const { data: existing, error: selectErr } = await admin
     .from("user_credits")
     .select("balance, plan")
@@ -63,38 +97,21 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({
       balance: Number(existing.balance),
       plan: String(existing.plan),
+      wallet_credit: 0,
+      daily_limit: existing.plan === "paid" ? 15 : 6,
+      is_paid: existing.plan === "paid",
+      payment_link: DEFAULT_PAYMENT_LINK,
+      pay_url: envPayUrl || DEFAULT_PAYMENT_LINK,
     });
   }
 
-  let starterBalance = Number.isFinite(ENV_STARTER_CREDITS) ? ENV_STARTER_CREDITS : 100;
-  try {
-    const { data: cfg } = await admin
-      .from("app_settings")
-      .select("starter_credits")
-      .eq("id", 1)
-      .maybeSingle();
-    if (typeof cfg?.starter_credits === "number" && cfg.starter_credits >= 0) {
-      starterBalance = cfg.starter_credits;
-    }
-  } catch (_) {
-    // Ignore if app_settings is not migrated yet.
-  }
-
-  const { data: created, error: insertErr } = await admin
-    .from("user_credits")
-    .upsert(
-      { user_id: userId, plan: DEFAULT_PLAN, balance: starterBalance },
-      { onConflict: "user_id", ignoreDuplicates: true },
-    )
-    .select("balance, plan")
-    .maybeSingle();
-
-  if (insertErr) {
-    return jsonResponse({ error: "db_error", message: insertErr.message }, 500);
-  }
-
   return jsonResponse({
-    balance: Number(created?.balance ?? starterBalance),
-    plan: String(created?.plan ?? DEFAULT_PLAN),
+    balance: 6,
+    wallet_credit: 0,
+    daily_limit: 6,
+    plan: "free",
+    is_paid: false,
+    payment_link: DEFAULT_PAYMENT_LINK,
+    pay_url: envPayUrl || DEFAULT_PAYMENT_LINK,
   });
 });

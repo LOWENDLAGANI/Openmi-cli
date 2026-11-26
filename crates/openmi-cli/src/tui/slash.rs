@@ -34,6 +34,7 @@ pub enum SlashOutcome {
     Message(String),
     Diff(String),
     Error(String),
+    OpenModelSelector,
     SetModel(String),
     SetMode(PermissionMode),
     RequireFullAccessConfirm,
@@ -77,15 +78,13 @@ pub fn parse_slash(input: &str) -> Option<SlashCommand> {
 /// Evaluate a parsed slash command against current model, permission mode, checkpoints, and cwd.
 pub fn execute_slash(
     cmd: SlashCommand,
-    current_model: &str,
+    _current_model: &str,
     current_mode: PermissionMode,
     checkpoints: &CheckpointStore,
     cwd: &Path,
 ) -> SlashOutcome {
     match cmd {
-        SlashCommand::Model(None) => {
-            SlashOutcome::Message(format!("Current model: {current_model}"))
-        }
+        SlashCommand::Model(None) => SlashOutcome::OpenModelSelector,
         SlashCommand::Model(Some(model)) => SlashOutcome::SetModel(model),
         SlashCommand::Mode(None) => {
             SlashOutcome::Message(format!("Current permission mode: {current_mode:?}"))
@@ -165,12 +164,12 @@ fn execute_undo(target: Option<&str>, checkpoints: &CheckpointStore, cwd: &Path)
 pub fn help_text() -> &'static str {
     concat!(
         "Available slash commands:\n",
-        "  /model [id]         Show or switch active model\n",
+        "  /model [id]         Open interactive model selector or switch directly\n",
         "  /mode [mode]        Show or switch mode (read-only|ask|trusted|full-access)\n",
         "  /undo [file|run]    Restore a file or checkpoint run to exact pre-write bytes\n",
         "  /diff               Show colored unified diff for the latest run\n",
         "  /clear              Clear conversation history and transcript\n",
-        "  /credits            Show current Openmi credit balance\n",
+        "  /credits            Show plan, daily + wallet credits, and active hourly pass\n",
         "  /mcp [status|restart [server]]  Inspect or restart stdio MCP servers\n",
         "  /help               Show this help text\n",
         "  /quit               Exit Openmi TUI\n",
@@ -205,7 +204,7 @@ mod tests {
                 &cp,
                 tmp.path()
             ),
-            SlashOutcome::Message("Current model: openmi-default".into())
+            SlashOutcome::OpenModelSelector
         );
         assert_eq!(
             execute_slash(

@@ -1,6 +1,6 @@
 // Supabase Edge Function: models
 // Endpoint:
-//   GET /functions/v1/models -> ModelInfo[] ({ id, label, context_window })
+//   GET /functions/v1/models -> ModelInfo[] ({ id, label, context_window, credit_cost, paid_only })
 //
 // Reads live catalog from `public.app_settings.models` (if present), falling back to
 // `OPENMI_MODELS_JSON` secret or the built-in default catalog.
@@ -11,13 +11,15 @@ interface ModelInfo {
   id: string;
   label: string;
   context_window: number;
+  credit_cost: number;
+  paid_only: boolean;
 }
 
 const DEFAULT_MODELS: ModelInfo[] = [
-  { id: "openmi-default", label: "Openmi Default", context_window: 128000 },
-  { id: "openai/gpt-4o-mini", label: "GPT-4o Mini", context_window: 128000 },
-  { id: "openai/gpt-4o", label: "GPT-4o", context_window: 128000 },
-  { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet", context_window: 200000 },
+  { id: "openmi-default", label: "Openmi Default", context_window: 128000, credit_cost: 3, paid_only: false },
+  { id: "openai/gpt-4o-mini", label: "GPT-4o Mini", context_window: 128000, credit_cost: 2, paid_only: false },
+  { id: "openai/gpt-4o", label: "GPT-4o", context_window: 128000, credit_cost: 3, paid_only: false },
+  { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet", context_window: 200000, credit_cost: 3, paid_only: true },
 ];
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -33,18 +35,33 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function isValidModelList(value: unknown): value is ModelInfo[] {
-  return (
-    Array.isArray(value) &&
-    value.length > 0 &&
-    value.every(
-      (m) =>
-        typeof m?.id === "string" &&
-        m.id.trim().length > 0 &&
-        typeof m?.label === "string" &&
-        typeof m?.context_window === "number",
-    )
-  );
+function normalizeModelList(value: unknown): ModelInfo[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const out: ModelInfo[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") continue;
+    const m = raw as Record<string, unknown>;
+    const id = typeof m.id === "string" ? m.id.trim() : "";
+    if (!id) continue;
+    const label = typeof m.label === "string" && m.label.trim() ? m.label.trim() : id;
+    const contextWindow =
+      typeof m.context_window === "number" && Number.isFinite(m.context_window)
+        ? Math.max(1000, Math.floor(m.context_window))
+        : 128000;
+    const creditCost =
+      typeof m.credit_cost === "number" && Number.isFinite(m.credit_cost) && m.credit_cost >= 0
+        ? Math.floor(m.credit_cost)
+        : 3;
+    const paidOnly = Boolean(m.paid_only);
+    out.push({
+      id,
+      label,
+      context_window: contextWindow,
+      credit_cost: creditCost,
+      paid_only: paidOnly,
+    });
+  }
+  return out.length > 0 ? out : null;
 }
 
 function loadEnvModels(): ModelInfo[] {
@@ -52,7 +69,8 @@ function loadEnvModels(): ModelInfo[] {
   if (!raw) return DEFAULT_MODELS;
   try {
     const parsed = JSON.parse(raw);
-    if (isValidModelList(parsed)) return parsed;
+    const normalized = normalizeModelList(parsed);
+    if (normalized) return normalized;
   } catch (_) {
     // Ignore malformed OPENMI_MODELS_JSON.
   }
@@ -79,8 +97,9 @@ Deno.serve(async (req: Request) => {
         .select("models")
         .eq("id", 1)
         .maybeSingle();
-      if (data?.models && isValidModelList(data.models)) {
-        return jsonResponse(data.models, 200);
+      const normalized = normalizeModelList(data?.models);
+      if (normalized) {
+        return jsonResponse(normalized, 200);
       }
     } catch (_) {
       // Fall back to env/default if app_settings is not migrated yet.

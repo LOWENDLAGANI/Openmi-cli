@@ -4,7 +4,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::tui::app::{FullAccessModalState, ToolStatus, TranscriptKind, TuiApp};
+use crate::tui::app::{
+    FullAccessModalState, ModelSelectorState, ToolStatus, TranscriptKind, TuiApp,
+};
 use crate::tui::slash::FULL_ACCESS_MODAL_WARNING;
 
 /// Render the full TUI layout safely at any terminal size (including 80x24 and SSH).
@@ -58,6 +60,8 @@ pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
         render_approval_popup(frame, &pending.request.tool_name, &pending.request.summary);
     } else if let Some(modal) = &app.full_access_modal {
         render_full_access_modal(frame, modal);
+    } else if let Some(selector) = &app.model_selector {
+        render_model_selector_modal(frame, app, selector);
     }
 }
 
@@ -196,7 +200,10 @@ fn render_input(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, area);
 
-    if app.pending_approval.is_none() && app.full_access_modal.is_none() {
+    if app.pending_approval.is_none()
+        && app.full_access_modal.is_none()
+        && app.model_selector.is_none()
+    {
         let (row, col) = app.input.cursor_row_col();
         let max_x = area.x + area.width.saturating_sub(2);
         let max_y = area.y + area.height.saturating_sub(2);
@@ -207,15 +214,31 @@ fn render_input(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 }
 
 fn render_status_bar(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    let credits_str = match app.credits {
-        Some(c) => format!("{c} cr"),
-        None => "- cr".to_string(),
+    let (tier_str, credits_str, pass_str) = if let Some(cs) = &app.credit_status {
+        let tier = if cs.is_paid { "PAID" } else { "FREE" };
+        let cap = cs.daily_limit.unwrap_or(if cs.is_paid { 15 } else { 6 });
+        let cred = if cs.wallet_credit > 0 {
+            format!("{}/{}+{}w cr", cs.balance, cap, cs.wallet_credit)
+        } else {
+            format!("{}/{} cr", cs.balance, cap)
+        };
+        let pass = match cs.active_pass_remaining() {
+            Some((m, mins)) => format!(" | pass:{m}({mins}m)"),
+            None => String::new(),
+        };
+        (tier, cred, pass)
+    } else {
+        let cred = match app.credits {
+            Some(c) => format!("{c} cr"),
+            None => "- cr".to_string(),
+        };
+        ("-", cred, String::new())
     };
     let cwd_display = app.cwd.file_name().and_then(|s| s.to_str()).unwrap_or(".");
 
     let bar = format!(
-        " model:{} | mode:{:?} | credits:{} | cwd:{} | git:{} ",
-        app.model, app.mode, credits_str, cwd_display, app.branch
+        " [{tier_str}] model:{} | {credits_str}{pass_str} | mode:{:?} | {cwd_display} ({}) ",
+        app.model, app.mode, app.branch
     );
     let widget = Paragraph::new(bar).style(Style::default().bg(Color::DarkGray).fg(Color::White));
     frame.render_widget(widget, area);
@@ -285,6 +308,93 @@ fn render_full_access_modal(frame: &mut Frame<'_>, modal: &FullAccessModalState)
     frame.render_widget(widget, popup_area);
 }
 
+fn render_model_selector_modal(frame: &mut Frame<'_>, app: &TuiApp, selector: &ModelSelectorState) {
+    let popup_area = centered_rect(82, 62, frame.area());
+    frame.render_widget(Clear, popup_area);
+
+    let active_pass = app
+        .credit_status
+        .as_ref()
+        .and_then(|cs| cs.active_pass_remaining());
+    let is_paid_user = app
+        .credit_status
+        .as_ref()
+        .map(|cs| cs.is_paid)
+        .unwrap_or(false);
+
+    let mut lines: Vec<Line<'_>> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "Choose a model (1-hour pass starts when you send your first prompt):",
+        Style::default().fg(Color::Gray),
+    )));
+    lines.push(Line::from(""));
+
+    if selector.models.is_empty() {
+        lines.push(Line::from("No models available."));
+    } else {
+        for (idx, m) in selector.models.iter().enumerate() {
+            let is_sel = idx == selector.selected;
+            let prefix = if is_sel { "▸ " } else { "  " };
+            let mut spans = vec![
+                Span::styled(
+                    format!("{prefix}{} ({})", m.label, m.id),
+                    if is_sel {
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    },
+                ),
+                Span::styled(
+                    format!("  {} cr/hr", m.credit_cost),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ];
+            if let Some((active_id, mins)) = active_pass {
+                if active_id == m.id {
+                    spans.push(Span::styled(
+                        format!("  [ACTIVE · {mins}m left]"),
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
+            }
+            if m.paid_only {
+                let badge_color = if is_paid_user {
+                    Color::Magenta
+                } else {
+                    Color::Red
+                };
+                spans.push(Span::styled(
+                    "  [PAID]",
+                    Style::default()
+                        .fg(badge_color)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
+            lines.push(Line::from(spans));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Up/Down (or j/k): navigate   Enter: select   Esc: cancel",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let widget = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan))
+                .title(" Select AI Model (/model) "),
+        )
+        .wrap(Wrap { trim: true });
+    frame.render_widget(widget, popup_area);
+}
+
 pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
@@ -308,7 +418,7 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openmi_core::{ApprovalRequest, PermissionMode};
+    use openmi_core::{ApprovalRequest, ModelInfo, PermissionMode};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
     use std::path::PathBuf;
@@ -326,7 +436,7 @@ mod tests {
         app.push_user("hello");
         app.push_diff("--- a/foo.rs\n+++ b/foo.rs\n@@ -1 +1 @@\n-old\n+new\n");
         app.mention_suggestions = vec!["src/main.rs".into()];
-        app.credits = Some(250);
+        app.credits = Some(6);
         let (tx, _rx) = oneshot::channel();
         app.pending_approval = Some(PendingApproval {
             request: ApprovalRequest {
@@ -348,6 +458,30 @@ mod tests {
             typed: "I UNDERSTAND".into(),
             error: Some("Type exact phrase".into()),
         });
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        app.full_access_modal = None;
+        app.model_selector = Some(ModelSelectorState::new(
+            vec![
+                ModelInfo {
+                    id: "openmi-default".into(),
+                    label: "Openmi Default".into(),
+                    context_window: 128_000,
+                    credit_cost: 3,
+                    paid_only: false,
+                },
+                ModelInfo {
+                    id: "anthropic/claude-3.5-sonnet".into(),
+                    label: "Claude 3.5 Sonnet".into(),
+                    context_window: 200_000,
+                    credit_cost: 3,
+                    paid_only: true,
+                },
+            ],
+            "openmi-default",
+        ));
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| draw(f, &app)).unwrap();

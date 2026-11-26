@@ -11,7 +11,11 @@ use crossterm::terminal::{
 };
 use futures_util::StreamExt;
 use openmi_checkpoints::CheckpointStore;
-use openmi_core::{fetch_credit_status, AgentEvent, ApprovalDecision, PermissionMode, ProxyConfig};
+use openmi_core::{
+    fetch_credit_status, fetch_models_with_fallback, AgentEvent, ApprovalDecision, CreditStatus,
+    ModelInfo, PermissionMode, ProxyConfig,
+};
+use openmi_platform::AppPaths;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use tokio::sync::mpsc;
@@ -23,7 +27,7 @@ use crate::auth::{default_token_store, TokenStore};
 use crate::exit_codes::CliError;
 use crate::session::build_session_with_options;
 use crate::session_store::SessionStore;
-use crate::tui::app::{FullAccessModalState, TuiApp};
+use crate::tui::app::{FullAccessModalState, ModelSelectorState, TuiApp};
 use crate::tui::approval::{PendingApproval, TuiApprovalHandler};
 use crate::tui::render;
 use crate::tui::slash::{execute_slash, parse_slash, SlashOutcome, FULL_ACCESS_CONFIRM_PHRASE};
@@ -155,7 +159,22 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
     }
 
     let (agent_tx, mut agent_rx) = mpsc::channel::<AgentEvent>(128);
+    let (credit_tx, mut credit_rx) = mpsc::channel::<CreditStatus>(8);
     let mut active_cancel: Option<CancellationToken> = None;
+
+    // Fetch initial credit/pass status in background so status bar populates right away.
+    if let (Some(base), Some(tok)) = (
+        base_url_for_credits.clone(),
+        bearer_for_credits.clone(),
+    ) {
+        let tx = credit_tx.clone();
+        tokio::spawn(async move {
+            let ep = format!("{base}/functions/v1/credits");
+            if let Ok(status) = fetch_credit_status(&ep, &tok).await {
+                let _ = tx.send(status).await;
+            }
+        });
+    }
 
     let mut events = EventStream::new();
     let mut ticker = interval(Duration::from_millis(120));
@@ -187,6 +206,11 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                 session.lock().await.set_permission_mode(PermissionMode::FullAccess);
                                 app.push_system("Permission mode switched to FullAccess.");
                             }
+                            KeyAction::SelectedModel(chosen) => {
+                                app.model = chosen.id.clone();
+                                session.lock().await.set_model(chosen.id.clone());
+                                app.push_system(format_model_switch_message(&app, &chosen));
+                            }
                             KeyAction::Submit(input_text) => {
                                 if let Some(slash_cmd) = parse_slash(&input_text) {
                                     let outcome = {
@@ -197,10 +221,38 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                         SlashOutcome::Message(msg) => app.push_system(msg),
                                         SlashOutcome::Diff(diff_txt) => app.push_diff(diff_txt),
                                         SlashOutcome::Error(err) => app.push_error(err),
+                                        SlashOutcome::OpenModelSelector => {
+                                            let endpoint = base_url_for_credits
+                                                .as_deref()
+                                                .map(|b| format!("{b}/functions/v1/models"));
+                                            let cache_path = AppPaths::resolve()
+                                                .ok()
+                                                .map(|p| p.models_cache_file());
+                                            let models = fetch_models_with_fallback(
+                                                endpoint.as_deref(),
+                                                bearer_for_credits.as_deref(),
+                                                cache_path.as_deref(),
+                                            )
+                                            .await;
+                                            app.model_selector =
+                                                Some(ModelSelectorState::new(models, &app.model));
+                                        }
                                         SlashOutcome::SetModel(m) => {
                                             app.model = m.clone();
                                             session.lock().await.set_model(m.clone());
-                                            app.push_system(format!("Switched model to `{m}`."));
+                                            let active_note = app
+                                                .credit_status
+                                                .as_ref()
+                                                .and_then(|cs| cs.active_pass_remaining())
+                                                .map(|(am, mins)| {
+                                                    if am == m {
+                                                        format!(" Active pass already running ({mins}m left).")
+                                                    } else {
+                                                        format!(" Note: sending a prompt will replace your active `{am}` pass ({mins}m left).")
+                                                    }
+                                                })
+                                                .unwrap_or_else(|| " Your 1-hour pass starts when you send your first prompt.".to_string());
+                                            app.push_system(format!("Switched model to `{m}`.{active_note}"));
                                         }
                                         SlashOutcome::SetMode(new_mode) => {
                                             app.mode = new_mode;
@@ -221,8 +273,9 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                                 let ep = format!("{base}/functions/v1/credits");
                                                 match fetch_credit_status(&ep, tok).await {
                                                     Ok(status) => {
-                                                        app.credits = Some(status.balance);
-                                                        app.push_system(format!("Credits: {} (plan: {})", status.balance, status.plan));
+                                                        let summary = format_credit_summary(&status);
+                                                        app.apply_credit_status(status);
+                                                        app.push_system(summary);
                                                     }
                                                     Err(err) => app.push_error(format!("Failed to fetch credits: {err}")),
                                                 }
@@ -311,8 +364,25 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                         msgs,
                     );
                     let _ = session_store.save(&snap);
+                    // Refresh credit/pass status in background so status bar updates live.
+                    if let (Some(base), Some(tok)) = (
+                        base_url_for_credits.clone(),
+                        bearer_for_credits.clone(),
+                    ) {
+                        let tx = credit_tx.clone();
+                        tokio::spawn(async move {
+                            let ep = format!("{base}/functions/v1/credits");
+                            if let Ok(status) = fetch_credit_status(&ep, &tok).await {
+                                let _ = tx.send(status).await;
+                            }
+                        });
+                    }
                 }
                 app.apply_agent_event(agent_ev);
+                dirty = true;
+            }
+            Some(status) = credit_rx.recv() => {
+                app.apply_credit_status(status);
                 dirty = true;
             }
             Some(pending) = approval_rx.recv() => {
@@ -346,10 +416,76 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
     Ok(())
 }
 
+fn format_credit_summary(status: &CreditStatus) -> String {
+    let cap = status
+        .daily_limit
+        .unwrap_or(if status.is_paid { 15 } else { 6 });
+    let plan_line = if status.is_paid {
+        match status.paid_until.as_deref() {
+            Some(u) => format!("PAID (until {})", u.get(..10).unwrap_or(u)),
+            None => "PAID".to_string(),
+        }
+    } else {
+        "FREE".to_string()
+    };
+    let pass_line = match status.active_pass_remaining() {
+        Some((m, mins)) => format!("{m} ({mins}m remaining)"),
+        None => "none (starts on first prompt)".to_string(),
+    };
+    let mut out = format!(
+        "Plan: {plan_line} | Daily: {}/{cap} cr (00:00 UTC reset) | Wallet: {} cr | Active pass: {pass_line}",
+        status.balance, status.wallet_credit
+    );
+    if !status.is_paid {
+        out.push_str(&format!("\nUpgrade to Paid (15 cr/day + Paid models): {}", status.effective_upgrade_url()));
+    }
+    out
+}
+
+fn format_model_switch_message(app: &TuiApp, chosen: &ModelInfo) -> String {
+    let is_paid = app
+        .credit_status
+        .as_ref()
+        .map(|cs| cs.is_paid)
+        .unwrap_or(false);
+    if chosen.paid_only && !is_paid {
+        let url = app
+            .credit_status
+            .as_ref()
+            .map(|cs| cs.effective_upgrade_url())
+            .unwrap_or("https://sociabuzz.com/minetallestmc/tribe");
+        return format!(
+            "Selected `{}` ({} cr/hr) — Paid pass required before prompting. Upgrade: {url}",
+            chosen.id, chosen.credit_cost
+        );
+    }
+    if let Some((active_id, mins)) = app
+        .credit_status
+        .as_ref()
+        .and_then(|cs| cs.active_pass_remaining())
+    {
+        if active_id == chosen.id {
+            return format!(
+                "Switched to {} (`{}`) — active 1-hour pass running ({mins}m remaining).",
+                chosen.label, chosen.id
+            );
+        }
+        return format!(
+            "Switched to {} (`{}`, {} cr/hr). Your 1-hour pass starts when you send your first prompt (replaces active `{active_id}` pass, {mins}m left).",
+            chosen.label, chosen.id, chosen.credit_cost
+        );
+    }
+    format!(
+        "Switched to {} (`{}`, {} cr/hr). Your 1-hour pass starts when you send your first prompt.",
+        chosen.label, chosen.id, chosen.credit_cost
+    )
+}
+
 enum KeyAction {
     None,
     Submit(String),
     ConfirmedFullAccess,
+    SelectedModel(ModelInfo),
 }
 
 fn handle_key_event(
@@ -407,6 +543,23 @@ fn handle_key_event(
             KeyCode::Char(c) => {
                 modal.typed.push(c);
                 modal.error = None;
+            }
+            _ => {}
+        }
+        return KeyAction::None;
+    }
+
+    // 3. Interactive `/model` selector modal intercepts Up/Down/j/k/Enter until selected or Esc.
+    if let Some(selector) = app.model_selector.as_mut() {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => selector.move_up(),
+            KeyCode::Down | KeyCode::Char('j') => selector.move_down(),
+            KeyCode::Enter => {
+                if let Some(chosen) = selector.current().cloned() {
+                    app.model_selector = None;
+                    return KeyAction::SelectedModel(chosen);
+                }
+                app.model_selector = None;
             }
             _ => {}
         }

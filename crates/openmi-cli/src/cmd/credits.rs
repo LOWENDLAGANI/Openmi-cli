@@ -25,8 +25,28 @@ pub async fn execute(json: bool, api_url: Option<String>) -> Result<(), CliError
             serde_json::to_string_pretty(&status).map_err(anyhow::Error::from)?
         );
     } else {
-        println!("Plan:    {}", status.plan);
-        println!("Credits: {}", status.balance);
+        let daily_cap = status
+            .daily_limit
+            .unwrap_or(if status.is_paid { 15 } else { 6 });
+        if status.is_paid {
+            if let Some(ref until) = status.paid_until {
+                println!("Plan:          PAID (until {})", until.get(..10).unwrap_or(until));
+            } else {
+                println!("Plan:          PAID");
+            }
+        } else {
+            println!("Plan:          FREE");
+        }
+        println!("Daily Credits: {} / {} (resets 00:00 UTC)", status.balance, daily_cap);
+        println!("Wallet Credit: {} (never expires)", status.wallet_credit);
+        if let Some((model, mins)) = status.active_pass_remaining() {
+            println!("Active Pass:   {} ({}m remaining)", model, mins);
+        } else {
+            println!("Active Pass:   none (1-hr pass starts on your first prompt)");
+        }
+        if !status.is_paid {
+            println!("Upgrade:       {}", status.effective_upgrade_url());
+        }
     }
     Ok(())
 }

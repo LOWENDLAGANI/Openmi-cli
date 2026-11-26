@@ -1,22 +1,39 @@
 import { getSupabaseConfig, maskApiKey, readBody, sendJson, supabaseFetch } from "./_supabase.js";
 
+const DEFAULT_PAYMENT_LINK = "https://sociabuzz.com/minetallestmc/tribe";
+
 const DEFAULT_MODELS = [
-  { id: "openmi-default", label: "Openmi Default", context_window: 128000 },
-  { id: "openai/gpt-4o-mini", label: "GPT-4o Mini", context_window: 128000 },
-  { id: "openai/gpt-4o", label: "GPT-4o", context_window: 128000 },
-  { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet", context_window: 200000 },
+  { id: "openmi-default", label: "Openmi Default", context_window: 128000, credit_cost: 3, paid_only: false },
+  { id: "openai/gpt-4o-mini", label: "GPT-4o Mini", context_window: 128000, credit_cost: 2, paid_only: false },
+  { id: "openai/gpt-4o", label: "GPT-4o", context_window: 128000, credit_cost: 3, paid_only: false },
+  { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet", context_window: 200000, credit_cost: 3, paid_only: true },
 ];
 
 async function fetchRow() {
   const rows = await supabaseFetch("/rest/v1/app_settings?id=eq.1&select=*");
   if (Array.isArray(rows) && rows.length > 0) return rows[0];
-  // Auto-seed row if table exists but is empty.
   const inserted = await supabaseFetch("/rest/v1/app_settings", {
     method: "POST",
     headers: { Prefer: "return=representation,resolution=merge-duplicates" },
     body: JSON.stringify({ id: 1 }),
   });
   return Array.isArray(inserted) ? inserted[0] : inserted;
+}
+
+function normalizeModels(list) {
+  if (!Array.isArray(list) || list.length === 0) return DEFAULT_MODELS;
+  return list
+    .filter((m) => m && typeof m.id === "string" && m.id.trim())
+    .map((m) => ({
+      id: m.id.trim(),
+      label: String(m.label || m.id).trim(),
+      context_window: Math.max(1000, Math.floor(Number(m.context_window) || 128000)),
+      credit_cost:
+        typeof m.credit_cost === "number" && Number.isFinite(m.credit_cost) && m.credit_cost >= 0
+          ? Math.floor(m.credit_cost)
+          : 3,
+      paid_only: Boolean(m.paid_only),
+    }));
 }
 
 function formatSettings(row, supabaseUrl) {
@@ -28,9 +45,14 @@ function formatSettings(row, supabaseUrl) {
     has_api_key: apiKey.trim().length > 0,
     llm_api_key_masked: maskApiKey(apiKey),
     llm_default_model: row?.llm_default_model || "openai/gpt-4o-mini",
-    credit_cost: typeof row?.credit_cost === "number" ? row.credit_cost : 1,
-    starter_credits: typeof row?.starter_credits === "number" ? row.starter_credits : 100,
-    models: Array.isArray(row?.models) && row.models.length > 0 ? row.models : DEFAULT_MODELS,
+    credit_cost: typeof row?.credit_cost === "number" ? row.credit_cost : 3,
+    starter_credits: typeof row?.starter_credits === "number" ? row.starter_credits : 6,
+    free_daily_credits: typeof row?.free_daily_credits === "number" ? row.free_daily_credits : 6,
+    paid_daily_credits: typeof row?.paid_daily_credits === "number" ? row.paid_daily_credits : 15,
+    pass_duration_minutes: typeof row?.pass_duration_minutes === "number" ? row.pass_duration_minutes : 60,
+    payment_link: row?.payment_link || DEFAULT_PAYMENT_LINK,
+    topup_paused: Boolean(row?.topup_paused),
+    models: normalizeModels(row?.models),
     updated_at: row?.updated_at || null,
   };
 }
@@ -76,6 +98,7 @@ export default async function handler(req, res) {
 
       const patch = { updated_at: new Date().toISOString() };
       if (typeof body.ai_enabled === "boolean") patch.ai_enabled = body.ai_enabled;
+      if (typeof body.topup_paused === "boolean") patch.topup_paused = body.topup_paused;
       if (typeof body.llm_base_url === "string" && body.llm_base_url.trim()) {
         patch.llm_base_url = body.llm_base_url.trim().replace(/\/+$/, "");
       }
@@ -87,6 +110,9 @@ export default async function handler(req, res) {
       if (typeof body.llm_default_model === "string" && body.llm_default_model.trim()) {
         patch.llm_default_model = body.llm_default_model.trim();
       }
+      if (typeof body.payment_link === "string" && /^https?:\/\//i.test(body.payment_link.trim())) {
+        patch.payment_link = body.payment_link.trim();
+      }
       if (body.credit_cost !== undefined) {
         const cost = Number(body.credit_cost);
         if (!Number.isFinite(cost) || cost < 0) {
@@ -94,21 +120,30 @@ export default async function handler(req, res) {
         }
         patch.credit_cost = Math.floor(cost);
       }
-      if (body.starter_credits !== undefined) {
-        const starter = Number(body.starter_credits);
-        if (!Number.isFinite(starter) || starter < 0) {
-          return sendJson(res, 400, { error: "starter_credits must be >= 0" });
+      if (body.free_daily_credits !== undefined) {
+        const v = Number(body.free_daily_credits);
+        if (!Number.isFinite(v) || v < 0) {
+          return sendJson(res, 400, { error: "free_daily_credits must be >= 0" });
         }
-        patch.starter_credits = Math.floor(starter);
+        patch.free_daily_credits = Math.floor(v);
+        patch.starter_credits = Math.floor(v);
+      }
+      if (body.paid_daily_credits !== undefined) {
+        const v = Number(body.paid_daily_credits);
+        if (!Number.isFinite(v) || v < 0) {
+          return sendJson(res, 400, { error: "paid_daily_credits must be >= 0" });
+        }
+        patch.paid_daily_credits = Math.floor(v);
+      }
+      if (body.pass_duration_minutes !== undefined) {
+        const v = Number(body.pass_duration_minutes);
+        if (!Number.isFinite(v) || v < 1) {
+          return sendJson(res, 400, { error: "pass_duration_minutes must be >= 1" });
+        }
+        patch.pass_duration_minutes = Math.floor(v);
       }
       if (Array.isArray(body.models)) {
-        const cleaned = body.models
-          .filter((m) => m && typeof m.id === "string" && m.id.trim())
-          .map((m) => ({
-            id: m.id.trim(),
-            label: String(m.label || m.id).trim(),
-            context_window: Math.max(1000, Math.floor(Number(m.context_window) || 128000)),
-          }));
+        const cleaned = normalizeModels(body.models);
         if (cleaned.length === 0) {
           return sendJson(res, 400, { error: "At least one model is required." });
         }
