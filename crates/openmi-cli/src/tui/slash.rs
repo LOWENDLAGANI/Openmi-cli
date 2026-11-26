@@ -24,7 +24,7 @@ pub enum SlashCommand {
     Clear,
     Credits,
     Mcp(Option<String>),
-    Help,
+    Help(Option<String>),
     Quit,
     Unknown(String),
 }
@@ -68,7 +68,7 @@ pub fn parse_slash(input: &str) -> Option<SlashCommand> {
         "/clear" => SlashCommand::Clear,
         "/credits" => SlashCommand::Credits,
         "/mcp" => SlashCommand::Mcp(arg),
-        "/help" => SlashCommand::Help,
+        "/help" => SlashCommand::Help(arg),
         "/quit" | "/exit" => SlashCommand::Quit,
         other => SlashCommand::Unknown(other.to_string()),
     };
@@ -115,7 +115,15 @@ pub fn execute_slash(
                 "Unknown `/mcp` subcommand `{other}`. Use `/mcp status` or `/mcp restart [server]`."
             )),
         },
-        SlashCommand::Help => SlashOutcome::Message(help_text().to_string()),
+        SlashCommand::Help(topic) => match topic.as_deref() {
+            None => SlashOutcome::Message(help_text().to_string()),
+            Some(t) => match help_topic_text(t) {
+                Some(msg) => SlashOutcome::Message(msg.to_string()),
+                None => SlashOutcome::Error(format!(
+                    "Unknown help topic `{t}`. Try `/help` or `/help steps|commands|modes|keys|mcp|cli`."
+                )),
+            },
+        },
         SlashCommand::Quit => SlashOutcome::Quit,
         SlashCommand::Unknown(name) => {
             SlashOutcome::Error(format!("Unknown slash command `{name}`. Try `/help`."))
@@ -161,20 +169,166 @@ fn execute_undo(target: Option<&str>, checkpoints: &CheckpointStore, cwd: &Path)
     }
 }
 
+const HELP_STEPS: &str = concat!(
+    "=== STEP-BY-STEP TUTORIAL (HOW TO USE OPENMI) ===\n",
+    "  Step 1. Sign in & check credits\n",
+    "    - Run `openmi login` in your terminal if not signed in yet.\n",
+    "    - Inside TUI, run `/credits` to see your plan, daily/wallet credits, and 1-hr pass.\n",
+    "  Step 2. Pick a model\n",
+    "    - Run `/model` to open the interactive picker (Up/Down or j/k, Enter to select),\n",
+    "      or `/model <id>` to switch directly. Your 1-hour pass starts on your 1st prompt.\n",
+    "  Step 3. Choose a permission mode\n",
+    "    - Run `/mode` to check your current mode (default: `ask`).\n",
+    "    - Use `/mode read-only` to explore safely, or `/mode trusted` for faster edits.\n",
+    "  Step 4. Send a prompt (with @file mentions)\n",
+    "    - Type your request and press Enter to send (Shift+Enter or Alt+Enter for newline).\n",
+    "    - Type `@` + partial filename + Tab for .gitignore-aware fuzzy file completion.\n",
+    "  Step 5. Review & approve tool calls\n",
+    "    - In `ask` mode, mutating tools (`write_file`, `run_command`, MCP) ask:\n",
+    "      [y] approve once | [a] always this session | [n] deny.\n",
+    "    - Watch live tool status in the right-hand `Tools` pane.\n",
+    "  Step 6. Inspect diffs or undo changes\n",
+    "    - Run `/diff` to view a colored unified diff of the latest run.\n",
+    "    - Run `/undo`, `/undo <file>`, or `/undo <run_id>` to restore exact pre-write bytes\n",
+    "      (including UTF-8 BOM and CRLF line endings).\n",
+    "  Step 7. Customize & resume later\n",
+    "    - Add `OPENMI.md` in your workspace root to auto-load project instructions.\n",
+    "    - Exit with `/quit` (or press Esc/Ctrl-C twice); resume with `openmi --resume`."
+);
+
+const HELP_COMMANDS: &str = concat!(
+    "=== SLASH COMMANDS (INSIDE TUI) ===\n",
+    "  /model [id]                     Open interactive model selector or switch directly\n",
+    "  /mode [mode]                    Show or switch mode (read-only|ask|trusted|full-access)\n",
+    "  /diff                           Show colored unified diff for the latest run\n",
+    "  /undo [file|run]                Restore latest run, run ID, or file to pre-write bytes\n",
+    "  /clear                          Clear conversation history and tool timeline\n",
+    "  /credits                        Refresh plan, daily + wallet credits, and 1-hour pass\n",
+    "  /mcp [status|restart [server]]  Inspect or restart configured stdio MCP servers\n",
+    "  /help [topic]                   Show full tutorial or topic (steps|commands|modes|keys|mcp|cli)\n",
+    "  /quit (or /exit)                Exit Openmi TUI (session is auto-saved)"
+);
+
+const HELP_MODES: &str = concat!(
+    "=== PERMISSION MODES & TOOLS ===\n",
+    "  read-only    Allow `read_file` & `list_dir` only; block all writes and commands.\n",
+    "  ask          Prompt [y/a/n] before writes/commands (default).\n",
+    "  trusted      Auto-approve workspace tools within PathGuard boundaries\n",
+    "               (MCP tools still ask unless listed in the server's `allowlist`).\n",
+    "  full-access  Unrestricted tool execution; requires typing `I UNDERSTAND FULL ACCESS`.\n",
+    "  Built-in tools: `read_file`, `list_dir`, `write_file`, `run_command`."
+);
+
+const HELP_KEYS: &str = concat!(
+    "=== KEYBOARD SHORTCUTS ===\n",
+    "  Enter                 Send prompt or run /command\n",
+    "  Shift+Enter / Alt+Enter  Insert newline in multiline prompt\n",
+    "  Tab                   Accept top @path fuzzy file completion\n",
+    "  Up / Down             Browse prompt history (or move in /model selector)\n",
+    "  PageUp / PageDown     Scroll transcript up / down\n",
+    "  y / a / n             Approval popup: approve once / always / deny\n",
+    "  Esc / Ctrl-C          1st press: close modal or cancel active turn; 2nd press: quit"
+);
+
+const HELP_MCP: &str = concat!(
+    "=== WORKSPACE, SESSIONS & MCP ===\n",
+    "  OPENMI.md       Place in workspace root to inject project guidelines automatically.\n",
+    "  Sessions        Auto-saved to `~/.local/share/openmi/sessions/`; use `openmi --resume [ID]`.\n",
+    "  MCP servers     Configure stdio servers in `~/.config/openmi/mcp.json` or `.openmi/mcp.json`.\n",
+    "                  Tools register as `mcp__<server>__<tool>`. Use `/mcp status` or `/mcp restart`."
+);
+
+const HELP_CLI: &str = concat!(
+    "=== CLI COMMANDS (OUTSIDE TUI) ===\n",
+    "  openmi login / whoami / logout       Authenticate or inspect current account\n",
+    "  openmi [--resume [ID]]               Launch TUI (or resume latest/specific session)\n",
+    "  openmi run \"<prompt>\" [--json] [-y]  Run a single headless prompt turn\n",
+    "  openmi models [--json]               List available models\n",
+    "  openmi credits [--json]              Check credit balance and active pass\n",
+    "  openmi mcp list [--json]             List configured MCP servers and tools\n",
+    "  openmi update [--check]              Check for or install CLI updates"
+);
+
 pub fn help_text() -> &'static str {
     concat!(
-        "Available slash commands:\n",
-        "  /model [id]         Open interactive model selector or switch directly\n",
-        "  /mode [mode]        Show or switch mode (read-only|ask|trusted|full-access)\n",
-        "  /undo [file|run]    Restore a file or checkpoint run to exact pre-write bytes\n",
-        "  /diff               Show colored unified diff for the latest run\n",
-        "  /clear              Clear conversation history and transcript\n",
-        "  /credits            Show plan, daily + wallet credits, and active hourly pass\n",
-        "  /mcp [status|restart [server]]  Inspect or restart stdio MCP servers\n",
-        "  /help               Show this help text\n",
-        "  /quit               Exit Openmi TUI\n",
-        "\nTips: Type @path + Tab for fuzzy file completion; Shift/Alt+Enter for newline."
+        "Openmi CLI Tutorial & Feature Guide\n",
+        "===================================\n\n",
+        "=== STEP-BY-STEP TUTORIAL (HOW TO USE OPENMI) ===\n",
+        "  Step 1. Sign in & check credits\n",
+        "    - Run `openmi login` in your terminal if not signed in yet.\n",
+        "    - Inside TUI, run `/credits` to see your plan, daily/wallet credits, and 1-hr pass.\n",
+        "  Step 2. Pick a model\n",
+        "    - Run `/model` to open the interactive picker (Up/Down or j/k, Enter to select),\n",
+        "      or `/model <id>` to switch directly. Your 1-hour pass starts on your 1st prompt.\n",
+        "  Step 3. Choose a permission mode\n",
+        "    - Run `/mode` to check your current mode (default: `ask`).\n",
+        "    - Use `/mode read-only` to explore safely, or `/mode trusted` for faster edits.\n",
+        "  Step 4. Send a prompt (with @file mentions)\n",
+        "    - Type your request and press Enter to send (Shift+Enter or Alt+Enter for newline).\n",
+        "    - Type `@` + partial filename + Tab for .gitignore-aware fuzzy file completion.\n",
+        "  Step 5. Review & approve tool calls\n",
+        "    - In `ask` mode, mutating tools (`write_file`, `run_command`, MCP) ask:\n",
+        "      [y] approve once | [a] always this session | [n] deny.\n",
+        "    - Watch live tool status in the right-hand `Tools` pane.\n",
+        "  Step 6. Inspect diffs or undo changes\n",
+        "    - Run `/diff` to view a colored unified diff of the latest run.\n",
+        "    - Run `/undo`, `/undo <file>`, or `/undo <run_id>` to restore exact pre-write bytes\n",
+        "      (including UTF-8 BOM and CRLF line endings).\n",
+        "  Step 7. Customize & resume later\n",
+        "    - Add `OPENMI.md` in your workspace root to auto-load project instructions.\n",
+        "    - Exit with `/quit` (or press Esc/Ctrl-C twice); resume with `openmi --resume`.\n\n",
+        "=== SLASH COMMANDS (INSIDE TUI) ===\n",
+        "  /model [id]                     Open interactive model selector or switch directly\n",
+        "  /mode [mode]                    Show or switch mode (read-only|ask|trusted|full-access)\n",
+        "  /diff                           Show colored unified diff for the latest run\n",
+        "  /undo [file|run]                Restore latest run, run ID, or file to pre-write bytes\n",
+        "  /clear                          Clear conversation history and tool timeline\n",
+        "  /credits                        Refresh plan, daily + wallet credits, and 1-hour pass\n",
+        "  /mcp [status|restart [server]]  Inspect or restart configured stdio MCP servers\n",
+        "  /help [topic]                   Show full tutorial or topic (steps|commands|modes|keys|mcp|cli)\n",
+        "  /quit (or /exit)                Exit Openmi TUI (session is auto-saved)\n\n",
+        "=== PERMISSION MODES & TOOLS ===\n",
+        "  read-only    Allow `read_file` & `list_dir` only; block all writes and commands.\n",
+        "  ask          Prompt [y/a/n] before writes/commands (default).\n",
+        "  trusted      Auto-approve workspace tools within PathGuard boundaries\n",
+        "               (MCP tools still ask unless listed in the server's `allowlist`).\n",
+        "  full-access  Unrestricted tool execution; requires typing `I UNDERSTAND FULL ACCESS`.\n",
+        "  Built-in tools: `read_file`, `list_dir`, `write_file`, `run_command`.\n\n",
+        "=== KEYBOARD SHORTCUTS ===\n",
+        "  Enter                    Send prompt or run /command\n",
+        "  Shift+Enter / Alt+Enter  Insert newline in multiline prompt\n",
+        "  Tab                      Accept top @path fuzzy file completion\n",
+        "  Up / Down                Browse prompt history (or move in /model selector)\n",
+        "  PageUp / PageDown        Scroll transcript up / down\n",
+        "  y / a / n                Approval popup: approve once / always / deny\n",
+        "  Esc / Ctrl-C             1st press: close modal or cancel active turn; 2nd press: quit\n\n",
+        "=== WORKSPACE, SESSIONS & MCP ===\n",
+        "  OPENMI.md       Place in workspace root to inject project guidelines automatically.\n",
+        "  Sessions        Auto-saved to `~/.local/share/openmi/sessions/`; use `openmi --resume [ID]`.\n",
+        "  MCP servers     Configure stdio servers in `~/.config/openmi/mcp.json` or `.openmi/mcp.json`.\n",
+        "                  Tools register as `mcp__<server>__<tool>`. Use `/mcp status` or `/mcp restart`.\n\n",
+        "=== CLI COMMANDS (OUTSIDE TUI) ===\n",
+        "  openmi login / whoami / logout       Authenticate or inspect current account\n",
+        "  openmi [--resume [ID]]               Launch TUI (or resume latest/specific session)\n",
+        "  openmi run \"<prompt>\" [--json] [-y]  Run a single headless prompt turn\n",
+        "  openmi models [--json]               List available models\n",
+        "  openmi credits [--json]              Check credit balance and active pass\n",
+        "  openmi mcp list [--json]             List configured MCP servers and tools\n",
+        "  openmi update [--check]              Check for or install CLI updates\n\n",
+        "Tip: Use PageUp/PageDown to scroll, or run `/help <topic>` (steps|commands|modes|keys|mcp|cli)."
     )
+}
+
+pub fn help_topic_text(topic: &str) -> Option<&'static str> {
+    match topic.trim().to_ascii_lowercase().as_str() {
+        "step" | "steps" | "tutorial" | "start" => Some(HELP_STEPS),
+        "cmd" | "cmds" | "command" | "commands" | "slash" => Some(HELP_COMMANDS),
+        "mode" | "modes" | "permission" | "permissions" | "tools" => Some(HELP_MODES),
+        "key" | "keys" | "shortcut" | "shortcuts" => Some(HELP_KEYS),
+        "mcp" | "workspace" | "session" | "sessions" => Some(HELP_MCP),
+        "cli" => Some(HELP_CLI),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -306,8 +460,36 @@ mod tests {
             &cp,
             tmp.path(),
         ) {
-            SlashOutcome::Message(m) => assert!(m.contains("/undo")),
+            SlashOutcome::Message(m) => {
+                assert!(m.contains("STEP-BY-STEP TUTORIAL"));
+                assert!(m.contains("Step 1."));
+                assert!(m.contains("Step 7."));
+                assert!(m.contains("/undo"));
+                assert!(m.contains("PERMISSION MODES"));
+                assert!(m.contains("KEYBOARD SHORTCUTS"));
+                assert!(m.contains("CLI COMMANDS"));
+            }
             other => panic!("expected Help message, got {other:?}"),
+        }
+        match execute_slash(
+            parse_slash("/help steps").unwrap(),
+            "openmi-default",
+            PermissionMode::Ask,
+            &cp,
+            tmp.path(),
+        ) {
+            SlashOutcome::Message(m) => assert!(m.contains("Step 1.")),
+            other => panic!("expected Help steps message, got {other:?}"),
+        }
+        match execute_slash(
+            parse_slash("/help nonexistent").unwrap(),
+            "openmi-default",
+            PermissionMode::Ask,
+            &cp,
+            tmp.path(),
+        ) {
+            SlashOutcome::Error(e) => assert!(e.contains("Unknown help topic")),
+            other => panic!("expected Help error, got {other:?}"),
         }
         assert_eq!(
             execute_slash(
