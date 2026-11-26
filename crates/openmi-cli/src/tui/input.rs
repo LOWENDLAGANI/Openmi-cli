@@ -18,6 +18,19 @@ impl InputState {
         &self.buffer
     }
 
+    pub fn cursor_byte(&self) -> usize {
+        self.cursor
+    }
+
+    /// Replace byte range `[start..end]` with `replacement` and place cursor right after it.
+    pub fn replace_range(&mut self, start: usize, end: usize, replacement: &str) {
+        if start <= end && end <= self.buffer.len() {
+            self.buffer.replace_range(start..end, replacement);
+            self.cursor = start + replacement.len();
+            self.history_idx = None;
+        }
+    }
+
     pub fn insert_char(&mut self, ch: char) {
         self.buffer.insert(self.cursor, ch);
         self.cursor += ch.len_utf8();

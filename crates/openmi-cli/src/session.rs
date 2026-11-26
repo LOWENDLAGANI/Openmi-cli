@@ -133,3 +133,25 @@ pub fn build_session(
         None,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loads_openmi_md_into_session_system_prompt() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("OPENMI.md"),
+            "# Project Rules\nAlways run cargo test.\n",
+        )
+        .unwrap();
+
+        let cp = Arc::new(Mutex::new(CheckpointStore::new()));
+        let session = build_session(tmp.path(), "openmi-default", PermissionMode::Ask, cp).unwrap();
+        assert_eq!(
+            session.system_prompt(),
+            Some("# Project Rules\nAlways run cargo test.")
+        );
+    }
+}

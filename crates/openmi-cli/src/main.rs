@@ -3,6 +3,7 @@ mod cmd;
 mod exit_codes;
 mod output;
 mod session;
+mod session_store;
 mod tui;
 
 use std::path::PathBuf;
@@ -33,6 +34,10 @@ struct Cli {
     #[arg(long)]
     api_url: Option<String>,
 
+    /// Resume the latest saved session (or pass a specific session ID).
+    #[arg(long, num_args = 0..=1, value_name = "SESSION_ID")]
+    resume: Option<Option<String>>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -56,6 +61,10 @@ enum Commands {
         /// Override the managed Openmi API base URL.
         #[arg(long)]
         api_url: Option<String>,
+
+        /// Resume the latest saved session (or pass a specific session ID).
+        #[arg(long, num_args = 0..=1, value_name = "SESSION_ID")]
+        resume: Option<Option<String>>,
     },
 
     /// Authenticate with Openmi using device-code pairing (or --token fallback).
@@ -168,6 +177,7 @@ async fn main() -> ExitCode {
                 permission: cli.permission,
                 cwd: cli.cwd,
                 api_url: cli.api_url,
+                resume: cli.resume,
             })
             .await
         }
@@ -176,12 +186,14 @@ async fn main() -> ExitCode {
             permission,
             cwd,
             api_url,
+            resume,
         }) => {
             cmd::tui::execute(TuiOptions {
                 model,
                 permission,
                 cwd,
                 api_url,
+                resume,
             })
             .await
         }

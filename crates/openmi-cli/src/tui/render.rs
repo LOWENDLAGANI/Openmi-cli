@@ -4,7 +4,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::tui::app::{ToolStatus, TranscriptKind, TuiApp};
+use crate::tui::app::{FullAccessModalState, ToolStatus, TranscriptKind, TuiApp};
+use crate::tui::slash::FULL_ACCESS_MODAL_WARNING;
 
 /// Render the full TUI layout safely at any terminal size (including 80x24 and SSH).
 pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
@@ -17,17 +18,22 @@ pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
 
     let input_lines = app.input.text().lines().count().clamp(1, 5) as u16;
     let input_height = (input_lines + 2).min(area.height.saturating_sub(4));
+    let mention_height = if app.mention_suggestions.is_empty() {
+        0
+    } else {
+        (app.mention_suggestions.len() as u16 + 2).min(7)
+    };
 
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(4),
+            Constraint::Length(mention_height),
             Constraint::Length(input_height),
             Constraint::Length(1),
         ])
         .split(area);
 
-    // Split body into transcript + tool timeline when width >= 72, otherwise stack compactly.
     let (transcript_area, tools_area) = if root[0].width >= 72 {
         let cols = Layout::default()
             .direction(Direction::Horizontal)
@@ -42,11 +48,16 @@ pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
     if let Some(t_area) = tools_area {
         render_tool_timeline(frame, app, t_area);
     }
-    render_input(frame, app, root[1]);
-    render_status_bar(frame, app, root[2]);
+    if mention_height > 0 {
+        render_mention_suggestions(frame, app, root[1]);
+    }
+    render_input(frame, app, root[2]);
+    render_status_bar(frame, app, root[3]);
 
     if let Some(pending) = &app.pending_approval {
         render_approval_popup(frame, &pending.request.tool_name, &pending.request.summary);
+    } else if let Some(modal) = &app.full_access_modal {
+        render_full_access_modal(frame, modal);
     }
 }
 
@@ -151,6 +162,33 @@ fn render_tool_timeline(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(widget, area);
 }
 
+fn render_mention_suggestions(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    let lines: Vec<Line<'_>> = app
+        .mention_suggestions
+        .iter()
+        .enumerate()
+        .map(|(i, path)| {
+            if i == 0 {
+                Line::from(Span::styled(
+                    format!("> @{path}  (Tab to complete)"),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ))
+            } else {
+                Line::from(Span::raw(format!("  @{path}")))
+            }
+        })
+        .collect();
+
+    let widget = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" @path completions "),
+    );
+    frame.render_widget(widget, area);
+}
+
 fn render_input(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let title = format!(" Prompt ({}) ", app.status_hint);
     let widget = Paragraph::new(app.input.text())
@@ -158,7 +196,7 @@ fn render_input(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, area);
 
-    if app.pending_approval.is_none() {
+    if app.pending_approval.is_none() && app.full_access_modal.is_none() {
         let (row, col) = app.input.cursor_row_col();
         let max_x = area.x + area.width.saturating_sub(2);
         let max_y = area.y + area.height.saturating_sub(2);
@@ -214,6 +252,39 @@ fn render_approval_popup(frame: &mut Frame<'_>, tool_name: &str, summary: &str) 
     frame.render_widget(modal, popup_area);
 }
 
+fn render_full_access_modal(frame: &mut Frame<'_>, modal: &FullAccessModalState) {
+    let popup_area = centered_rect(76, 50, frame.area());
+    frame.render_widget(Clear, popup_area);
+
+    let mut lines: Vec<Line<'_>> = FULL_ACCESS_MODAL_WARNING
+        .lines()
+        .map(|l| Line::from(l.to_string()))
+        .collect();
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!("> {}", modal.typed),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    )));
+    if let Some(err) = &modal.error {
+        lines.push(Line::from(Span::styled(
+            err.clone(),
+            Style::default().fg(Color::Red),
+        )));
+    }
+
+    let widget = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Red))
+                .title(" Confirm FullAccess Mode "),
+        )
+        .wrap(Wrap { trim: true });
+    frame.render_widget(widget, popup_area);
+}
+
 pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
@@ -246,13 +317,15 @@ mod tests {
     use crate::tui::approval::PendingApproval;
 
     #[test]
-    fn renders_cleanly_at_80x24_and_120x40_with_approval_modal() {
+    fn renders_cleanly_at_80x24_and_120x40_with_modals_and_mentions() {
         let mut app = TuiApp::new(
             "openmi-default".into(),
             PermissionMode::Ask,
             PathBuf::from("."),
         );
         app.push_user("hello");
+        app.push_diff("--- a/foo.rs\n+++ b/foo.rs\n@@ -1 +1 @@\n-old\n+new\n");
+        app.mention_suggestions = vec!["src/main.rs".into()];
         app.credits = Some(250);
         let (tx, _rx) = oneshot::channel();
         app.pending_approval = Some(PendingApproval {
@@ -269,5 +342,14 @@ mod tests {
             let mut terminal = Terminal::new(backend).unwrap();
             terminal.draw(|f| draw(f, &app)).unwrap();
         }
+
+        app.pending_approval = None;
+        app.full_access_modal = Some(FullAccessModalState {
+            typed: "I UNDERSTAND".into(),
+            error: Some("Type exact phrase".into()),
+        });
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
     }
 }

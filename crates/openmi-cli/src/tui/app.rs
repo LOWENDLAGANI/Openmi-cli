@@ -1,10 +1,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use openmi_core::{AgentEvent, ApprovalDecision, ControlState, PermissionMode};
+use openmi_core::{AgentEvent, ApprovalDecision, ControlState, Message, PermissionMode, Role};
 
 use crate::tui::approval::PendingApproval;
 use crate::tui::input::InputState;
+use crate::tui::mention::{active_mention_query, collect_workspace_files, fuzzy_match_paths};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TranscriptKind {
@@ -38,6 +39,13 @@ pub struct ToolTimelineItem {
     pub summary: String,
 }
 
+/// Typed confirmation modal state before enabling `PermissionMode::FullAccess`.
+#[derive(Debug, Default)]
+pub struct FullAccessModalState {
+    pub typed: String,
+    pub error: Option<String>,
+}
+
 /// Complete state of the interactive TUI (UI-only; core stays UI-agnostic).
 pub struct TuiApp {
     pub model: String,
@@ -51,6 +59,9 @@ pub struct TuiApp {
     pub input: InputState,
     pub scroll_from_bottom: u16,
     pub pending_approval: Option<PendingApproval>,
+    pub full_access_modal: Option<FullAccessModalState>,
+    pub workspace_files: Vec<String>,
+    pub mention_suggestions: Vec<String>,
     pub should_quit: bool,
     pub status_hint: String,
     pub tick: u64,
@@ -61,6 +72,7 @@ pub struct TuiApp {
 impl TuiApp {
     pub fn new(model: String, mode: PermissionMode, cwd: PathBuf) -> Self {
         let branch = detect_git_branch(&cwd);
+        let workspace_files = collect_workspace_files(&cwd, 2000);
         let mut app = Self {
             model,
             mode,
@@ -73,13 +85,17 @@ impl TuiApp {
             input: InputState::new(),
             scroll_from_bottom: 0,
             pending_approval: None,
+            full_access_modal: None,
+            workspace_files,
+            mention_suggestions: Vec::new(),
             should_quit: false,
-            status_hint: "Enter: send | Shift/Alt+Enter: newline | Esc/Ctrl-C: cancel/quit"
-                .to_string(),
+            status_hint: "Enter: send | /help: commands | @path+Tab | Esc: cancel/quit".to_string(),
             tick: 0,
             armed_quit: false,
         };
-        app.push_system("Welcome to Openmi CLI. Type a prompt or press Esc twice to quit.");
+        app.push_system(
+            "Welcome to Openmi CLI. Type a prompt, `/help` for commands, or Esc twice to quit.",
+        );
         app
     }
 
@@ -103,12 +119,58 @@ impl TuiApp {
         self.scroll_from_bottom = 0;
     }
 
+    pub fn push_diff(&mut self, text: impl Into<String>) {
+        self.transcript.push(TranscriptEntry {
+            kind: TranscriptKind::Diff,
+            text: text.into(),
+        });
+        self.scroll_from_bottom = 0;
+    }
+
     pub fn push_error(&mut self, text: impl Into<String>) {
         self.transcript.push(TranscriptEntry {
             kind: TranscriptKind::Error,
             text: text.into(),
         });
         self.scroll_from_bottom = 0;
+    }
+
+    /// Populate transcript from restored `AgentSession` messages (`--resume`).
+    pub fn hydrate_from_history(&mut self, messages: &[Message]) {
+        for msg in messages {
+            match msg.role {
+                Role::User => self.push_user(msg.content.clone()),
+                Role::Assistant => self.transcript.push(TranscriptEntry {
+                    kind: TranscriptKind::Assistant,
+                    text: msg.content.clone(),
+                }),
+                Role::System | Role::Tool => {}
+            }
+        }
+    }
+
+    /// Recompute `@path` fuzzy completion suggestions based on the current cursor position.
+    pub fn refresh_mention_suggestions(&mut self) {
+        if let Some((_, query)) = active_mention_query(self.input.text(), self.input.cursor_byte())
+        {
+            self.mention_suggestions = fuzzy_match_paths(&self.workspace_files, query, 5);
+        } else {
+            self.mention_suggestions.clear();
+        }
+    }
+
+    /// Accept the top `@path` fuzzy match on `Tab`.
+    pub fn apply_top_mention_completion(&mut self) -> bool {
+        let Some(top) = self.mention_suggestions.first().cloned() else {
+            return false;
+        };
+        let cursor = self.input.cursor_byte();
+        if let Some((start, _)) = active_mention_query(self.input.text(), cursor) {
+            self.input.replace_range(start, cursor, &format!("@{top} "));
+            self.mention_suggestions.clear();
+            return true;
+        }
+        false
     }
 
     pub fn scroll_up(&mut self, lines: u16) {
@@ -223,9 +285,15 @@ impl TuiApp {
         false
     }
 
-    /// Handle Esc or Ctrl-C: first cancels active turn (or arms quit if idle), second quits.
+    /// Handle Esc or Ctrl-C: closes FullAccess modal, cancels active turn, or quits on 2nd press.
     /// Returns `true` if the active turn should be cancelled now.
     pub fn handle_interrupt(&mut self) -> bool {
+        if self.full_access_modal.is_some() {
+            self.full_access_modal = None;
+            self.push_system("Cancelled FullAccess mode change.");
+            return false;
+        }
+
         if self.pending_approval.is_some() {
             self.resolve_approval(ApprovalDecision::Deny);
             return true;
@@ -281,11 +349,9 @@ mod tests {
         );
         app.control_state = ControlState::Running;
 
-        // First press cancels turn without quitting.
         assert!(app.handle_interrupt());
         assert!(!app.should_quit);
 
-        // Second press quits.
         assert!(app.handle_interrupt());
         assert!(app.should_quit);
     }
@@ -317,5 +383,22 @@ mod tests {
         assert_eq!(app.transcript.last().unwrap().text, "Hello world");
         assert_eq!(app.tools.len(), 1);
         assert_eq!(app.tools[0].status, ToolStatus::Succeeded);
+    }
+
+    #[test]
+    fn at_mention_tab_completion_replaces_active_token() {
+        let mut app = TuiApp::new(
+            "openmi-default".into(),
+            PermissionMode::Ask,
+            PathBuf::from("."),
+        );
+        app.workspace_files = vec!["Cargo.toml".into(), "src/tui/slash.rs".into()];
+        for ch in "check @slash".chars() {
+            app.input.insert_char(ch);
+        }
+        app.refresh_mention_suggestions();
+        assert_eq!(app.mention_suggestions, vec!["src/tui/slash.rs"]);
+        assert!(app.apply_top_mention_completion());
+        assert_eq!(app.input.text(), "check @src/tui/slash.rs ");
     }
 }
