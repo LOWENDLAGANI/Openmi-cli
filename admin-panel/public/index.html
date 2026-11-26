@@ -152,6 +152,22 @@
         </div>
         <div class="panel-head-actions">
           <input id="user-search" type="search" class="input input-search" placeholder="Filter by email or ID…" />
+          <button type="button" class="btn btn-secondary" id="toggle-create-user-btn">+ New User</button>
+        </div>
+      </div>
+
+      <div id="create-user-form" class="create-box hidden">
+        <div class="create-grid">
+          <input id="new-user-email" type="email" class="input" placeholder="user@example.com" autocomplete="off" />
+          <input id="new-user-password" type="password" class="input" placeholder="Password (min 6 chars)" autocomplete="new-password" />
+          <select id="new-user-plan" class="select">
+            <option value="free">free</option>
+            <option value="pro">pro</option>
+            <option value="team">team</option>
+            <option value="enterprise">enterprise</option>
+          </select>
+          <input id="new-user-credits" type="number" min="0" step="1" class="input mono" placeholder="Credits" value="100" />
+          <button type="button" class="btn btn-primary" id="create-user-submit">Create</button>
         </div>
       </div>
 
@@ -168,6 +184,36 @@
           </thead>
           <tbody id="users-tbody">
             <tr><td colspan="5" class="empty-cell">Loading users…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="devices-heading">
+      <div class="panel-head">
+        <div>
+          <h2 id="devices-heading">CLI Device Login Codes</h2>
+          <p class="panel-desc">Recent <code>openmi login</code> pairing sessions. Deny pending codes or clean up expired rows.</p>
+        </div>
+        <div class="panel-head-actions">
+          <button type="button" class="btn btn-secondary" id="purge-devices-btn">Clean Expired</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table" id="devices-table">
+          <thead>
+            <tr>
+              <th>User Code</th>
+              <th>Status</th>
+              <th>Account</th>
+              <th>Polls</th>
+              <th>Expires</th>
+              <th class="col-actions">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="devices-tbody">
+            <tr><td colspan="6" class="empty-cell">Loading device codes…</td></tr>
           </tbody>
         </table>
       </div>

@@ -41,9 +41,51 @@ export default async function handler(req, res) {
 
     if (req.method === "POST") {
       const body = await readBody(req);
+
+      if (body.action === "create_user") {
+        const email = String(body.email || "").trim();
+        const password = String(body.password || "");
+        if (!email || !password || password.length < 6) {
+          return sendJson(res, 400, {
+            error: "Valid email and password (at least 6 characters) are required.",
+          });
+        }
+        const created = await supabaseFetch("/auth/v1/admin/users", {
+          method: "POST",
+          body: JSON.stringify({
+            email,
+            password,
+            email_confirm: true,
+          }),
+        });
+        const newId = created?.id;
+        if (newId && (body.balance !== undefined || body.plan)) {
+          const balance = Math.max(0, Math.floor(Number(body.balance) || 0));
+          const plan = String(body.plan || "free").trim() || "free";
+          await supabaseFetch("/rest/v1/user_credits?on_conflict=user_id", {
+            method: "POST",
+            headers: { Prefer: "resolution=merge-duplicates" },
+            body: JSON.stringify({
+              user_id: newId,
+              plan,
+              balance,
+              updated_at: new Date().toISOString(),
+            }),
+          });
+        }
+        return sendJson(res, 200, { ok: true, id: newId, email });
+      }
+
       const userId = String(body.user_id || "").trim();
       if (!userId) {
         return sendJson(res, 400, { error: "user_id is required" });
+      }
+
+      if (body.action === "delete_user") {
+        await supabaseFetch(`/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+          method: "DELETE",
+        });
+        return sendJson(res, 200, { ok: true, user_id: userId, deleted: true });
       }
 
       if (body.action === "set_ban") {

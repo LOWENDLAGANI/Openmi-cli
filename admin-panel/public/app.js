@@ -159,6 +159,7 @@ function renderUsers() {
           <button type="button" class="btn btn-sm ${u.banned ? "btn-secondary" : "btn-danger-ghost"}" data-ban>
             ${u.banned ? "Unban" : "Ban"}
           </button>
+          <button type="button" class="btn btn-sm btn-danger-ghost" data-delete-user title="Permanently delete user">Delete</button>
         </div>
       </td>
     `;
@@ -167,6 +168,7 @@ function renderUsers() {
     const planSelect = tr.querySelector("[data-plan]");
     const saveBtn = tr.querySelector("[data-save-user]");
     const banBtn = tr.querySelector("[data-ban]");
+    const delBtn = tr.querySelector("[data-delete-user]");
 
     tr.querySelector("[data-add]").addEventListener("click", () => {
       balInput.value = String((Number(balInput.value) || 0) + 100);
@@ -220,6 +222,76 @@ function renderUsers() {
       }
     });
 
+    delBtn.addEventListener("click", async () => {
+      if (!confirm(`Permanently delete ${u.email} (${u.id})? This cannot be undone.`)) return;
+      delBtn.disabled = true;
+      try {
+        await api("/api/users", {
+          method: "POST",
+          body: JSON.stringify({ action: "delete_user", user_id: u.id }),
+        });
+        state.users = state.users.filter((x) => x.id !== u.id);
+        renderUsers();
+        showToast(`Deleted ${u.email}`);
+      } catch (err) {
+        showToast(err.message, true);
+        delBtn.disabled = false;
+      }
+    });
+
+    tbody.appendChild(tr);
+  }
+}
+
+function renderDevices(devices) {
+  const tbody = $("devices-tbody");
+  if (!devices || devices.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-cell">No device login sessions recorded.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = "";
+  for (const d of devices) {
+    const expired = d.expires_at && Date.parse(d.expires_at) <= Date.now();
+    const effectiveStatus = d.status === "pending" && expired ? "expired" : d.status;
+    const badgeClass =
+      effectiveStatus === "approved" || effectiveStatus === "consumed"
+        ? "badge-active"
+        : effectiveStatus === "denied"
+          ? "badge-banned"
+          : "badge-zero";
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="mono">${escapeHtml(d.user_code)}</td>
+      <td><span class="badge ${badgeClass}">${escapeHtml(effectiveStatus)}</span></td>
+      <td>${escapeHtml(d.user_email || "—")}</td>
+      <td class="mono">${Number(d.poll_count) || 0}</td>
+      <td class="mono">${d.expires_at ? new Date(d.expires_at).toLocaleString() : "—"}</td>
+      <td class="col-actions">
+        ${
+          effectiveStatus === "pending"
+            ? `<button type="button" class="btn btn-sm btn-danger-ghost" data-deny>Deny</button>`
+            : `<span class="hint">—</span>`
+        }
+      </td>
+    `;
+    const denyBtn = tr.querySelector("[data-deny]");
+    if (denyBtn) {
+      denyBtn.addEventListener("click", async () => {
+        denyBtn.disabled = true;
+        try {
+          await api("/api/devices", {
+            method: "POST",
+            body: JSON.stringify({ action: "deny", user_code: d.user_code }),
+          });
+          showToast(`Denied code ${d.user_code}`);
+          loadAll();
+        } catch (err) {
+          showToast(err.message, true);
+          denyBtn.disabled = false;
+        }
+      });
+    }
     tbody.appendChild(tr);
   }
 }
@@ -239,10 +311,15 @@ function escapeAttr(str) {
 async function loadAll() {
   setGlobalError(null);
   try {
-    const [settings, usersRes] = await Promise.all([api("/api/settings"), api("/api/users")]);
+    const [settings, usersRes, devicesRes] = await Promise.all([
+      api("/api/settings"),
+      api("/api/users"),
+      api("/api/devices").catch(() => ({ devices: [] })),
+    ]);
     renderSettings(settings);
     state.users = usersRes.users || [];
     renderUsers();
+    renderDevices(devicesRes.devices || []);
   } catch (err) {
     setGlobalError(
       `Failed to load Supabase data: ${err.message}. Make sure migration 20261126000003_create_app_settings.sql is applied and SUPABASE_SERVICE_ROLE_KEY is set in Vercel.`,
@@ -369,6 +446,51 @@ $("save-models-btn").addEventListener("click", async () => {
     });
     renderSettings(updated);
     showToast("Model catalog saved");
+  } catch (err) {
+    showToast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("toggle-create-user-btn").addEventListener("click", () => {
+  $("create-user-form").classList.toggle("hidden");
+});
+
+$("create-user-submit").addEventListener("click", async () => {
+  const btn = $("create-user-submit");
+  btn.disabled = true;
+  try {
+    const email = $("new-user-email").value.trim();
+    const password = $("new-user-password").value;
+    const plan = $("new-user-plan").value;
+    const balance = Number($("new-user-credits").value) || 0;
+    await api("/api/users", {
+      method: "POST",
+      body: JSON.stringify({ action: "create_user", email, password, plan, balance }),
+    });
+    $("new-user-email").value = "";
+    $("new-user-password").value = "";
+    $("create-user-form").classList.add("hidden");
+    showToast(`Created user ${email}`);
+    await loadAll();
+  } catch (err) {
+    showToast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("purge-devices-btn").addEventListener("click", async () => {
+  const btn = $("purge-devices-btn");
+  btn.disabled = true;
+  try {
+    await api("/api/devices", {
+      method: "POST",
+      body: JSON.stringify({ action: "purge_expired" }),
+    });
+    showToast("Cleaned expired/consumed device codes");
+    await loadAll();
   } catch (err) {
     showToast(err.message, true);
   } finally {
