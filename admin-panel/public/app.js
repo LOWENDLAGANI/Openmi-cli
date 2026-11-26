@@ -193,7 +193,7 @@ function renderModels() {
   const tbody = $("models-tbody");
   tbody.innerHTML = "";
   if (state.models.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" class="empty-cell">No models configured. Click "+ Add Model".</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-cell">No models configured. Click "+ Add Model".</td></tr>`;
     return;
   }
 
@@ -201,7 +201,14 @@ function renderModels() {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><input type="text" class="input mono" data-field="id" value="${escapeAttr(m.id)}" placeholder="provider/model-id" /></td>
-      <td><input type="text" class="input" data-field="label" value="${escapeAttr(m.label)}" placeholder="Display Name" /></td>
+      <td><input type="text" class="input" data-field="display_name" value="${escapeAttr(m.display_name || m.label || "")}" placeholder="e.g. DeepSeek V3 (Fast)" /></td>
+      <td><input type="text" class="input" data-field="description" maxlength="140" value="${escapeAttr(m.description || "")}" placeholder="Short blurb in /model" /></td>
+      <td><input type="url" class="input mono" data-field="base_url" value="${escapeAttr(m.base_url || "")}" placeholder="https://api.deepseek.com/v1" autocomplete="off" /></td>
+      <td>
+        <input type="password" class="input mono" data-field="api_key" value="" autocomplete="new-password"
+          placeholder="${m.has_api_key && !m.clear_api_key ? escapeAttr(m.api_key_masked || "saved") + " (saved)" : "blank = global key"}" />
+        ${m.has_api_key ? `<button type="button" class="btn btn-sm btn-danger-ghost" data-clear-key="${idx}">${m.clear_api_key ? "Will clear" : "Clear key"}</button>` : ""}
+      </td>
       <td><input type="number" min="1000" step="1000" class="input mono" style="width:105px;" data-field="context_window" value="${Number(m.context_window) || 128000}" /></td>
       <td><input type="number" min="0" step="1" class="input mono" style="width:72px;" data-field="credit_cost" value="${Number(m.credit_cost ?? 3)}" /></td>
       <td style="text-align:center;"><input type="checkbox" data-field="paid_only" ${m.paid_only ? "checked" : ""} aria-label="Paid only" /></td>
@@ -218,11 +225,22 @@ function renderModels() {
           state.models[idx][field] = Math.max(0, Math.floor(Number(inp.value) || 0));
         } else if (field === "paid_only") {
           state.models[idx][field] = Boolean(inp.checked);
+        } else if (field === "display_name") {
+          state.models[idx].display_name = inp.value;
+          state.models[idx].label = inp.value.trim() || state.models[idx].id;
         } else {
           state.models[idx][field] = inp.value;
         }
       });
     });
+
+    const clearBtn = tr.querySelector("[data-clear-key]");
+    if (clearBtn) {
+      clearBtn.addEventListener("click", () => {
+        state.models[idx].clear_api_key = !state.models[idx].clear_api_key;
+        renderModels();
+      });
+    }
 
     tr.querySelector(`[data-remove]`).addEventListener("click", () => {
       state.models.splice(idx, 1);
@@ -594,7 +612,12 @@ $("save-models-btn").addEventListener("click", async () => {
   try {
     const updated = await api("/api/settings", {
       method: "POST",
-      body: JSON.stringify({ models: state.models }),
+      body: JSON.stringify({
+        models: state.models.map(({ has_api_key, api_key_masked, ...m }) => ({
+          ...m,
+          label: (m.display_name || "").trim() || m.label || m.id,
+        })),
+      }),
     });
     renderSettings(updated);
     showToast("Model catalog saved");

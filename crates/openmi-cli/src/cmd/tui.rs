@@ -160,7 +160,27 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
 
     let (agent_tx, mut agent_rx) = mpsc::channel::<AgentEvent>(128);
     let (credit_tx, mut credit_rx) = mpsc::channel::<CreditStatus>(8);
+    let (model_tx, mut model_rx) = mpsc::channel::<Vec<ModelInfo>>(2);
     let mut active_cancel: Option<CancellationToken> = None;
+
+    // Load the model catalog in the background so display names show up right away.
+    {
+        let tx = model_tx.clone();
+        let endpoint = base_url_for_credits
+            .as_deref()
+            .map(|b| format!("{b}/functions/v1/models"));
+        let token = bearer_for_credits.clone();
+        let cache_path = AppPaths::resolve().ok().map(|p| p.models_cache_file());
+        tokio::spawn(async move {
+            let models = fetch_models_with_fallback(
+                endpoint.as_deref(),
+                token.as_deref(),
+                cache_path.as_deref(),
+            )
+            .await;
+            let _ = tx.send(models).await;
+        });
+    }
 
     // Fetch initial credit/pass status in background so status bar populates right away.
     if let (Some(base), Some(tok)) = (
@@ -234,10 +254,20 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                                 cache_path.as_deref(),
                                             )
                                             .await;
+                                            app.apply_model_catalog(&models);
                                             app.model_selector =
                                                 Some(ModelSelectorState::new(models, &app.model));
                                         }
                                         SlashOutcome::SetModel(m) => {
+                                            // Accept either the model ID or its display name.
+                                            let m = app
+                                                .model_names
+                                                .iter()
+                                                .find(|(id, name)| {
+                                                    id.eq_ignore_ascii_case(&m) || name.eq_ignore_ascii_case(&m)
+                                                })
+                                                .map(|(id, _)| id.clone())
+                                                .unwrap_or(m);
                                             app.model = m.clone();
                                             session.lock().await.set_model(m.clone());
                                             let active_note = app
@@ -252,7 +282,8 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                                     }
                                                 })
                                                 .unwrap_or_else(|| " Your 1-hour pass starts when you send your first prompt.".to_string());
-                                            app.push_system(format!("Switched model to `{m}`.{active_note}"));
+                                            let shown = app.display_name_for(&m).to_string();
+                                            app.push_system(format!("Switched to {shown}.{active_note}"));
                                         }
                                         SlashOutcome::SetMode(new_mode) => {
                                             app.mode = new_mode;
@@ -381,6 +412,10 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                 app.apply_agent_event(agent_ev);
                 dirty = true;
             }
+            Some(models) = model_rx.recv() => {
+                app.apply_model_catalog(&models);
+                dirty = true;
+            }
             Some(status) = credit_rx.recv() => {
                 app.apply_credit_status(status);
                 dirty = true;
@@ -455,8 +490,9 @@ fn format_model_switch_message(app: &TuiApp, chosen: &ModelInfo) -> String {
             .map(|cs| cs.effective_upgrade_url())
             .unwrap_or("https://sociabuzz.com/minetallestmc/tribe");
         return format!(
-            "Selected `{}` ({} cr/hr) — Paid pass required before prompting. Upgrade: {url}",
-            chosen.id, chosen.credit_cost
+            "Selected {} ({} cr/hr) — Paid pass required before prompting. Upgrade: {url}",
+            chosen.name(),
+            chosen.credit_cost
         );
     }
     if let Some((active_id, mins)) = app
@@ -466,18 +502,21 @@ fn format_model_switch_message(app: &TuiApp, chosen: &ModelInfo) -> String {
     {
         if active_id == chosen.id {
             return format!(
-                "Switched to {} (`{}`) — active 1-hour pass running ({mins}m remaining).",
-                chosen.label, chosen.id
+                "Switched to {} — active 1-hour pass running ({mins}m remaining).",
+                chosen.name()
             );
         }
         return format!(
-            "Switched to {} (`{}`, {} cr/hr). Your 1-hour pass starts when you send your first prompt (replaces active `{active_id}` pass, {mins}m left).",
-            chosen.label, chosen.id, chosen.credit_cost
+            "Switched to {} ({} cr/hr). Your 1-hour pass starts when you send your first prompt (replaces active {} pass, {mins}m left).",
+            chosen.name(),
+            chosen.credit_cost,
+            app.display_name_for(active_id)
         );
     }
     format!(
-        "Switched to {} (`{}`, {} cr/hr). Your 1-hour pass starts when you send your first prompt.",
-        chosen.label, chosen.id, chosen.credit_cost
+        "Switched to {} ({} cr/hr). Your 1-hour pass starts when you send your first prompt.",
+        chosen.name(),
+        chosen.credit_cost
     )
 }
 

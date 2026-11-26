@@ -13,6 +13,8 @@ interface ModelInfo {
   context_window: number;
   credit_cost: number;
   paid_only: boolean;
+  display_name?: string;
+  description?: string;
 }
 
 const DEFAULT_MODELS: ModelInfo[] = [
@@ -53,12 +55,18 @@ function normalizeModelList(value: unknown): ModelInfo[] | null {
         ? Math.floor(m.credit_cost)
         : 3;
     const paidOnly = Boolean(m.paid_only);
+    // NOTE: only public fields are copied. `api_key` / `base_url` are intentionally dropped
+    // because this endpoint is readable by every client.
+    const displayName = typeof m.display_name === "string" ? m.display_name.trim() : "";
+    const description = typeof m.description === "string" ? m.description.trim() : "";
     out.push({
       id,
       label,
       context_window: contextWindow,
       credit_cost: creditCost,
       paid_only: paidOnly,
+      ...(displayName ? { display_name: displayName } : {}),
+      ...(description ? { description } : {}),
     });
   }
   return out.length > 0 ? out : null;

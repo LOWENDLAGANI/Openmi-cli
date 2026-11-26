@@ -117,6 +117,8 @@ interface CatalogModel {
   label?: string;
   credit_cost?: number;
   paid_only?: boolean;
+  base_url?: string;
+  api_key?: string;
 }
 
 function normalizeMessages(raw: unknown): Array<{ role: string; content: string }> {
@@ -237,8 +239,8 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  const llmApiKey = dbApiKey || (Deno.env.get("LLM_API_KEY") ?? "").trim();
-  if (!llmApiKey) {
+  const globalApiKey = dbApiKey || (Deno.env.get("LLM_API_KEY") ?? "").trim();
+  if (!globalApiKey && !dbModels.some((m) => typeof m.api_key === "string" && m.api_key.trim())) {
     return jsonResponse(
       {
         error: "llm_not_configured",
@@ -247,7 +249,7 @@ Deno.serve(async (req: Request) => {
       503,
     );
   }
-  const llmBaseUrl = (dbBaseUrl || Deno.env.get("LLM_BASE_URL") || DEFAULT_BASE_URL).replace(
+  const globalBaseUrl = (dbBaseUrl || Deno.env.get("LLM_BASE_URL") || DEFAULT_BASE_URL).replace(
     /\/+$/,
     "",
   );
@@ -267,6 +269,25 @@ Deno.serve(async (req: Request) => {
 
   const requestedModel = String((body as Record<string, unknown>).model ?? "").trim() || "openmi-default";
   const upstreamModel = requestedModel === "openmi-default" ? defaultModel : requestedModel;
+  // Per-model provider override: each catalog model may carry its own base_url + api_key,
+  // falling back to the global provider settings when blank.
+  const catalogEntry = dbModels.find((m) => m.id === requestedModel) ??
+    dbModels.find((m) => m.id === upstreamModel);
+  const modelKey = typeof catalogEntry?.api_key === "string" ? catalogEntry.api_key.trim() : "";
+  const modelBase = typeof catalogEntry?.base_url === "string"
+    ? catalogEntry.base_url.trim().replace(/\/+$/, "")
+    : "";
+  const llmApiKey = modelKey || globalApiKey;
+  const llmBaseUrl = /^https?:\/\//i.test(modelBase) ? modelBase : globalBaseUrl;
+  if (!llmApiKey) {
+    return jsonResponse(
+      {
+        error: "llm_not_configured",
+        message: `No API key configured for model '${requestedModel}'. Set it in the Admin Panel.`,
+      },
+      503,
+    );
+  }
   const { passModelId, creditCost, paidOnly } = resolveModelPricing(
     dbModels,
     requestedModel,

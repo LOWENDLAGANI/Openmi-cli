@@ -35,6 +35,24 @@ pub struct ModelInfo {
     pub credit_cost: u32,
     #[serde(default)]
     pub paid_only: bool,
+    /// User-facing name configured in the Admin Panel (falls back to `label`, then `id`).
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// Optional short description shown in the `/model` selector.
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+impl ModelInfo {
+    /// Name to show users: `display_name`, else `label`, else `id`.
+    pub fn name(&self) -> &str {
+        self.display_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .or_else(|| Some(self.label.trim()).filter(|s| !s.is_empty()))
+            .unwrap_or(&self.id)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,6 +144,8 @@ pub fn fallback_models() -> Vec<ModelInfo> {
         context_window: 128_000,
         credit_cost: 3,
         paid_only: false,
+        display_name: None,
+        description: None,
     }]
 }
 
@@ -213,11 +233,31 @@ mod tests {
             context_window: 64_000,
             credit_cost: 3,
             paid_only: true,
+            display_name: None,
+            description: None,
         }];
         fs::write(&cache, serde_json::to_vec(&cached).unwrap()).unwrap();
 
         let models = fetch_models_with_fallback(None, None, Some(&cache)).await;
         assert_eq!(models, cached);
+    }
+
+    #[test]
+    fn model_name_prefers_display_name_then_label_then_id() {
+        let mut m = ModelInfo {
+            id: "deepseek-chat".into(),
+            label: "DS".into(),
+            context_window: 64_000,
+            credit_cost: 2,
+            paid_only: false,
+            display_name: Some("  DeepSeek Fast ".into()),
+            description: None,
+        };
+        assert_eq!(m.name(), "DeepSeek Fast");
+        m.display_name = None;
+        assert_eq!(m.name(), "DS");
+        m.label.clear();
+        assert_eq!(m.name(), "deepseek-chat");
     }
 
     #[tokio::test]

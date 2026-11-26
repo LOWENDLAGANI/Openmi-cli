@@ -111,6 +111,8 @@ pub struct TuiApp {
     pub tick: u64,
     /// Tracks whether the user already pressed Esc/Ctrl-C once while idle (press again to quit).
     pub armed_quit: bool,
+    /// Model ID -> user-facing display name (from the live catalog).
+    pub model_names: std::collections::HashMap<String, String>,
 }
 
 impl TuiApp {
@@ -139,11 +141,30 @@ impl TuiApp {
                 .to_string(),
             tick: 0,
             armed_quit: false,
+            model_names: std::collections::HashMap::new(),
         };
         app.push_system(
             "Welcome to Openmi CLI. Type a prompt, `/model` to pick a model, `/help` for commands, or Esc twice to quit.",
         );
         app
+    }
+
+    /// Remember display names from the model catalog so the UI can show them instead of IDs.
+    pub fn apply_model_catalog(&mut self, models: &[ModelInfo]) {
+        self.model_names = models
+            .iter()
+            .map(|m| (m.id.clone(), m.name().to_string()))
+            .collect();
+    }
+
+    /// User-facing name for `id` (falls back to the raw ID).
+    pub fn display_name_for<'a>(&'a self, id: &'a str) -> &'a str {
+        self.model_names.get(id).map(String::as_str).unwrap_or(id)
+    }
+
+    /// User-facing name of the currently selected model.
+    pub fn model_display(&self) -> &str {
+        self.display_name_for(&self.model)
     }
 
     pub fn apply_credit_status(&mut self, status: CreditStatus) {

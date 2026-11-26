@@ -223,7 +223,7 @@ fn render_status_bar(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             format!("{}/{} cr", cs.balance, cap)
         };
         let pass = match cs.active_pass_remaining() {
-            Some((m, mins)) => format!(" | pass:{m}({mins}m)"),
+            Some((m, mins)) => format!(" | pass:{}({mins}m)", app.display_name_for(m)),
             None => String::new(),
         };
         (tier, cred, pass)
@@ -238,7 +238,9 @@ fn render_status_bar(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     let bar = format!(
         " [{tier_str}] model:{} | {credits_str}{pass_str} | mode:{:?} | {cwd_display} ({}) ",
-        app.model, app.mode, app.branch
+        app.model_display(),
+        app.mode,
+        app.branch
     );
     let widget = Paragraph::new(bar).style(Style::default().bg(Color::DarkGray).fg(Color::White));
     frame.render_widget(widget, area);
@@ -337,7 +339,7 @@ fn render_model_selector_modal(frame: &mut Frame<'_>, app: &TuiApp, selector: &M
             let prefix = if is_sel { "▸ " } else { "  " };
             let mut spans = vec![
                 Span::styled(
-                    format!("{prefix}{} ({})", m.label, m.id),
+                    format!("{prefix}{}", m.name()),
                     if is_sel {
                         Style::default()
                             .fg(Color::Cyan)
@@ -375,6 +377,16 @@ fn render_model_selector_modal(frame: &mut Frame<'_>, app: &TuiApp, selector: &M
                 ));
             }
             lines.push(Line::from(spans));
+            if is_sel {
+                let mut detail = format!("    id: {}  ·  {}k ctx", m.id, m.context_window / 1000);
+                if let Some(desc) = m.description.as_deref().filter(|d| !d.trim().is_empty()) {
+                    detail.push_str(&format!("  ·  {}", desc.trim()));
+                }
+                lines.push(Line::from(Span::styled(
+                    detail,
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
         }
     }
 
@@ -471,6 +483,8 @@ mod tests {
                     context_window: 128_000,
                     credit_cost: 3,
                     paid_only: false,
+                    display_name: Some("Openmi".into()),
+                    description: Some("Balanced everyday model".into()),
                 },
                 ModelInfo {
                     id: "anthropic/claude-3.5-sonnet".into(),
@@ -478,6 +492,8 @@ mod tests {
                     context_window: 200_000,
                     credit_cost: 3,
                     paid_only: true,
+                    display_name: None,
+                    description: None,
                 },
             ],
             "openmi-default",

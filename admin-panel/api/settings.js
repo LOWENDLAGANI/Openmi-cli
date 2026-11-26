@@ -20,13 +20,35 @@ async function fetchRow() {
   return Array.isArray(inserted) ? inserted[0] : inserted;
 }
 
-function normalizeModels(list) {
+// Normalizes the catalog. `existing` is the currently stored catalog so a blank per-model
+// `api_key` keeps the previously saved key (keys are never sent back to the browser).
+function normalizeModels(list, existing = []) {
   if (!Array.isArray(list) || list.length === 0) return DEFAULT_MODELS;
+  const storedKeys = new Map(
+    (Array.isArray(existing) ? existing : [])
+      .filter((m) => m && typeof m.id === "string")
+      .map((m) => [m.id.trim(), String(m.api_key || "")]),
+  );
   return list
     .filter((m) => m && typeof m.id === "string" && m.id.trim())
-    .map((m) => ({
-      id: m.id.trim(),
-      label: String(m.label || m.id).trim(),
+    .map((m) => {
+      const id = m.id.trim();
+      let apiKey = typeof m.api_key === "string" ? m.api_key.trim() : "";
+      if (m.clear_api_key === true) apiKey = "";
+      else if (!apiKey) apiKey = storedKeys.get(id) || "";
+      const baseUrl = typeof m.base_url === "string" ? m.base_url.trim().replace(/\/+$/, "") : "";
+      return {
+        id,
+        label: String(m.label || m.display_name || m.id).trim(),
+        display_name: String(m.display_name || "").trim(),
+        description: String(m.description || "").trim().slice(0, 140),
+        base_url: /^https?:\/\//i.test(baseUrl) ? baseUrl : "",
+        api_key: apiKey,
+        _rest: m,
+      };
+    })
+    .map(({ _rest: m, ...base }) => ({
+      ...base,
       context_window: Math.max(1000, Math.floor(Number(m.context_window) || 128000)),
       credit_cost:
         typeof m.credit_cost === "number" && Number.isFinite(m.credit_cost) && m.credit_cost >= 0
@@ -34,6 +56,13 @@ function normalizeModels(list) {
           : 3,
       paid_only: Boolean(m.paid_only),
     }));
+}
+
+// Public/admin-safe view of a model: secrets are replaced by `has_api_key` + masked preview.
+function publicModel(m) {
+  const { api_key, ...rest } = m;
+  const key = String(api_key || "");
+  return { ...rest, has_api_key: key.length > 0, api_key_masked: maskApiKey(key) };
 }
 
 function formatSettings(row, supabaseUrl) {
@@ -52,7 +81,7 @@ function formatSettings(row, supabaseUrl) {
     pass_duration_minutes: typeof row?.pass_duration_minutes === "number" ? row.pass_duration_minutes : 60,
     payment_link: row?.payment_link || DEFAULT_PAYMENT_LINK,
     topup_paused: Boolean(row?.topup_paused),
-    models: normalizeModels(row?.models),
+    models: normalizeModels(row?.models, row?.models).map(publicModel),
     updated_at: row?.updated_at || null,
   };
 }
@@ -143,7 +172,8 @@ export default async function handler(req, res) {
         patch.pass_duration_minutes = Math.floor(v);
       }
       if (Array.isArray(body.models)) {
-        const cleaned = normalizeModels(body.models);
+        const current = await fetchRow();
+        const cleaned = normalizeModels(body.models, current?.models);
         if (cleaned.length === 0) {
           return sendJson(res, 400, { error: "At least one model is required." });
         }

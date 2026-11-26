@@ -37,7 +37,7 @@ pub async fn execute(json: bool, api_url: Option<String>) -> Result<(), CliError
             println!(
                 "{:<28} {:<24} {:>3} cr/hr  {:<6}  {}k ctx",
                 m.id,
-                m.label,
+                m.name(),
                 m.credit_cost,
                 tier,
                 m.context_window / 1000

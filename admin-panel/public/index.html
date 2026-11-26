@@ -168,7 +168,7 @@
       <div class="panel-head">
         <div>
           <h2 id="models-heading">Model Catalog &amp; Hourly Pricing</h2>
-          <p class="panel-desc">Models shown in <code>openmi models</code> and the TUI <code>/model</code> selector. Set hourly credit cost and Paid-only gating per model.</p>
+          <p class="panel-desc">Models shown in <code>openmi models</code> and the TUI <code>/model</code> selector. Give each model a user-facing display name, its own provider Base URL + API key (blank = global provider), hourly credit cost, and Paid-only gating.</p>
         </div>
         <div class="panel-head-actions">
           <button type="button" class="btn btn-secondary" id="add-model-btn">+ Add Model</button>
@@ -181,7 +181,10 @@
           <thead>
             <tr>
               <th>Model ID</th>
-              <th>Display Label</th>
+              <th>Display Name <span class="hint">(shown to users)</span></th>
+              <th>Description</th>
+              <th>Base URL <span class="hint">(optional)</span></th>
+              <th>API Key <span class="hint">(optional)</span></th>
               <th class="col-num">Context</th>
               <th class="col-num">Cost (cr/hr)</th>
               <th>Paid Only</th>
