@@ -33,6 +33,8 @@ EXIT CODES:
 
 FILES:
   ~/.config/openmi/credentials.json   Auth tokens (0600 permissions on Unix/Termux)
+  ~/.config/openmi/mcp.json           Global stdio MCP server configuration
+  .openmi/mcp.json                    Project-level stdio MCP server overrides
   ~/.local/share/openmi/sessions/     Saved interactive sessions (--resume)
   ~/.cache/openmi/models.json         Cached model catalog
   OPENMI.md                           Project-specific system instructions in workspace root
@@ -41,6 +43,7 @@ EXAMPLES:
   openmi login
   openmi
   openmi --resume
+  openmi mcp list
   openmi run \"explain src/main.rs\" --permission read-only
   openmi run \"add unit tests\" --json --yes
   openmi update --check";
@@ -150,6 +153,12 @@ enum Commands {
         api_url: Option<String>,
     },
 
+    /// Manage and inspect configured stdio MCP servers.
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommands,
+    },
+
     /// Check for updates and replace the `openmi` binary from GitHub Releases.
     Update {
         /// Check for a newer version without modifying the installed binary.
@@ -196,6 +205,20 @@ enum Commands {
         /// Maximum tool-calling steps before returning loop-cap exit code 5.
         #[arg(long)]
         max_steps: Option<u32>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum McpCommands {
+    /// List configured MCP servers and their discovered `mcp__<server>__<tool>` tools.
+    List {
+        /// Working directory for project `.openmi/mcp.json` discovery.
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+
+        /// Emit raw JSON instead of human-readable text.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -257,6 +280,9 @@ async fn main() -> ExitCode {
         }
         Some(Commands::Models { json, api_url }) => cmd::models::execute(json, api_url).await,
         Some(Commands::Credits { json, api_url }) => cmd::credits::execute(json, api_url).await,
+        Some(Commands::Mcp { command }) => match command {
+            McpCommands::List { cwd, json } => cmd::mcp::list(cwd, json).await,
+        },
         Some(Commands::Update { check, release_url }) => {
             cmd::update::execute(check, release_url).await
         }

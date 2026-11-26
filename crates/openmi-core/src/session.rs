@@ -12,6 +12,7 @@ use crate::llm::{stream_step, ProxyConfig};
 use crate::permissions::{
     ApprovalDecision, ApprovalHandler, ApprovalRequest, DenyAllApprovalHandler, PermissionMode,
 };
+use crate::registry::ToolRegistry;
 use crate::tools::{execute_tool, needs_approval};
 use openmi_platform::{PathGuard, PathGuardError};
 
@@ -74,6 +75,7 @@ pub struct AgentSession {
     proxy_config: Option<ProxyConfig>,
     max_steps: u32,
     always_approved_tools: HashSet<String>,
+    tool_registry: ToolRegistry,
 }
 
 impl AgentSession {
@@ -90,7 +92,16 @@ impl AgentSession {
             proxy_config: None,
             max_steps: DEFAULT_MAX_STEPS,
             always_approved_tools: HashSet::new(),
+            tool_registry: ToolRegistry::new(),
         })
+    }
+
+    pub fn tool_registry(&self) -> &ToolRegistry {
+        &self.tool_registry
+    }
+
+    pub fn tool_registry_mut(&mut self) -> &mut ToolRegistry {
+        &mut self.tool_registry
     }
 
     pub fn model(&self) -> &str {
@@ -289,7 +300,12 @@ impl AgentSession {
                     return Err(CoreError::Cancelled);
                 }
 
-                let require_approval = match needs_approval(&call.tool_name, self.permission_mode) {
+                let approval_check = self
+                    .tool_registry
+                    .needs_approval(&call.tool_name, self.permission_mode)
+                    .unwrap_or_else(|| needs_approval(&call.tool_name, self.permission_mode));
+
+                let require_approval = match approval_check {
                     Ok(v) => v && !self.always_approved_tools.contains(&call.tool_name),
                     Err(denied_msg) => {
                         let _ = event_tx
@@ -369,14 +385,19 @@ impl AgentSession {
                     })
                     .await;
 
-                let exec = execute_tool(
-                    &call.tool_name,
-                    &call.arguments_json,
-                    &self.path_guard,
-                    self.before_write_hook.as_ref(),
-                    cancel,
-                )
-                .await;
+                let exec = if let Some(registered) = self.tool_registry.get(&call.tool_name) {
+                    let handler = Arc::clone(&registered.handler);
+                    handler.call(&call.arguments_json, cancel).await
+                } else {
+                    execute_tool(
+                        &call.tool_name,
+                        &call.arguments_json,
+                        &self.path_guard,
+                        self.before_write_hook.as_ref(),
+                        cancel,
+                    )
+                    .await
+                };
 
                 match exec {
                     Ok(output) => {

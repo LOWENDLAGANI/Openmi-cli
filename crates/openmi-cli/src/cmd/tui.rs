@@ -121,6 +121,14 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
     if let Some(ref saved) = resumed {
         raw_session.set_history(saved.messages.clone());
     }
+
+    let mut mcp_manager = openmi_core::load_merged_mcp_config(None, &workdir)
+        .ok()
+        .map(|cfg| openmi_core::McpManager::from_config(&workdir, cfg));
+    if let Some(mgr) = mcp_manager.as_mut() {
+        mgr.start_all(raw_session.tool_registry_mut()).await;
+    }
+
     let session = Arc::new(tokio::sync::Mutex::new(raw_session));
 
     install_panic_hook();
@@ -222,6 +230,44 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                                 app.push_system("Not logged in — run `openmi login` to check credits.");
                                             }
                                         }
+                                        SlashOutcome::McpStatus => {
+                                            if let Some(mgr) = mcp_manager.as_ref() {
+                                                let statuses = mgr.statuses();
+                                                if statuses.is_empty() {
+                                                    app.push_system("No MCP servers configured (add ~/.config/openmi/mcp.json or .openmi/mcp.json).");
+                                                } else {
+                                                    let summary = statuses
+                                                        .iter()
+                                                        .map(|s| {
+                                                            let st = if s.running { "running" } else { "stopped" };
+                                                            if let Some(err) = &s.error {
+                                                                format!("{} [{}]: error: {}", s.name, st, err)
+                                                            } else {
+                                                                format!("{} [{}]: {} tool(s)", s.name, st, s.tools.len())
+                                                            }
+                                                        })
+                                                        .collect::<Vec<_>>()
+                                                        .join("\n");
+                                                    app.push_system(summary);
+                                                }
+                                            } else {
+                                                app.push_system("No MCP servers configured.");
+                                            }
+                                        }
+                                        SlashOutcome::McpRestart(target) => {
+                                            if let Some(mgr) = mcp_manager.as_mut() {
+                                                let mut sess = session.lock().await;
+                                                match mgr.restart(target.as_deref(), sess.tool_registry_mut()).await {
+                                                    Ok(()) => app.push_system(format!(
+                                                        "Restarted MCP server(s): {}",
+                                                        target.as_deref().unwrap_or("all")
+                                                    )),
+                                                    Err(err) => app.push_error(format!("MCP restart failed: {err}")),
+                                                }
+                                            } else {
+                                                app.push_system("No MCP servers configured.");
+                                            }
+                                        }
                                         SlashOutcome::Quit => {
                                             app.should_quit = true;
                                         }
@@ -284,6 +330,10 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
 
     if let Some(cancel) = active_cancel.take() {
         cancel.cancel();
+    }
+
+    if let Some(mgr) = mcp_manager.as_mut() {
+        mgr.shutdown_all().await;
     }
 
     // Final session save on clean exit if any history exists.

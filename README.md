@@ -57,11 +57,34 @@ openmi update
   - `/undo [file|run]` — restore exact pre-write bytes (including UTF-8 BOM and CRLF)
   - `/clear` — clear session history
   - `/credits` — refresh credit balance
+  - `/mcp [status|restart [server]]` — inspect or restart configured stdio MCP servers
   - `/help` — show command summary
   - `/quit` — exit the TUI
 - **`@path` Completion**: Type `@` followed by a partial filename and press `Tab` for `.gitignore`-aware fuzzy completion.
 - **Project Instructions**: Place an `OPENMI.md` file in your workspace root to inject project guidelines into the system prompt automatically.
 - **Session Persistence**: Sessions are saved automatically under `~/.local/share/openmi/sessions` and restored with `openmi --resume [SESSION_ID]`.
+
+## MCP Support (`v1.0`)
+
+Configure stdio MCP servers globally in `~/.config/openmi/mcp.json` or per-project in `.openmi/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+      "env": {},
+      "allowlist": ["read_file"]
+    }
+  }
+}
+```
+
+- Discovered tools are registered dynamically as `mcp__<server>__<tool>`.
+- All MCP tools are classified at least `Ask` risk and are **never auto-approved in `Trusted` mode** unless explicitly listed in the server's `allowlist`.
+- Inspect servers and tools from the CLI with `openmi mcp list [--json]` or inside the TUI with `/mcp status` and `/mcp restart [server]`.
+- Server processes are spawned in managed process groups and terminated cleanly on exit.
 
 ## Exit Codes
 

@@ -69,6 +69,15 @@ pub async fn execute(opts: RunOptions) -> Result<(), CliError> {
         session.set_max_steps(steps);
     }
 
+    // Start any configured stdio MCP servers and bind their tools into ToolRegistry.
+    let mut mcp_manager = openmi_core::load_merged_mcp_config(None, &workdir)
+        .ok()
+        .filter(|cfg| !cfg.mcp_servers.is_empty())
+        .map(|cfg| openmi_core::McpManager::from_config(&workdir, cfg));
+    if let Some(mgr) = mcp_manager.as_mut() {
+        mgr.start_all(session.tool_registry_mut()).await;
+    }
+
     let renderer: Box<dyn EventRenderer> = if opts.json {
         Box::new(JsonlRenderer::new(io::stdout()))
     } else {
@@ -85,6 +94,9 @@ pub async fn execute(opts: RunOptions) -> Result<(), CliError> {
 
     let res = run_with_renderer(&mut session, &opts.prompt, renderer, cancel).await;
     ctrl_c_task.abort();
+    if let Some(mgr) = mcp_manager.as_mut() {
+        mgr.shutdown_all().await;
+    }
     res
 }
 

@@ -23,6 +23,7 @@ pub enum SlashCommand {
     Diff,
     Clear,
     Credits,
+    Mcp(Option<String>),
     Help,
     Quit,
     Unknown(String),
@@ -38,6 +39,8 @@ pub enum SlashOutcome {
     RequireFullAccessConfirm,
     ClearHistory,
     RefreshCredits,
+    McpStatus,
+    McpRestart(Option<String>),
     Quit,
 }
 
@@ -63,6 +66,7 @@ pub fn parse_slash(input: &str) -> Option<SlashCommand> {
         "/diff" => SlashCommand::Diff,
         "/clear" => SlashCommand::Clear,
         "/credits" => SlashCommand::Credits,
+        "/mcp" => SlashCommand::Mcp(arg),
         "/help" => SlashCommand::Help,
         "/quit" | "/exit" => SlashCommand::Quit,
         other => SlashCommand::Unknown(other.to_string()),
@@ -97,6 +101,21 @@ pub fn execute_slash(
         SlashCommand::Diff => SlashOutcome::Diff(render_latest_checkpoint_diff(checkpoints, cwd)),
         SlashCommand::Clear => SlashOutcome::ClearHistory,
         SlashCommand::Credits => SlashOutcome::RefreshCredits,
+        SlashCommand::Mcp(arg) => match arg.as_deref() {
+            None | Some("status") => SlashOutcome::McpStatus,
+            Some("restart") => SlashOutcome::McpRestart(None),
+            Some(rest) if rest.starts_with("restart ") => {
+                let server = rest.trim_start_matches("restart ").trim();
+                if server.is_empty() {
+                    SlashOutcome::McpRestart(None)
+                } else {
+                    SlashOutcome::McpRestart(Some(server.to_string()))
+                }
+            }
+            Some(other) => SlashOutcome::Error(format!(
+                "Unknown `/mcp` subcommand `{other}`. Use `/mcp status` or `/mcp restart [server]`."
+            )),
+        },
         SlashCommand::Help => SlashOutcome::Message(help_text().to_string()),
         SlashCommand::Quit => SlashOutcome::Quit,
         SlashCommand::Unknown(name) => {
@@ -152,6 +171,7 @@ pub fn help_text() -> &'static str {
         "  /diff               Show colored unified diff for the latest run\n",
         "  /clear              Clear conversation history and transcript\n",
         "  /credits            Show current Openmi credit balance\n",
+        "  /mcp [status|restart [server]]  Inspect or restart stdio MCP servers\n",
         "  /help               Show this help text\n",
         "  /quit               Exit Openmi TUI\n",
         "\nTips: Type @path + Tab for fuzzy file completion; Shift/Alt+Enter for newline."
@@ -290,6 +310,36 @@ mod tests {
             SlashOutcome::Message(m) => assert!(m.contains("/undo")),
             other => panic!("expected Help message, got {other:?}"),
         }
+        assert_eq!(
+            execute_slash(
+                parse_slash("/mcp").unwrap(),
+                "openmi-default",
+                PermissionMode::Ask,
+                &cp,
+                tmp.path()
+            ),
+            SlashOutcome::McpStatus
+        );
+        assert_eq!(
+            execute_slash(
+                parse_slash("/mcp restart").unwrap(),
+                "openmi-default",
+                PermissionMode::Ask,
+                &cp,
+                tmp.path()
+            ),
+            SlashOutcome::McpRestart(None)
+        );
+        assert_eq!(
+            execute_slash(
+                parse_slash("/mcp restart fs").unwrap(),
+                "openmi-default",
+                PermissionMode::Ask,
+                &cp,
+                tmp.path()
+            ),
+            SlashOutcome::McpRestart(Some("fs".into()))
+        );
         assert_eq!(
             execute_slash(
                 parse_slash("/quit").unwrap(),

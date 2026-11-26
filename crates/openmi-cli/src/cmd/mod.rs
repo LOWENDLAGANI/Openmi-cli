@@ -1,6 +1,7 @@
 pub mod credits;
 pub mod login;
 pub mod logout;
+pub mod mcp;
 pub mod models;
 pub mod run;
 pub mod smoke;
