@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
+    EventStream, KeyCode, KeyEvent, KeyModifiers, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -54,7 +57,12 @@ impl Drop for TerminalGuard {
 
 fn restore_terminal() {
     let _ = disable_raw_mode();
-    let _ = execute!(io::stdout(), LeaveAlternateScreen);
+    let _ = execute!(
+        io::stdout(),
+        DisableBracketedPaste,
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    );
 }
 
 fn install_panic_hook() {
@@ -139,7 +147,13 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
     install_panic_hook();
     enable_raw_mode().map_err(anyhow::Error::from)?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen).map_err(anyhow::Error::from)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste
+    )
+    .map_err(anyhow::Error::from)?;
     let _guard = TerminalGuard;
 
     let backend = CrosstermBackend::new(stdout);
@@ -209,6 +223,38 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                 };
                 match ev {
                     Event::Resize(_, _) => {
+                        dirty = true;
+                    }
+                    Event::Mouse(mouse) => match mouse.kind {
+                        MouseEventKind::ScrollUp => {
+                            app.scroll_up(3);
+                            dirty = true;
+                        }
+                        MouseEventKind::ScrollDown => {
+                            app.scroll_down(3);
+                            dirty = true;
+                        }
+                        _ => {}
+                    },
+                    Event::Paste(text) => {
+                        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+                        if let Some(modal) = app.full_access_modal.as_mut() {
+                            modal.typed.push_str(normalized.trim());
+                            modal.error = None;
+                        } else if app.pending_approval.is_none()
+                            && app.model_selector.is_none()
+                            && app.folder_picker.is_none()
+                        {
+                            for ch in normalized.chars() {
+                                if ch == '\n' {
+                                    app.input.insert_newline();
+                                } else {
+                                    app.input.insert_char(ch);
+                                }
+                            }
+                            app.refresh_slash_suggestions();
+                            app.refresh_mention_suggestions();
+                        }
                         dirty = true;
                     }
                     Event::Key(key) => {
@@ -711,10 +757,14 @@ fn handle_key_event(
         return KeyAction::None;
     }
 
-    // 3. Normal prompt input + @path Tab completion.
+    // 5. Normal prompt input + live `/` command palette + `@path` Tab completion.
     let action = match key.code {
         KeyCode::Tab => {
-            app.apply_top_mention_completion();
+            if !app.slash_suggestions.is_empty() {
+                app.apply_selected_slash_completion();
+            } else {
+                app.apply_top_mention_completion();
+            }
             KeyAction::None
         }
         KeyCode::Enter => {
@@ -726,10 +776,14 @@ fn handle_key_event(
                 KeyAction::None
             } else if !app.is_busy() {
                 app.mention_suggestions.clear();
-                app.input
-                    .take_submission()
-                    .map(KeyAction::Submit)
-                    .unwrap_or(KeyAction::None)
+                if let Some(cmd) = app.take_selected_slash_command() {
+                    KeyAction::Submit(cmd)
+                } else {
+                    app.input
+                        .take_submission()
+                        .map(KeyAction::Submit)
+                        .unwrap_or(KeyAction::None)
+                }
             } else {
                 KeyAction::None
             }
@@ -759,11 +813,19 @@ fn handle_key_event(
             KeyAction::None
         }
         KeyCode::Up => {
-            app.input.history_prev();
+            if !app.slash_suggestions.is_empty() {
+                app.slash_move_up();
+            } else {
+                app.input.history_prev();
+            }
             KeyAction::None
         }
         KeyCode::Down => {
-            app.input.history_next();
+            if !app.slash_suggestions.is_empty() {
+                app.slash_move_down();
+            } else {
+                app.input.history_next();
+            }
             KeyAction::None
         }
         KeyCode::PageUp => {
@@ -781,6 +843,7 @@ fn handle_key_event(
         _ => KeyAction::None,
     };
 
+    app.refresh_slash_suggestions();
     app.refresh_mention_suggestions();
     action
 }

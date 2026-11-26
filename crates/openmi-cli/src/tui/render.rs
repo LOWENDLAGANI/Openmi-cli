@@ -9,6 +9,7 @@ use crate::tui::app::{
     format_friendly_path, friendly_tool_title, FolderEntry, FolderPickerState,
     FullAccessModalState, ModelSelectorState, TranscriptKind, TuiApp,
 };
+use crate::tui::markdown::{render_markdown_lines, MarkdownTheme};
 use crate::tui::slash::FULL_ACCESS_MODAL_WARNING;
 
 // Soft, beginner-friendly color palette (readable on dark and light terminals).
@@ -33,15 +34,17 @@ pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
 
     let header_height: u16 = if area.height >= 10 { 2 } else { 1 };
     let activity_height: u16 = if app.is_busy() { 1 } else { 0 };
-    let mention_height: u16 = if app.mention_suggestions.is_empty() {
-        0
-    } else {
+    let popup_height: u16 = if !app.slash_suggestions.is_empty() {
+        (app.slash_suggestions.len() as u16 + 2).min(8)
+    } else if !app.mention_suggestions.is_empty() {
         (app.mention_suggestions.len() as u16 + 2).min(6)
+    } else {
+        0
     };
     let input_lines = app.input.text().lines().count().clamp(1, 5) as u16;
     let max_input_height = area
         .height
-        .saturating_sub(header_height + activity_height + mention_height + 3)
+        .saturating_sub(header_height + activity_height + popup_height + 3)
         .max(3);
     let input_height = (input_lines + 2).min(max_input_height);
 
@@ -51,7 +54,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
             Constraint::Length(header_height),
             Constraint::Min(2),
             Constraint::Length(activity_height),
-            Constraint::Length(mention_height),
+            Constraint::Length(popup_height),
             Constraint::Length(input_height),
             Constraint::Length(1),
         ])
@@ -62,8 +65,12 @@ pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
     if activity_height > 0 {
         render_activity_line(frame, app, root[2]);
     }
-    if mention_height > 0 {
-        render_mention_suggestions(frame, app, root[3]);
+    if popup_height > 0 {
+        if !app.slash_suggestions.is_empty() {
+            render_slash_suggestions(frame, app, root[3]);
+        } else {
+            render_mention_suggestions(frame, app, root[3]);
+        }
     }
     render_input(frame, app, root[4]);
     render_footer(frame, app, root[5]);
@@ -167,8 +174,21 @@ fn render_chat(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         return;
     }
 
+    let md_theme = MarkdownTheme {
+        accent: ACCENT,
+        code: USER_COLOR,
+        muted: MUTED,
+        border: BORDER_SUBTLE,
+    };
+
     let mut lines: Vec<Line<'_>> = Vec::new();
-    for entry in &app.transcript {
+    for (idx_entry, entry) in app.transcript.iter().enumerate() {
+        let next_is_tool = app
+            .transcript
+            .get(idx_entry + 1)
+            .map(|e| matches!(e.kind, TranscriptKind::ToolOk | TranscriptKind::ToolErr))
+            .unwrap_or(false);
+
         match entry.kind {
             TranscriptKind::User => {
                 lines.push(Line::from(Span::styled(
@@ -186,9 +206,19 @@ fn render_chat(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                     "Openmi",
                     Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
                 )));
-                for line_text in entry.text.lines() {
-                    lines.push(Line::from(Span::raw(format!("  {line_text}"))));
-                }
+                lines.extend(render_markdown_lines(&entry.text, "  ", md_theme));
+            }
+            TranscriptKind::ToolOk => {
+                lines.push(Line::from(vec![
+                    Span::styled("  ✓ ", Style::default().fg(SUCCESS)),
+                    Span::styled(entry.text.clone(), Style::default().fg(MUTED)),
+                ]));
+            }
+            TranscriptKind::ToolErr => {
+                lines.push(Line::from(vec![
+                    Span::styled("  ✗ ", Style::default().fg(DANGER)),
+                    Span::styled(entry.text.clone(), Style::default().fg(DANGER)),
+                ]));
             }
             TranscriptKind::System => {
                 for (idx, line_text) in entry.text.lines().enumerate() {
@@ -224,7 +254,10 @@ fn render_chat(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 }
             }
         }
-        lines.push(Line::from(""));
+        let is_tool = matches!(entry.kind, TranscriptKind::ToolOk | TranscriptKind::ToolErr);
+        if !(is_tool && next_is_tool) {
+            lines.push(Line::from(""));
+        }
     }
 
     let inner_height = area.height.saturating_sub(1) as usize;
@@ -292,6 +325,56 @@ fn render_activity_line(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         Span::styled(label, Style::default().fg(MUTED)),
     ]);
     frame.render_widget(Paragraph::new(line), area);
+}
+
+fn render_slash_suggestions(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    let inner_rows = area.height.saturating_sub(2).max(1) as usize;
+    let total = app.slash_suggestions.len();
+    let start = if app.slash_selected >= inner_rows {
+        (app.slash_selected + 1).saturating_sub(inner_rows)
+    } else {
+        0
+    };
+    let end = (start + inner_rows).min(total);
+
+    let lines: Vec<Line<'_>> = (start..end)
+        .map(|i| {
+            let item = app.slash_suggestions[i];
+            let is_sel = i == app.slash_selected;
+            let prefix = if is_sel { "▸ " } else { "  " };
+            Line::from(vec![
+                Span::styled(
+                    format!("{prefix}{:<10}", item.command),
+                    if is_sel {
+                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Reset)
+                    },
+                ),
+                Span::styled(
+                    item.description,
+                    if is_sel {
+                        Style::default().fg(Color::Reset)
+                    } else {
+                        Style::default().fg(MUTED)
+                    },
+                ),
+            ])
+        })
+        .collect();
+
+    let widget = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(BORDER_SUBTLE))
+            .padding(Padding::horizontal(1))
+            .title(Span::styled(
+                " Commands (↑/↓ · Enter to run) ",
+                Style::default().fg(MUTED),
+            )),
+    );
+    frame.render_widget(widget, area);
 }
 
 fn render_mention_suggestions(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {

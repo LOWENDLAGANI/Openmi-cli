@@ -9,6 +9,7 @@ use openmi_core::{
 use crate::tui::approval::PendingApproval;
 use crate::tui::input::InputState;
 use crate::tui::mention::{active_mention_query, collect_workspace_files, fuzzy_match_paths};
+use crate::tui::slash::{filter_slash_suggestions, SlashSuggestion};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TranscriptKind {
@@ -17,6 +18,8 @@ pub enum TranscriptKind {
     System,
     Error,
     Diff,
+    ToolOk,
+    ToolErr,
 }
 
 #[derive(Debug, Clone)]
@@ -40,6 +43,7 @@ pub struct ToolTimelineItem {
     pub tool_name: String,
     pub status: ToolStatus,
     pub summary: String,
+    pub target_hint: String,
 }
 
 /// Typed confirmation modal state before enabling `PermissionMode::FullAccess`.
@@ -233,6 +237,8 @@ pub struct TuiApp {
     pub folder_picker: Option<FolderPickerState>,
     pub workspace_files: Vec<String>,
     pub mention_suggestions: Vec<String>,
+    pub slash_suggestions: Vec<SlashSuggestion>,
+    pub slash_selected: usize,
     pub should_quit: bool,
     pub status_hint: String,
     pub tick: u64,
@@ -263,6 +269,8 @@ impl TuiApp {
             folder_picker: None,
             workspace_files,
             mention_suggestions: Vec::new(),
+            slash_suggestions: Vec::new(),
+            slash_selected: 0,
             should_quit: false,
             status_hint: String::new(),
             tick: 0,
@@ -394,6 +402,54 @@ impl TuiApp {
         false
     }
 
+    /// Recompute live `/` slash command suggestions from the current input.
+    pub fn refresh_slash_suggestions(&mut self) {
+        self.slash_suggestions = filter_slash_suggestions(self.input.text());
+        if self.slash_suggestions.is_empty() {
+            self.slash_selected = 0;
+        } else if self.slash_selected >= self.slash_suggestions.len() {
+            self.slash_selected = 0;
+        }
+    }
+
+    pub fn slash_move_up(&mut self) {
+        if self.slash_suggestions.is_empty() {
+            return;
+        }
+        if self.slash_selected == 0 {
+            self.slash_selected = self.slash_suggestions.len() - 1;
+        } else {
+            self.slash_selected -= 1;
+        }
+    }
+
+    pub fn slash_move_down(&mut self) {
+        if self.slash_suggestions.is_empty() {
+            return;
+        }
+        self.slash_selected = (self.slash_selected + 1) % self.slash_suggestions.len();
+    }
+
+    /// Replace the input box with the highlighted slash command on `Tab`.
+    pub fn apply_selected_slash_completion(&mut self) -> bool {
+        let Some(chosen) = self.slash_suggestions.get(self.slash_selected).copied() else {
+            return false;
+        };
+        let len = self.input.text().len();
+        self.input.replace_range(0, len, chosen.command);
+        self.refresh_slash_suggestions();
+        true
+    }
+
+    /// Consume and return the highlighted slash command when pressing `Enter` in the palette.
+    pub fn take_selected_slash_command(&mut self) -> Option<String> {
+        let chosen = self.slash_suggestions.get(self.slash_selected).copied()?;
+        self.slash_suggestions.clear();
+        self.slash_selected = 0;
+        let _ = self.input.take_submission();
+        Some(chosen.command.to_string())
+    }
+
     pub fn scroll_up(&mut self, lines: u16) {
         self.scroll_from_bottom = self.scroll_from_bottom.saturating_add(lines);
     }
@@ -453,11 +509,13 @@ impl TuiApp {
                 tool_name,
                 arguments_json,
             } => {
+                let target_hint = extract_tool_target(&tool_name, &arguments_json);
                 self.tools.push(ToolTimelineItem {
                     call_id,
                     tool_name,
                     status: ToolStatus::Requested,
                     summary: arguments_json,
+                    target_hint,
                 });
             }
             AgentEvent::ApprovalRequired {
@@ -482,7 +540,24 @@ impl TuiApp {
                 } else {
                     ToolStatus::Failed
                 };
+                let target_hint = self
+                    .tools
+                    .iter()
+                    .rev()
+                    .find(|t| t.call_id == call_id)
+                    .map(|t| t.target_hint.clone())
+                    .unwrap_or_default();
+                let inline_line = format_inline_tool_summary(&tool_name, &target_hint, ok);
                 self.update_or_push_tool(call_id, tool_name, status, first_line);
+                self.transcript.push(TranscriptEntry {
+                    kind: if ok {
+                        TranscriptKind::ToolOk
+                    } else {
+                        TranscriptKind::ToolErr
+                    },
+                    text: inline_line,
+                });
+                self.scroll_from_bottom = 0;
             }
             AgentEvent::TurnCompleted { .. } => {
                 self.status_hint.clear();
@@ -510,6 +585,7 @@ impl TuiApp {
                 tool_name,
                 status,
                 summary,
+                target_hint: String::new(),
             });
         }
     }
@@ -628,6 +704,61 @@ pub fn friendly_tool_title(tool_name: &str) -> String {
     }
 }
 
+/// Extract a concise target (file path or command) from raw tool JSON arguments.
+pub fn extract_tool_target(tool_name: &str, arguments_json: &str) -> String {
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(arguments_json) else {
+        return String::new();
+    };
+    let raw = match tool_name {
+        "read_file" | "write_file" | "list_dir" => val
+            .get("path")
+            .or_else(|| val.get("file_path"))
+            .and_then(|v| v.as_str()),
+        "run_command" => val
+            .get("command")
+            .or_else(|| val.get("cmd"))
+            .and_then(|v| v.as_str()),
+        _ => None,
+    };
+    let Some(s) = raw else {
+        return String::new();
+    };
+    let single_line = s.lines().next().unwrap_or("").trim();
+    let truncated: String = single_line.chars().take(54).collect();
+    if single_line.chars().count() > 54 {
+        format!("{truncated}…")
+    } else {
+        truncated
+    }
+}
+
+/// Format a clean, Claude Code-style 1-line inline summary for a completed tool call.
+pub fn format_inline_tool_summary(tool_name: &str, target: &str, ok: bool) -> String {
+    let verb = match tool_name {
+        "read_file" => "Read",
+        "list_dir" => "Listed",
+        "write_file" => "Edited",
+        "run_command" => "Ran",
+        other => other,
+    };
+    let base = if target.is_empty() {
+        match tool_name {
+            "read_file" => "Read file".to_string(),
+            "list_dir" => "Listed folder".to_string(),
+            "write_file" => "Edited file".to_string(),
+            "run_command" => "Ran command".to_string(),
+            other => format!("Used {other}"),
+        }
+    } else {
+        format!("{verb} {target}")
+    };
+    if ok {
+        base
+    } else {
+        format!("{base} (failed)")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -661,6 +792,11 @@ mod tests {
         app.apply_agent_event(AgentEvent::TextDelta {
             text: "world".into(),
         });
+        app.apply_agent_event(AgentEvent::ToolCallRequested {
+            call_id: "c1".into(),
+            tool_name: "read_file".into(),
+            arguments_json: r#"{"path":"src/main.rs"}"#.into(),
+        });
         app.apply_agent_event(AgentEvent::ToolStarted {
             call_id: "c1".into(),
             tool_name: "read_file".into(),
@@ -672,9 +808,31 @@ mod tests {
             output: "ok".into(),
         });
 
-        assert_eq!(app.transcript.last().unwrap().text, "Hello world");
+        assert_eq!(app.transcript[0].text, "Hello world");
+        assert_eq!(app.transcript[1].kind, TranscriptKind::ToolOk);
+        assert_eq!(app.transcript[1].text, "Read src/main.rs");
         assert_eq!(app.tools.len(), 1);
         assert_eq!(app.tools[0].status, ToolStatus::Succeeded);
+    }
+
+    #[test]
+    fn slash_palette_filters_and_completes() {
+        let mut app = TuiApp::new(
+            "openmi-default".into(),
+            PermissionMode::Ask,
+            PathBuf::from("."),
+        );
+        for ch in "/fo".chars() {
+            app.input.insert_char(ch);
+        }
+        app.refresh_slash_suggestions();
+        assert_eq!(app.slash_suggestions.len(), 1);
+        assert_eq!(app.slash_suggestions[0].command, "/folder");
+        assert_eq!(
+            app.take_selected_slash_command(),
+            Some("/folder".to_string())
+        );
+        assert!(app.slash_suggestions.is_empty());
     }
 
     #[test]

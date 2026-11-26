@@ -15,6 +15,74 @@ pub const FULL_ACCESS_MODAL_WARNING: &str = concat!(
     "Type exactly `I UNDERSTAND FULL ACCESS` and press Enter to confirm, or Esc to cancel."
 );
 
+/// One entry in the live `/` slash command autocomplete palette.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlashSuggestion {
+    pub command: &'static str,
+    pub description: &'static str,
+}
+
+/// Ordered list of user-facing slash commands shown when the user types `/`.
+pub const SLASH_PALETTE: &[SlashSuggestion] = &[
+    SlashSuggestion {
+        command: "/folder",
+        description: "Pick or change project folder",
+    },
+    SlashSuggestion {
+        command: "/model",
+        description: "Switch AI model",
+    },
+    SlashSuggestion {
+        command: "/diff",
+        description: "View recent file changes",
+    },
+    SlashSuggestion {
+        command: "/undo",
+        description: "Undo the last file edit",
+    },
+    SlashSuggestion {
+        command: "/clear",
+        description: "Start a fresh chat",
+    },
+    SlashSuggestion {
+        command: "/mode",
+        description: "Change permission mode",
+    },
+    SlashSuggestion {
+        command: "/credits",
+        description: "Check remaining credits",
+    },
+    SlashSuggestion {
+        command: "/mcp",
+        description: "Check MCP server status",
+    },
+    SlashSuggestion {
+        command: "/help",
+        description: "Show tips & commands",
+    },
+    SlashSuggestion {
+        command: "/version",
+        description: "Show Openmi version",
+    },
+    SlashSuggestion {
+        command: "/quit",
+        description: "Close Openmi",
+    },
+];
+
+/// Return matching slash commands when the input is an active single-token `/...` prefix.
+pub fn filter_slash_suggestions(input: &str) -> Vec<SlashSuggestion> {
+    if !input.starts_with('/') || input.contains('\n') || input.contains(char::is_whitespace) {
+        return Vec::new();
+    }
+    let query = input.to_ascii_lowercase();
+    SLASH_PALETTE
+        .iter()
+        .copied()
+        .filter(|s| s.command.starts_with(&query))
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlashCommand {
     Folder(Option<String>),
