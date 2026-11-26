@@ -27,7 +27,9 @@ use crate::auth::{default_token_store, TokenStore};
 use crate::exit_codes::CliError;
 use crate::session::build_session_with_options;
 use crate::session_store::SessionStore;
-use crate::tui::app::{FullAccessModalState, ModelSelectorState, TuiApp};
+use crate::tui::app::{
+    resolve_folder_input, FolderPickerState, FullAccessModalState, ModelSelectorState, TuiApp,
+};
 use crate::tui::approval::{PendingApproval, TuiApprovalHandler};
 use crate::tui::render;
 use crate::tui::slash::{execute_slash, parse_slash, SlashOutcome, FULL_ACCESS_CONFIRM_PHRASE};
@@ -65,7 +67,7 @@ fn install_panic_hook() {
 
 pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
     let mode: PermissionMode = opts.permission.parse().map_err(CliError::Usage)?;
-    let workdir = match opts.cwd {
+    let mut workdir = match opts.cwd {
         Some(dir) => dir,
         None => env::current_dir().map_err(anyhow::Error::from)?,
     };
@@ -118,10 +120,9 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
         &initial_model,
         mode,
         Arc::clone(&checkpoints),
-        approval_handler,
-        proxy_config,
+        Arc::clone(&approval_handler) as Arc<dyn openmi_core::ApprovalHandler>,
+        proxy_config.clone(),
     )?;
-    let has_openmi_md = raw_session.system_prompt().is_some();
     if let Some(ref saved) = resumed {
         raw_session.set_history(saved.messages.clone());
     }
@@ -146,16 +147,9 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
     terminal.clear().map_err(anyhow::Error::from)?;
 
     let mut app = TuiApp::new(initial_model, mode, workdir.clone());
-    if has_openmi_md {
-        app.push_system("Loaded project instructions from OPENMI.md.");
-    }
     if let Some(ref saved) = resumed {
         app.hydrate_from_history(&saved.messages);
-        app.push_system(format!(
-            "Resumed session `{}` ({} message(s)).",
-            saved.id,
-            saved.messages.len()
-        ));
+        app.push_system("Resumed your previous chat.");
     }
 
     let (agent_tx, mut agent_rx) = mpsc::channel::<AgentEvent>(128);
@@ -231,6 +225,19 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                 session.lock().await.set_model(chosen.id.clone());
                                 app.push_system(format_model_switch_message(&app, &chosen));
                             }
+                            KeyAction::SelectedFolder(chosen) => {
+                                switch_project_folder(
+                                    chosen,
+                                    &mut workdir,
+                                    &mut app,
+                                    &session,
+                                    &checkpoints,
+                                    &approval_handler,
+                                    &proxy_config,
+                                    &mut mcp_manager,
+                                )
+                                .await;
+                            }
                             KeyAction::Submit(input_text) => {
                                 if let Some(slash_cmd) = parse_slash(&input_text) {
                                     let outcome = {
@@ -241,6 +248,24 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                         SlashOutcome::Message(msg) => app.push_system(msg),
                                         SlashOutcome::Diff(diff_txt) => app.push_diff(diff_txt),
                                         SlashOutcome::Error(err) => app.push_error(err),
+                                        SlashOutcome::OpenFolderPicker => {
+                                            app.folder_picker =
+                                                Some(FolderPickerState::new(workdir.clone()));
+                                        }
+                                        SlashOutcome::SetFolder(raw) => {
+                                            let target = resolve_folder_input(&raw, &workdir);
+                                            switch_project_folder(
+                                                target,
+                                                &mut workdir,
+                                                &mut app,
+                                                &session,
+                                                &checkpoints,
+                                                &approval_handler,
+                                                &proxy_config,
+                                                &mut mcp_manager,
+                                            )
+                                            .await;
+                                        }
                                         SlashOutcome::OpenModelSelector => {
                                             let endpoint = base_url_for_credits
                                                 .as_deref()
@@ -297,7 +322,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                             session.lock().await.clear_history();
                                             app.transcript.clear();
                                             app.tools.clear();
-                                            app.push_system("Cleared conversation history.");
+                                            app.status_hint.clear();
                                         }
                                         SlashOutcome::RefreshCredits => {
                                             if let (Some(base), Some(tok)) = (base_url_for_credits.as_deref(), bearer_for_credits.as_deref()) {
@@ -520,11 +545,70 @@ fn format_model_switch_message(app: &TuiApp, chosen: &ModelInfo) -> String {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn switch_project_folder(
+    target: PathBuf,
+    workdir: &mut PathBuf,
+    app: &mut TuiApp,
+    session: &Arc<tokio::sync::Mutex<openmi_core::AgentSession>>,
+    checkpoints: &Arc<Mutex<CheckpointStore>>,
+    approval_handler: &Arc<TuiApprovalHandler>,
+    proxy_config: &Option<ProxyConfig>,
+    mcp_manager: &mut Option<openmi_core::McpManager>,
+) {
+    if !target.is_dir() {
+        app.push_error(format!("Folder not found: {}", target.display()));
+        return;
+    }
+    let canonical = std::fs::canonicalize(&target).unwrap_or(target);
+    let mut new_session = match build_session_with_options(
+        &canonical,
+        &app.model,
+        app.mode,
+        Arc::clone(checkpoints),
+        Arc::clone(approval_handler) as Arc<dyn openmi_core::ApprovalHandler>,
+        proxy_config.clone(),
+    ) {
+        Ok(s) => s,
+        Err(err) => {
+            app.push_error(format!("Could not open folder: {err}"));
+            return;
+        }
+    };
+
+    if let Some(old_mgr) = mcp_manager.as_mut() {
+        old_mgr.shutdown_all().await;
+    }
+    let mut next_mgr = openmi_core::load_merged_mcp_config(None, &canonical)
+        .ok()
+        .map(|cfg| openmi_core::McpManager::from_config(&canonical, cfg));
+    if let Some(mgr) = next_mgr.as_mut() {
+        mgr.start_all(new_session.tool_registry_mut()).await;
+    }
+    *mcp_manager = next_mgr;
+
+    {
+        let mut guard = session.lock().await;
+        let prev_history = guard.history().to_vec();
+        new_session.set_history(prev_history);
+        *guard = new_session;
+    }
+
+    *workdir = canonical.clone();
+    app.set_cwd(canonical);
+    if app.transcript.is_empty() {
+        app.status_hint = format!("Project folder: {}", app.friendly_cwd());
+    } else {
+        app.push_system(format!("Switched project folder to {}.", app.friendly_cwd()));
+    }
+}
+
 enum KeyAction {
     None,
     Submit(String),
     ConfirmedFullAccess,
     SelectedModel(ModelInfo),
+    SelectedFolder(PathBuf),
 }
 
 fn handle_key_event(
@@ -599,6 +683,28 @@ fn handle_key_event(
                     return KeyAction::SelectedModel(chosen);
                 }
                 app.model_selector = None;
+            }
+            _ => {}
+        }
+        return KeyAction::None;
+    }
+
+    // 4. Interactive `/folder` picker modal.
+    if let Some(picker) = app.folder_picker.as_mut() {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => picker.move_up(),
+            KeyCode::Down | KeyCode::Char('j') => picker.move_down(),
+            KeyCode::Backspace | KeyCode::Left => picker.go_up(),
+            KeyCode::Enter | KeyCode::Right => {
+                if let Some(chosen) = picker.enter() {
+                    app.folder_picker = None;
+                    return KeyAction::SelectedFolder(chosen);
+                }
+            }
+            KeyCode::Char(' ') => {
+                let chosen = picker.select_highlighted();
+                app.folder_picker = None;
+                return KeyAction::SelectedFolder(chosen);
             }
             _ => {}
         }

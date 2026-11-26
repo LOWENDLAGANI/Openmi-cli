@@ -88,6 +88,133 @@ impl ModelSelectorState {
     }
 }
 
+/// An entry inside the interactive `/folder` project picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FolderEntry {
+    /// Confirm the currently viewed directory as the project folder.
+    UseCurrent,
+    /// Navigate up to the parent directory.
+    Parent(PathBuf),
+    /// Navigate into a child subdirectory.
+    Child { name: String, path: PathBuf },
+}
+
+/// Interactive `/folder` picker modal state for choosing a project directory.
+#[derive(Debug, Clone)]
+pub struct FolderPickerState {
+    pub current_dir: PathBuf,
+    pub entries: Vec<FolderEntry>,
+    pub selected: usize,
+    pub error: Option<String>,
+}
+
+impl FolderPickerState {
+    pub fn new(start_dir: PathBuf) -> Self {
+        let canonical = fs::canonicalize(&start_dir).unwrap_or(start_dir);
+        let mut state = Self {
+            current_dir: canonical,
+            entries: Vec::new(),
+            selected: 0,
+            error: None,
+        };
+        state.reload();
+        state
+    }
+
+    pub fn reload(&mut self) {
+        self.entries.clear();
+        self.entries.push(FolderEntry::UseCurrent);
+        if let Some(parent) = self.current_dir.parent() {
+            self.entries.push(FolderEntry::Parent(parent.to_path_buf()));
+        }
+
+        match fs::read_dir(&self.current_dir) {
+            Ok(read_dir) => {
+                self.error = None;
+                let mut children: Vec<(String, PathBuf)> = read_dir
+                    .filter_map(|e| e.ok())
+                    .filter_map(|e| {
+                        let path = e.path();
+                        if !path.is_dir() {
+                            return None;
+                        }
+                        let name = e.file_name().to_string_lossy().to_string();
+                        if name.starts_with('.')
+                            || matches!(
+                                name.as_str(),
+                                "node_modules" | "target" | "__pycache__" | ".git"
+                            )
+                        {
+                            return None;
+                        }
+                        Some((name, path))
+                    })
+                    .collect();
+                children.sort_by(|a, b| a.0.to_ascii_lowercase().cmp(&b.0.to_ascii_lowercase()));
+                for (name, path) in children {
+                    self.entries.push(FolderEntry::Child { name, path });
+                }
+            }
+            Err(err) => {
+                self.error = Some(format!("Could not read folder: {err}"));
+            }
+        }
+        self.selected = 0;
+    }
+
+    pub fn move_up(&mut self) {
+        if self.entries.is_empty() {
+            return;
+        }
+        if self.selected == 0 {
+            self.selected = self.entries.len() - 1;
+        } else {
+            self.selected -= 1;
+        }
+    }
+
+    pub fn move_down(&mut self) {
+        if self.entries.is_empty() {
+            return;
+        }
+        self.selected = (self.selected + 1) % self.entries.len();
+    }
+
+    pub fn go_up(&mut self) {
+        if let Some(parent) = self.current_dir.parent().map(Path::to_path_buf) {
+            self.current_dir = parent;
+            self.reload();
+        }
+    }
+
+    /// Open a highlighted subfolder / parent, or return `Some(path)` if `UseCurrent` is selected.
+    pub fn enter(&mut self) -> Option<PathBuf> {
+        match self.entries.get(self.selected).cloned() {
+            Some(FolderEntry::UseCurrent) => Some(self.current_dir.clone()),
+            Some(FolderEntry::Parent(p)) => {
+                self.current_dir = p;
+                self.reload();
+                None
+            }
+            Some(FolderEntry::Child { path, .. }) => {
+                self.current_dir = path;
+                self.reload();
+                None
+            }
+            None => None,
+        }
+    }
+
+    /// Immediately select the highlighted folder (or current folder) as the project folder.
+    pub fn select_highlighted(&self) -> PathBuf {
+        match self.entries.get(self.selected) {
+            Some(FolderEntry::Child { path, .. }) => path.clone(),
+            Some(FolderEntry::Parent(p)) => p.clone(),
+            _ => self.current_dir.clone(),
+        }
+    }
+}
+
 /// Complete state of the interactive TUI (UI-only; core stays UI-agnostic).
 pub struct TuiApp {
     pub model: String,
@@ -95,7 +222,6 @@ pub struct TuiApp {
     pub credits: Option<i64>,
     pub credit_status: Option<CreditStatus>,
     pub cwd: PathBuf,
-    pub branch: String,
     pub control_state: ControlState,
     pub transcript: Vec<TranscriptEntry>,
     pub tools: Vec<ToolTimelineItem>,
@@ -104,6 +230,7 @@ pub struct TuiApp {
     pub pending_approval: Option<PendingApproval>,
     pub full_access_modal: Option<FullAccessModalState>,
     pub model_selector: Option<ModelSelectorState>,
+    pub folder_picker: Option<FolderPickerState>,
     pub workspace_files: Vec<String>,
     pub mention_suggestions: Vec<String>,
     pub should_quit: bool,
@@ -117,15 +244,14 @@ pub struct TuiApp {
 
 impl TuiApp {
     pub fn new(model: String, mode: PermissionMode, cwd: PathBuf) -> Self {
-        let branch = detect_git_branch(&cwd);
-        let workspace_files = collect_workspace_files(&cwd, 2000);
-        let mut app = Self {
+        let canonical = fs::canonicalize(&cwd).unwrap_or(cwd);
+        let workspace_files = collect_workspace_files(&canonical, 2000);
+        Self {
             model,
             mode,
             credits: None,
             credit_status: None,
-            cwd,
-            branch,
+            cwd: canonical,
             control_state: ControlState::Idle,
             transcript: Vec::new(),
             tools: Vec::new(),
@@ -134,19 +260,41 @@ impl TuiApp {
             pending_approval: None,
             full_access_modal: None,
             model_selector: None,
+            folder_picker: None,
             workspace_files,
             mention_suggestions: Vec::new(),
             should_quit: false,
-            status_hint: "Enter: send | /model: pick model | /help: commands | Esc: cancel/quit"
-                .to_string(),
+            status_hint: String::new(),
             tick: 0,
             armed_quit: false,
             model_names: std::collections::HashMap::new(),
-        };
-        app.push_system(
-            "Welcome to Openmi CLI. Type a prompt, `/model` to pick a model, `/help` for commands, or Esc twice to quit.",
-        );
-        app
+        }
+    }
+
+    /// Update the active project folder and refresh `@file` completion candidates.
+    pub fn set_cwd(&mut self, new_cwd: PathBuf) {
+        let canonical = fs::canonicalize(&new_cwd).unwrap_or(new_cwd);
+        self.workspace_files = collect_workspace_files(&canonical, 2000);
+        self.mention_suggestions.clear();
+        self.cwd = canonical;
+    }
+
+    /// Friendly path with `~` shorthand for the user's home folder.
+    pub fn friendly_cwd(&self) -> String {
+        format_friendly_path(&self.cwd)
+    }
+
+    /// Short folder name for the compact top header (e.g. `my-app` or `~`).
+    pub fn short_cwd(&self) -> String {
+        let friendly = self.friendly_cwd();
+        if friendly == "~" {
+            return "~".to_string();
+        }
+        self.cwd
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(str::to_string)
+            .unwrap_or(friendly)
     }
 
     /// Remember display names from the model catalog so the UI can show them instead of IDs.
@@ -254,16 +402,39 @@ impl TuiApp {
         self.scroll_from_bottom = self.scroll_from_bottom.saturating_sub(lines);
     }
 
+    /// Human-readable description of what Openmi is currently doing, when busy.
+    pub fn active_activity_label(&self) -> Option<String> {
+        if !self.is_busy() {
+            return None;
+        }
+        if let Some(item) = self.tools.iter().rev().find(|t| {
+            matches!(
+                t.status,
+                ToolStatus::WaitingApproval | ToolStatus::Running | ToolStatus::Requested
+            )
+        }) {
+            return Some(match item.status {
+                ToolStatus::WaitingApproval => "Waiting for your permission...".to_string(),
+                ToolStatus::Running | ToolStatus::Requested => {
+                    friendly_tool_progress(&item.tool_name)
+                }
+                _ => "Thinking...".to_string(),
+            });
+        }
+        Some("Thinking...".to_string())
+    }
+
     pub fn apply_agent_event(&mut self, event: AgentEvent) {
         match event {
             AgentEvent::ControlStateChanged { state } => {
                 self.control_state = state;
                 if matches!(state, ControlState::Idle) {
                     self.armed_quit = false;
+                    self.status_hint.clear();
                 }
             }
-            AgentEvent::StepStarted { step } => {
-                self.status_hint = format!("Running step {step}...");
+            AgentEvent::StepStarted { .. } => {
+                self.status_hint = "Thinking...".to_string();
             }
             AgentEvent::TextDelta { text } => {
                 if let Some(last) = self.transcript.last_mut() {
@@ -313,12 +484,12 @@ impl TuiApp {
                 };
                 self.update_or_push_tool(call_id, tool_name, status, first_line);
             }
-            AgentEvent::TurnCompleted { finish_reason } => {
-                self.status_hint = format!("Ready ({finish_reason})");
+            AgentEvent::TurnCompleted { .. } => {
+                self.status_hint.clear();
             }
-            AgentEvent::Error { code, message } => {
-                self.push_error(format!("[{code}] {message}"));
-                self.status_hint = format!("Error: {code}");
+            AgentEvent::Error { message, .. } => {
+                self.push_error(message);
+                self.status_hint.clear();
             }
         }
     }
@@ -346,12 +517,11 @@ impl TuiApp {
     /// Resolve a pending approval popup with `decision`.
     pub fn resolve_approval(&mut self, decision: ApprovalDecision) -> bool {
         if let Some(pending) = self.pending_approval.take() {
-            let label = match decision {
-                ApprovalDecision::Approve => "approved",
-                ApprovalDecision::ApproveAlways => "approved (always this session)",
-                ApprovalDecision::Deny => "denied",
+            self.status_hint = match decision {
+                ApprovalDecision::Approve => "Allowed".to_string(),
+                ApprovalDecision::ApproveAlways => "Allowed for this session".to_string(),
+                ApprovalDecision::Deny => "Cancelled".to_string(),
             };
-            self.status_hint = format!("Tool `{}` {label}", pending.request.tool_name);
             let _ = pending.responder.send(decision);
             return true;
         }
@@ -361,6 +531,11 @@ impl TuiApp {
     /// Handle Esc or Ctrl-C: closes modals, cancels active turn, or quits on 2nd press.
     /// Returns `true` if the active turn should be cancelled now.
     pub fn handle_interrupt(&mut self) -> bool {
+        if self.folder_picker.is_some() {
+            self.folder_picker = None;
+            return false;
+        }
+
         if self.model_selector.is_some() {
             self.model_selector = None;
             return false;
@@ -368,7 +543,7 @@ impl TuiApp {
 
         if self.full_access_modal.is_some() {
             self.full_access_modal = None;
-            self.push_system("Cancelled FullAccess mode change.");
+            self.push_system("Cancelled Full Access mode change.");
             return false;
         }
 
@@ -383,7 +558,7 @@ impl TuiApp {
                 return true;
             }
             self.armed_quit = true;
-            self.status_hint = "Cancelling turn... press Esc/Ctrl-C again to quit".to_string();
+            self.status_hint = "Stopping... press Esc again to quit".to_string();
             return true;
         }
 
@@ -391,27 +566,66 @@ impl TuiApp {
             self.should_quit = true;
         } else {
             self.armed_quit = true;
-            self.status_hint = "Press Esc or Ctrl-C again to quit".to_string();
+            self.status_hint = "Press Esc again to quit".to_string();
         }
         false
     }
 }
 
-/// Lightweight `.git/HEAD` reader that avoids spawning `git` on every draw.
-pub fn detect_git_branch(start_dir: &Path) -> String {
-    let mut cur = Some(start_dir);
-    while let Some(dir) = cur {
-        let head = dir.join(".git").join("HEAD");
-        if let Ok(content) = fs::read_to_string(&head) {
-            let trimmed = content.trim();
-            if let Some(rest) = trimmed.strip_prefix("ref: refs/heads/") {
-                return rest.to_string();
-            }
-            return trimmed.chars().take(7).collect();
+/// Format a path with `~` replacing the user's home directory so it's short and easy to read.
+pub fn format_friendly_path(path: &Path) -> String {
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        let home_path = PathBuf::from(home);
+        if path == home_path {
+            return "~".to_string();
         }
-        cur = dir.parent();
+        if let Ok(rel) = path.strip_prefix(&home_path) {
+            return format!("~/{}", rel.display());
+        }
     }
-    "-".to_string()
+    path.display().to_string()
+}
+
+/// Resolve a user-typed folder path (supports `~`, `~/sub`, relative, or absolute paths).
+pub fn resolve_folder_input(raw: &str, base: &Path) -> PathBuf {
+    let trimmed = raw.trim().trim_matches('"').trim_matches('\'');
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        let home_path = PathBuf::from(home);
+        if trimmed == "~" {
+            return home_path;
+        }
+        if let Some(rest) = trimmed.strip_prefix("~/").or_else(|| trimmed.strip_prefix("~\\")) {
+            return home_path.join(rest);
+        }
+    }
+    let candidate = Path::new(trimmed);
+    if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        base.join(candidate)
+    }
+}
+
+/// Convert internal tool names into friendly progress phrases for terminal beginners.
+pub fn friendly_tool_progress(tool_name: &str) -> String {
+    match tool_name {
+        "read_file" => "Reading a file...".to_string(),
+        "list_dir" => "Looking at your files...".to_string(),
+        "write_file" => "Editing a file...".to_string(),
+        "run_command" => "Running a command...".to_string(),
+        other => format!("Using {other}..."),
+    }
+}
+
+/// Convert internal tool names into friendly action titles for approval popups.
+pub fn friendly_tool_title(tool_name: &str) -> String {
+    match tool_name {
+        "read_file" => "Read a file".to_string(),
+        "list_dir" => "View a folder".to_string(),
+        "write_file" => "Edit a file".to_string(),
+        "run_command" => "Run a command".to_string(),
+        other => format!("Use `{other}`"),
+    }
 }
 
 #[cfg(test)]
@@ -478,5 +692,39 @@ mod tests {
         assert_eq!(app.mention_suggestions, vec!["src/tui/slash.rs"]);
         assert!(app.apply_top_mention_completion());
         assert_eq!(app.input.text(), "check @src/tui/slash.rs ");
+    }
+
+    #[test]
+    fn folder_picker_navigates_and_filters_hidden_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sub = tmp.path().join("my-project");
+        fs::create_dir(&sub).unwrap();
+        fs::create_dir(tmp.path().join(".hidden")).unwrap();
+        fs::create_dir(tmp.path().join("node_modules")).unwrap();
+
+        let mut picker = FolderPickerState::new(tmp.path().to_path_buf());
+        let child_names: Vec<&str> = picker
+            .entries
+            .iter()
+            .filter_map(|e| match e {
+                FolderEntry::Child { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(child_names, vec!["my-project"]);
+
+        // Select "my-project" and enter it.
+        let child_idx = picker
+            .entries
+            .iter()
+            .position(|e| matches!(e, FolderEntry::Child { name, .. } if name == "my-project"))
+            .unwrap();
+        picker.selected = child_idx;
+        assert!(picker.enter().is_none());
+        assert_eq!(picker.current_dir, fs::canonicalize(&sub).unwrap());
+
+        // Entry 0 is UseCurrent -> Enter confirms the folder.
+        assert_eq!(picker.selected, 0);
+        assert_eq!(picker.enter(), Some(fs::canonicalize(&sub).unwrap()));
     }
 }

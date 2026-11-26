@@ -17,6 +17,7 @@ pub const FULL_ACCESS_MODAL_WARNING: &str = concat!(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlashCommand {
+    Folder(Option<String>),
     Model(Option<String>),
     Mode(Option<String>),
     Undo(Option<String>),
@@ -35,6 +36,8 @@ pub enum SlashOutcome {
     Message(String),
     Diff(String),
     Error(String),
+    OpenFolderPicker,
+    SetFolder(String),
     OpenModelSelector,
     SetModel(String),
     SetMode(PermissionMode),
@@ -62,6 +65,7 @@ pub fn parse_slash(input: &str) -> Option<SlashCommand> {
         .map(str::to_string);
 
     let parsed = match cmd.as_str() {
+        "/folder" | "/project" | "/cd" => SlashCommand::Folder(arg),
         "/model" => SlashCommand::Model(arg),
         "/mode" => SlashCommand::Mode(arg),
         "/undo" => SlashCommand::Undo(arg),
@@ -86,6 +90,8 @@ pub fn execute_slash(
     cwd: &Path,
 ) -> SlashOutcome {
     match cmd {
+        SlashCommand::Folder(None) => SlashOutcome::OpenFolderPicker,
+        SlashCommand::Folder(Some(path)) => SlashOutcome::SetFolder(path),
         SlashCommand::Model(None) => SlashOutcome::OpenModelSelector,
         SlashCommand::Model(Some(model)) => SlashOutcome::SetModel(model),
         SlashCommand::Mode(None) => {
@@ -201,6 +207,7 @@ const HELP_STEPS: &str = concat!(
 
 const HELP_COMMANDS: &str = concat!(
     "=== SLASH COMMANDS (INSIDE TUI) ===\n",
+    "  /folder [path]                  Pick a project folder interactively or switch directly\n",
     "  /model [id]                     Open interactive model selector or switch directly\n",
     "  /mode [mode]                    Show or switch mode (read-only|ask|trusted|full-access)\n",
     "  /diff                           Show colored unified diff for the latest run\n",
@@ -282,6 +289,7 @@ pub fn help_text() -> &'static str {
         "    - Add `OPENMI.md` in your workspace root to auto-load project instructions.\n",
         "    - Exit with `/quit` (or press Esc/Ctrl-C twice); resume with `openmi --resume`.\n\n",
         "=== SLASH COMMANDS (INSIDE TUI) ===\n",
+        "  /folder [path]                  Pick a project folder interactively or switch directly\n",
         "  /model [id]                     Open interactive model selector or switch directly\n",
         "  /mode [mode]                    Show or switch mode (read-only|ask|trusted|full-access)\n",
         "  /diff                           Show colored unified diff for the latest run\n",
@@ -362,6 +370,28 @@ mod tests {
         let canon = fs::canonicalize(&file).unwrap();
         cp.snapshot_before_write(&canon).unwrap();
         fs::write(&canon, b"modified\n").unwrap();
+
+        // /folder (and /project alias)
+        assert_eq!(
+            execute_slash(
+                parse_slash("/folder").unwrap(),
+                "openmi-default",
+                PermissionMode::Ask,
+                &cp,
+                tmp.path()
+            ),
+            SlashOutcome::OpenFolderPicker
+        );
+        assert_eq!(
+            execute_slash(
+                parse_slash("/project ~/my-app").unwrap(),
+                "openmi-default",
+                PermissionMode::Ask,
+                &cp,
+                tmp.path()
+            ),
+            SlashOutcome::SetFolder("~/my-app".into())
+        );
 
         // /model
         assert_eq!(
