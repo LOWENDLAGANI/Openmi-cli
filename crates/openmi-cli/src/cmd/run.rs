@@ -15,12 +15,13 @@ use crate::output::jsonl::JsonlRenderer;
 use crate::output::text::TextRenderer;
 use crate::output::EventRenderer;
 use crate::session::{build_session_with_options, select_headless_approval_handler};
+use crate::settings::UserSettings;
 
 #[derive(Debug, Clone)]
 pub struct RunOptions {
     pub prompt: String,
     pub model: String,
-    pub permission: String,
+    pub permission: Option<String>,
     pub cwd: Option<PathBuf>,
     pub json: bool,
     pub yes: bool,
@@ -29,7 +30,10 @@ pub struct RunOptions {
 }
 
 pub async fn execute(opts: RunOptions) -> Result<(), CliError> {
-    let mode: PermissionMode = opts.permission.parse().map_err(CliError::Usage)?;
+    let mode: PermissionMode = match opts.permission {
+        Some(raw) => raw.parse().map_err(CliError::Usage)?,
+        None => UserSettings::load_default().effective_permission_mode(),
+    };
     let workdir = match opts.cwd {
         Some(dir) => dir,
         None => env::current_dir().map_err(anyhow::Error::from)?,

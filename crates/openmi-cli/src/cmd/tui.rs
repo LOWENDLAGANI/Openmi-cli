@@ -30,9 +30,10 @@ use crate::auth::{default_token_store, TokenStore};
 use crate::exit_codes::CliError;
 use crate::session::{build_session_with_options, generate_starter_openmi_md};
 use crate::session_store::{SavedSession, SessionStore};
+use crate::settings::UserSettings;
 use crate::tui::app::{
     resolve_folder_input, FolderPickerState, FullAccessModalState, ModelSelectorState,
-    ResumePickerState, TuiApp,
+    ResumePickerState, SettingsModalState, TuiApp,
 };
 use crate::tui::approval::{PendingApproval, TuiApprovalHandler};
 use crate::tui::render;
@@ -41,7 +42,7 @@ use crate::tui::slash::{execute_slash, parse_slash, SlashOutcome, FULL_ACCESS_CO
 #[derive(Debug, Clone)]
 pub struct TuiOptions {
     pub model: String,
-    pub permission: String,
+    pub permission: Option<String>,
     pub cwd: Option<PathBuf>,
     pub api_url: Option<String>,
     /// `None` = new session; `Some(None)` = resume latest; `Some(Some(id))` = resume specific ID.
@@ -70,7 +71,11 @@ fn install_panic_hook() {
 }
 
 pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
-    let mode: PermissionMode = opts.permission.parse().map_err(CliError::Usage)?;
+    let user_settings = UserSettings::load_default();
+    let mode: PermissionMode = match opts.permission {
+        Some(raw) => raw.parse().map_err(CliError::Usage)?,
+        None => user_settings.effective_permission_mode(),
+    };
     let mut workdir = match opts.cwd {
         Some(dir) => dir,
         None => env::current_dir().map_err(anyhow::Error::from)?,
@@ -151,6 +156,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
     terminal.clear().map_err(anyhow::Error::from)?;
 
     let mut app = TuiApp::new(initial_model, mode, workdir.clone());
+    app.settings = user_settings;
     if let Some(ref saved) = resumed {
         app.hydrate_from_history(&saved.messages);
         app.push_system("Resumed your previous chat.");
@@ -221,6 +227,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                             && app.model_selector.is_none()
                             && app.folder_picker.is_none()
                             && app.resume_picker.is_none()
+                            && app.settings_modal.is_none()
                         {
                             for ch in normalized.chars() {
                                 if ch == '\n' {
@@ -260,6 +267,13 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                     &mut mcp_manager,
                                 )
                                 .await;
+                            }
+                            KeyAction::SettingsChanged(new_mode) => {
+                                if let Some(m) = new_mode {
+                                    session.lock().await.set_permission_mode(m);
+                                }
+                                let _ = app.settings.save_default();
+                                app.status_hint = "Settings saved".to_string();
                             }
                             KeyAction::CycleMode(next_mode) => {
                                 session.lock().await.set_permission_mode(next_mode);
@@ -307,6 +321,10 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                         SlashOutcome::Message(msg) => app.push_system(msg),
                                         SlashOutcome::Diff(diff_txt) => app.push_diff(diff_txt),
                                         SlashOutcome::Error(err) => app.push_error(err),
+                                        SlashOutcome::OpenSettings => {
+                                            app.settings_modal =
+                                                Some(SettingsModalState::default());
+                                        }
                                         SlashOutcome::OpenResumePicker => {
                                             match session_store.list_recent(Some(&workdir), 20) {
                                                 Ok(sessions) => {
@@ -712,6 +730,7 @@ enum KeyAction {
     ConfirmedFullAccess,
     SelectedModel(ModelInfo),
     SelectedFolder(PathBuf),
+    SettingsChanged(Option<PermissionMode>),
     CycleMode(PermissionMode),
     SelectedSession(SavedSession),
 }
@@ -734,6 +753,28 @@ fn handle_key_event(
     }
 
     app.armed_quit = false;
+
+    // 0. Interactive `/settings` modal.
+    if app.settings_modal.is_some() {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(m) = app.settings_modal.as_mut() {
+                    m.move_up();
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(m) = app.settings_modal.as_mut() {
+                    m.move_down();
+                }
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                let changed_mode = app.toggle_selected_setting();
+                return KeyAction::SettingsChanged(changed_mode);
+            }
+            _ => {}
+        }
+        return KeyAction::None;
+    }
 
     // 1. Approval popup intercepts ↑/↓/Enter as well as y / a / n.
     if app.pending_approval.is_some() {

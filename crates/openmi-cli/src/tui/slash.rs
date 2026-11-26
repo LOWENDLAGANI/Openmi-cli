@@ -25,6 +25,10 @@ pub struct SlashSuggestion {
 /// Ordered list of user-facing slash commands shown when the user types `/`.
 pub const SLASH_PALETTE: &[SlashSuggestion] = &[
     SlashSuggestion {
+        command: "/settings",
+        description: "Configure auto-approve & preferences",
+    },
+    SlashSuggestion {
         command: "/folder",
         description: "Pick or change project folder",
     },
@@ -93,6 +97,7 @@ pub fn filter_slash_suggestions(input: &str) -> Vec<SlashSuggestion> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlashCommand {
+    Settings,
     Folder(Option<String>),
     Model(Option<String>),
     Resume,
@@ -114,6 +119,7 @@ pub enum SlashOutcome {
     Message(String),
     Diff(String),
     Error(String),
+    OpenSettings,
     OpenFolderPicker,
     SetFolder(String),
     OpenModelSelector,
@@ -145,6 +151,7 @@ pub fn parse_slash(input: &str) -> Option<SlashCommand> {
         .map(str::to_string);
 
     let parsed = match cmd.as_str() {
+        "/settings" | "/setting" => SlashCommand::Settings,
         "/folder" | "/project" | "/cd" => SlashCommand::Folder(arg),
         "/model" => SlashCommand::Model(arg),
         "/resume" => SlashCommand::Resume,
@@ -172,6 +179,7 @@ pub fn execute_slash(
     cwd: &Path,
 ) -> SlashOutcome {
     match cmd {
+        SlashCommand::Settings => SlashOutcome::OpenSettings,
         SlashCommand::Folder(None) => SlashOutcome::OpenFolderPicker,
         SlashCommand::Folder(Some(path)) => SlashOutcome::SetFolder(path),
         SlashCommand::Model(None) => SlashOutcome::OpenModelSelector,
@@ -454,6 +462,18 @@ mod tests {
         let canon = fs::canonicalize(&file).unwrap();
         cp.snapshot_before_write(&canon).unwrap();
         fs::write(&canon, b"modified\n").unwrap();
+
+        // /settings
+        assert_eq!(
+            execute_slash(
+                parse_slash("/settings").unwrap(),
+                "openmi-default",
+                PermissionMode::Ask,
+                &cp,
+                tmp.path()
+            ),
+            SlashOutcome::OpenSettings
+        );
 
         // /folder (and /project alias)
         assert_eq!(

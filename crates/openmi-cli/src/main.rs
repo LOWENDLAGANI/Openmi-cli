@@ -4,6 +4,7 @@ mod exit_codes;
 mod output;
 mod session;
 mod session_store;
+mod settings;
 mod tui;
 
 use std::path::PathBuf;
@@ -18,8 +19,8 @@ use crate::exit_codes::{CliError, EXIT_OK, EXIT_USAGE};
 const AFTER_HELP: &str = "\
 PERMISSION MODES:
   read-only    Allow read_file and list_dir only; block all mutating tools.
-  ask          Prompt for approval before writes/commands (default; denies without TTY unless --yes).
-  trusted      Auto-approve workspace tools within PathGuard boundaries.
+  ask          Prompt for approval before writes/commands (denies without TTY unless --yes).
+  trusted      Auto-approve workspace tools and commands within PathGuard boundaries (default).
   full-access  Unrestricted tool execution (requires typed confirmation in TUI).
 
 EXIT CODES:
@@ -61,9 +62,9 @@ struct Cli {
     #[arg(long, default_value = "openmi-default")]
     model: String,
 
-    /// Permission mode (when launching the default TUI): read-only, ask, trusted, full-access.
-    #[arg(long, default_value = "ask")]
-    permission: String,
+    /// Permission mode override (default comes from `/settings`, initially `trusted`): read-only, ask, trusted, full-access.
+    #[arg(long)]
+    permission: Option<String>,
 
     /// Working directory for the workspace root (when launching the default TUI).
     #[arg(long)]
@@ -89,9 +90,9 @@ enum Commands {
         #[arg(long, default_value = "openmi-default")]
         model: String,
 
-        /// Permission mode: read-only, ask, trusted, full-access.
-        #[arg(long, default_value = "ask")]
-        permission: String,
+        /// Permission mode override: read-only, ask, trusted, full-access.
+        #[arg(long)]
+        permission: Option<String>,
 
         /// Working directory for the workspace root.
         #[arg(long)]
@@ -182,9 +183,9 @@ enum Commands {
         #[arg(long, default_value = "openmi-default")]
         model: String,
 
-        /// Permission mode: read-only, ask, trusted, full-access.
-        #[arg(long, default_value = "ask")]
-        permission: String,
+        /// Permission mode override: read-only, ask, trusted, full-access.
+        #[arg(long)]
+        permission: Option<String>,
 
         /// Working directory for the workspace root.
         #[arg(long)]

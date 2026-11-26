@@ -8,7 +8,8 @@ use ratatui::Frame;
 use crate::auth::store::now_unix_secs;
 use crate::tui::app::{
     format_friendly_path, friendly_tool_title, FolderEntry, FolderPickerState,
-    FullAccessModalState, ModelSelectorState, ResumePickerState, TranscriptKind, TuiApp,
+    FullAccessModalState, ModelSelectorState, ResumePickerState, SettingsModalState,
+    TranscriptKind, TuiApp,
 };
 use crate::tui::markdown::{render_markdown_lines, MarkdownTheme};
 use crate::tui::slash::FULL_ACCESS_MODAL_WARNING;
@@ -41,12 +42,17 @@ pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
     } else {
         0
     };
-    let input_lines = app.input.text().lines().count().clamp(1, 5) as u16;
+    let input_inner_width = area.width.saturating_sub(4).max(1);
+    let wrapped_input_lines = if app.input.text().is_empty() {
+        1
+    } else {
+        wrapped_text_rows(app.input.text(), input_inner_width).clamp(1, 5) as u16
+    };
     let max_input_height = area
         .height
         .saturating_sub(header_height + activity_height + popup_height + 3)
         .max(3);
-    let input_height = (input_lines + 2).min(max_input_height);
+    let input_height = (wrapped_input_lines + 2).min(max_input_height);
 
     let root = Layout::default()
         .direction(Direction::Vertical)
@@ -90,13 +96,50 @@ pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
         render_folder_picker_modal(frame, picker);
     } else if let Some(resume) = &app.resume_picker {
         render_resume_picker_modal(frame, app, resume);
+    } else if let Some(settings) = &app.settings_modal {
+        render_settings_modal(frame, app, settings);
     }
 }
 
 fn render_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    let narrow = area.width < 60;
+
+    let mut right_spans: Vec<Span<'_>> = Vec::new();
+    let mut right_len: usize = 0;
+    if let Some(cs) = &app.credit_status {
+        if let Some((_, mins)) = cs.active_pass_remaining() {
+            let s = if narrow {
+                format!("{mins}m · ")
+            } else {
+                format!("{mins}m pass · ")
+            };
+            right_len += s.chars().count();
+            right_spans.push(Span::styled(s, Style::default().fg(SUCCESS)));
+        }
+        let total = cs.balance + cs.wallet_credit;
+        let s = if narrow {
+            format!("{total} cr ")
+        } else {
+            let label = if total == 1 { "credit" } else { "credits" };
+            format!("{total} {label} ")
+        };
+        right_len += s.chars().count();
+        right_spans.push(Span::styled(s, Style::default().fg(MUTED)));
+    } else if let Some(c) = app.credits {
+        let s = if narrow {
+            format!("{c} cr ")
+        } else {
+            let label = if c == 1 { "credit" } else { "credits" };
+            format!("{c} {label} ")
+        };
+        right_len += s.chars().count();
+        right_spans.push(Span::styled(s, Style::default().fg(MUTED)));
+    }
+
+    let right_width = (right_len as u16).min(area.width / 2);
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .constraints([Constraint::Min(10), Constraint::Length(right_width)])
         .split(Rect {
             x: area.x,
             y: area.y,
@@ -111,18 +154,23 @@ fn render_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         ),
         Span::styled("· ", Style::default().fg(MUTED)),
         Span::styled(app.model_display(), Style::default().fg(Color::Reset)),
-        Span::styled("  ·  ", Style::default().fg(MUTED)),
-        Span::styled(app.short_cwd(), Style::default().fg(USER_COLOR)),
     ];
+    if !narrow {
+        left_spans.push(Span::styled(" · ", Style::default().fg(MUTED)));
+        left_spans.push(Span::styled(
+            app.short_cwd(),
+            Style::default().fg(USER_COLOR),
+        ));
+    }
 
-    // Only show permission mode if the user changed it away from the default Ask mode.
+    // Only show permission mode if the user changed it away from the default Trusted mode.
     match app.mode {
-        PermissionMode::Ask => {}
+        PermissionMode::Trusted => {}
+        PermissionMode::Ask => {
+            left_spans.push(Span::styled("  Ask", Style::default().fg(WARNING)));
+        }
         PermissionMode::ReadOnly => {
             left_spans.push(Span::styled("  Read-only", Style::default().fg(MUTED)));
-        }
-        PermissionMode::Trusted => {
-            left_spans.push(Span::styled("  Trusted", Style::default().fg(WARNING)));
         }
         PermissionMode::FullAccess => {
             left_spans.push(Span::styled(
@@ -134,28 +182,6 @@ fn render_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     let left = Paragraph::new(Line::from(left_spans));
     frame.render_widget(left, cols[0]);
-
-    let mut right_spans: Vec<Span<'_>> = Vec::new();
-    if let Some(cs) = &app.credit_status {
-        if let Some((_, mins)) = cs.active_pass_remaining() {
-            right_spans.push(Span::styled(
-                format!("{mins}m pass  ·  "),
-                Style::default().fg(SUCCESS),
-            ));
-        }
-        let total = cs.balance + cs.wallet_credit;
-        let label = if total == 1 { "credit" } else { "credits" };
-        right_spans.push(Span::styled(
-            format!("{total} {label} "),
-            Style::default().fg(MUTED),
-        ));
-    } else if let Some(c) = app.credits {
-        let label = if c == 1 { "credit" } else { "credits" };
-        right_spans.push(Span::styled(
-            format!("{c} {label} "),
-            Style::default().fg(MUTED),
-        ));
-    }
 
     let right = Paragraph::new(Line::from(right_spans)).alignment(Alignment::Right);
     frame.render_widget(right, cols[1]);
@@ -265,16 +291,94 @@ fn render_chat(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         }
     }
 
+    let h_pad = if area.width < 60 { 1 } else { 2 };
+    let inner_width = area.width.saturating_sub(h_pad * 2).max(1);
     let inner_height = area.height.saturating_sub(1) as usize;
-    let total_lines = lines.len();
-    let max_scroll = total_lines.saturating_sub(inner_height) as u16;
+    let total_visual_lines = wrapped_lines_total(&lines, inner_width);
+    let max_scroll = total_visual_lines.saturating_sub(inner_height) as u16;
     let scroll_y = max_scroll.saturating_sub(app.scroll_from_bottom);
 
-    let widget = Paragraph::new(lines)
-        .block(Block::default().padding(Padding::new(2, 2, 1, 0)))
+    let paragraph = Paragraph::new(lines)
+        .block(Block::default().padding(Padding::new(h_pad, h_pad, 1, 0)))
         .wrap(Wrap { trim: false })
         .scroll((scroll_y, 0));
-    frame.render_widget(widget, area);
+    frame.render_widget(paragraph, area);
+}
+
+/// Count visual rows produced when wrapping `lines` into `width` columns (matching `Wrap { trim: false }`).
+fn wrapped_lines_total(lines: &[Line<'_>], width: u16) -> usize {
+    lines
+        .iter()
+        .map(|line| {
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            wrapped_single_line_rows(&text, width)
+        })
+        .sum()
+}
+
+/// Count visual rows for a multi-line string wrapped into `width` columns.
+fn wrapped_text_rows(text: &str, width: u16) -> usize {
+    if text.is_empty() {
+        return 1;
+    }
+    text.split('\n')
+        .map(|line| wrapped_single_line_rows(line, width))
+        .sum()
+}
+
+/// Count visual rows for a single logical line (no `\n`) wrapped into `width` columns.
+fn wrapped_single_line_rows(line: &str, width: u16) -> usize {
+    let w = width.max(1) as usize;
+    if line.is_empty() {
+        return 1;
+    }
+    let mut rows: usize = 1;
+    let mut col: usize = 0;
+
+    // Split into alternating whitespace / non-whitespace runs so word-wrapping matches ratatui.
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let is_ws = chars[i].is_whitespace();
+        let start = i;
+        while i < chars.len() && chars[i].is_whitespace() == is_ws {
+            i += 1;
+        }
+        let seg_len = i - start;
+
+        if is_ws {
+            if col + seg_len <= w {
+                col += seg_len;
+            } else {
+                // Trailing spaces wrap to next line only if more content follows.
+                if i < chars.len() {
+                    rows += 1;
+                    col = 0;
+                }
+            }
+        } else if col + seg_len <= w {
+            col += seg_len;
+        } else if seg_len <= w {
+            if col > 0 {
+                rows += 1;
+            }
+            col = seg_len;
+        } else {
+            // Very long unbroken token: wrap across multiple rows.
+            let mut rem = seg_len;
+            if col > 0 {
+                let take = w.saturating_sub(col);
+                rem = rem.saturating_sub(take);
+                rows += 1;
+            }
+            while rem > w {
+                rem -= w;
+                rows += 1;
+            }
+            col = rem;
+        }
+    }
+    rows
 }
 
 fn render_welcome(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
@@ -425,6 +529,12 @@ fn render_input(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         " Message "
     };
 
+    let inner_width = area.width.saturating_sub(4).max(1);
+    let visible_rows = area.height.saturating_sub(2).max(1);
+    let (vis_row, vis_col) =
+        wrapped_cursor_pos(app.input.text(), app.input.cursor_byte(), inner_width);
+    let input_scroll_y = vis_row.saturating_sub(visible_rows.saturating_sub(1));
+
     let content = if is_empty && !app.is_busy() {
         Paragraph::new(Span::styled(
             "Type a message and press Enter...",
@@ -446,7 +556,8 @@ fn render_input(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                     Style::default().fg(if app.is_busy() { MUTED } else { ACCENT }),
                 )),
         )
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((input_scroll_y, 0));
     frame.render_widget(widget, area);
 
     if app.pending_approval.is_none()
@@ -454,14 +565,36 @@ fn render_input(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         && app.model_selector.is_none()
         && app.folder_picker.is_none()
         && app.resume_picker.is_none()
+        && app.settings_modal.is_none()
     {
-        let (row, col) = app.input.cursor_row_col();
         let max_x = area.x + area.width.saturating_sub(2);
         let max_y = area.y + area.height.saturating_sub(2);
-        let cx = (area.x + 2 + col).min(max_x);
-        let cy = (area.y + 1 + row).min(max_y);
+        let cx = (area.x + 2 + vis_col).min(max_x);
+        let cy = (area.y + 1 + vis_row.saturating_sub(input_scroll_y)).min(max_y);
         frame.set_cursor_position((cx, cy));
     }
+}
+
+/// Compute the wrapped visual `(row, col)` of `cursor_byte` inside a box of width `inner_width`.
+fn wrapped_cursor_pos(text: &str, cursor_byte: usize, inner_width: u16) -> (u16, u16) {
+    let w = inner_width.max(1) as usize;
+    let clamped = cursor_byte.min(text.len());
+    let prefix = &text[..clamped];
+    let mut row: usize = 0;
+    let mut col: usize = 0;
+    for ch in prefix.chars() {
+        if ch == '\n' {
+            row += 1;
+            col = 0;
+        } else {
+            col += 1;
+            if col >= w {
+                row += 1;
+                col = 0;
+            }
+        }
+    }
+    (row as u16, col as u16)
 }
 
 fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
@@ -926,22 +1059,121 @@ fn format_relative_age(now: u64, then: u64) -> String {
     }
 }
 
+fn render_settings_modal(frame: &mut Frame<'_>, app: &TuiApp, modal: &SettingsModalState) {
+    let popup_area = centered_rect(78, 54, frame.area());
+    frame.render_widget(Clear, popup_area);
+
+    let items = [
+        (
+            "Auto-approve edits & commands",
+            app.settings.auto_approve && !app.settings.read_only,
+            "Run file edits and commands automatically without asking",
+        ),
+        (
+            "Read-only mode",
+            app.settings.read_only,
+            "Only read files; block all file edits and shell commands",
+        ),
+        (
+            "Show tool activity in chat",
+            app.settings.show_tool_activity,
+            "Show short inline lines like '✓ Read main.rs' in the chat",
+        ),
+    ];
+
+    let mut lines: Vec<Line<'_>> = vec![
+        Line::from(Span::styled(
+            "Preferences are saved automatically:",
+            Style::default().fg(MUTED),
+        )),
+        Line::from(""),
+    ];
+
+    for (idx, (label, enabled, desc)) in items.iter().enumerate() {
+        let is_sel = idx == modal.selected;
+        let prefix = if is_sel { "▸ " } else { "  " };
+        let (badge, badge_color) = if *enabled {
+            ("[ ON ]", SUCCESS)
+        } else {
+            ("[ OFF ]", MUTED)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{prefix}{label:<34} "),
+                if is_sel {
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Reset)
+                },
+            ),
+            Span::styled(
+                badge,
+                Style::default()
+                    .fg(badge_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        if is_sel {
+            lines.push(Line::from(Span::styled(
+                format!("    {desc}"),
+                Style::default().fg(MUTED),
+            )));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("↑/↓", Style::default().fg(ACCENT)),
+        Span::styled(" Move  ·  ", Style::default().fg(MUTED)),
+        Span::styled("Enter / Space", Style::default().fg(ACCENT)),
+        Span::styled(" Toggle  ·  ", Style::default().fg(MUTED)),
+        Span::styled("Esc", Style::default().fg(ACCENT)),
+        Span::styled(" Close", Style::default().fg(MUTED)),
+    ]));
+
+    let widget = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(ACCENT))
+                .padding(Padding::uniform(1))
+                .title(Span::styled(
+                    " Settings ",
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                )),
+        )
+        .wrap(Wrap { trim: true });
+    frame.render_widget(widget, popup_area);
+}
+
 pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let px = if r.width < 60 {
+        percent_x.clamp(94, 100)
+    } else {
+        percent_x.min(100)
+    };
+    let py = if r.height < 20 {
+        percent_y.clamp(88, 100)
+    } else {
+        percent_y.min(100)
+    };
+
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage((100 - py) / 2),
+            Constraint::Percentage(py),
+            Constraint::Percentage((100 - py) / 2),
         ])
         .split(r);
 
     Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage((100 - px) / 2),
+            Constraint::Percentage(px),
+            Constraint::Percentage((100 - px) / 2),
         ])
         .split(vertical[1])[1]
 }
@@ -1036,5 +1268,58 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| draw(f, &app)).unwrap();
+
+        app.folder_picker = None;
+        app.settings_modal = Some(SettingsModalState::default());
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn long_wrapped_output_and_prompt_stay_visible_on_narrow_screen() {
+        let mut app = TuiApp::new(
+            "openmi-default".into(),
+            PermissionMode::Trusted,
+            PathBuf::from("."),
+        );
+        // Long multi-paragraph assistant reply that wraps heavily at 42 cols.
+        let mut long_reply = String::new();
+        for i in 1..=15 {
+            long_reply.push_str(&format!(
+                "Paragraph {i}: This is a very long sentence designed to wrap across multiple lines on a phone screen.\n\n"
+            ));
+        }
+        long_reply.push_str("FINAL_VISIBLE_MARKER");
+        app.transcript.push(crate::tui::app::TranscriptEntry {
+            kind: TranscriptKind::Assistant,
+            text: long_reply,
+        });
+
+        // Long single-line prompt that wraps across > 5 rows at 42 cols.
+        let long_prompt = format!("{}TAIL_PROMPT_OK", "word ".repeat(60));
+        for ch in long_prompt.chars() {
+            app.input.insert_char(ch);
+        }
+
+        let backend = TestBackend::new(42, 18);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(
+            rendered.contains("FINAL_VISIBLE_MARKER"),
+            "Expected bottom of long wrapped output to be visible, got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("TAIL_PROMPT_OK"),
+            "Expected tail of long wrapped prompt to be visible, got:\n{rendered}"
+        );
     }
 }

@@ -154,6 +154,7 @@ impl InputState {
     }
 
     /// Compute `(row, col)` cursor position in display characters for rendering.
+    #[allow(dead_code)]
     pub fn cursor_row_col(&self) -> (u16, u16) {
         let prefix = &self.buffer[..self.cursor];
         let row = prefix.bytes().filter(|&b| b == b'\n').count() as u16;

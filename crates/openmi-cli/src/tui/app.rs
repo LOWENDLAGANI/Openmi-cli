@@ -8,6 +8,7 @@ use openmi_core::{
 use similar::TextDiff;
 
 use crate::session_store::SavedSession;
+use crate::settings::UserSettings;
 use crate::tui::approval::PendingApproval;
 use crate::tui::input::InputState;
 use crate::tui::mention::{active_mention_query, collect_workspace_files, fuzzy_match_paths};
@@ -260,10 +261,33 @@ impl ResumePickerState {
     }
 }
 
+/// Interactive `/settings` modal state.
+#[derive(Debug, Clone, Default)]
+pub struct SettingsModalState {
+    pub selected: usize,
+}
+
+impl SettingsModalState {
+    pub const ITEM_COUNT: usize = 3;
+
+    pub fn move_up(&mut self) {
+        if self.selected == 0 {
+            self.selected = Self::ITEM_COUNT - 1;
+        } else {
+            self.selected -= 1;
+        }
+    }
+
+    pub fn move_down(&mut self) {
+        self.selected = (self.selected + 1) % Self::ITEM_COUNT;
+    }
+}
+
 /// Complete state of the interactive TUI (UI-only; core stays UI-agnostic).
 pub struct TuiApp {
     pub model: String,
     pub mode: PermissionMode,
+    pub settings: UserSettings,
     pub credits: Option<i64>,
     pub credit_status: Option<CreditStatus>,
     pub cwd: PathBuf,
@@ -278,6 +302,7 @@ pub struct TuiApp {
     pub model_selector: Option<ModelSelectorState>,
     pub folder_picker: Option<FolderPickerState>,
     pub resume_picker: Option<ResumePickerState>,
+    pub settings_modal: Option<SettingsModalState>,
     pub workspace_files: Vec<String>,
     pub mention_suggestions: Vec<String>,
     pub slash_suggestions: Vec<SlashSuggestion>,
@@ -298,6 +323,7 @@ impl TuiApp {
         Self {
             model,
             mode,
+            settings: UserSettings::default(),
             credits: None,
             credit_status: None,
             cwd: canonical,
@@ -312,6 +338,7 @@ impl TuiApp {
             model_selector: None,
             folder_picker: None,
             resume_picker: None,
+            settings_modal: None,
             workspace_files,
             mention_suggestions: Vec::new(),
             slash_suggestions: Vec::new(),
@@ -321,6 +348,32 @@ impl TuiApp {
             tick: 0,
             armed_quit: false,
             model_names: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Toggle the currently highlighted item in `/settings` and return the new `PermissionMode`
+    /// if the toggle changed permissions.
+    pub fn toggle_selected_setting(&mut self) -> Option<PermissionMode> {
+        let idx = self.settings_modal.as_ref()?.selected;
+        match idx {
+            0 => {
+                self.settings.auto_approve = !self.settings.auto_approve;
+                if self.settings.auto_approve {
+                    self.settings.read_only = false;
+                }
+                self.mode = self.settings.effective_permission_mode();
+                Some(self.mode)
+            }
+            1 => {
+                self.settings.read_only = !self.settings.read_only;
+                self.mode = self.settings.effective_permission_mode();
+                Some(self.mode)
+            }
+            2 => {
+                self.settings.show_tool_activity = !self.settings.show_tool_activity;
+                None
+            }
+            _ => None,
         }
     }
 
@@ -670,15 +723,17 @@ impl TuiApp {
                     .unwrap_or_default();
                 let inline_line = format_inline_tool_summary(&tool_name, &target_hint, ok);
                 self.update_or_push_tool(call_id, tool_name, status, first_line);
-                self.transcript.push(TranscriptEntry {
-                    kind: if ok {
-                        TranscriptKind::ToolOk
-                    } else {
-                        TranscriptKind::ToolErr
-                    },
-                    text: inline_line,
-                });
-                self.scroll_from_bottom = 0;
+                if self.settings.show_tool_activity {
+                    self.transcript.push(TranscriptEntry {
+                        kind: if ok {
+                            TranscriptKind::ToolOk
+                        } else {
+                            TranscriptKind::ToolErr
+                        },
+                        text: inline_line,
+                    });
+                    self.scroll_from_bottom = 0;
+                }
             }
             AgentEvent::TurnCompleted { .. } => {
                 self.status_hint.clear();
@@ -730,6 +785,11 @@ impl TuiApp {
     /// Handle Esc or Ctrl-C: closes modals, cancels active turn, or quits on 2nd press.
     /// Returns `true` if the active turn should be cancelled now.
     pub fn handle_interrupt(&mut self) -> bool {
+        if self.settings_modal.is_some() {
+            self.settings_modal = None;
+            return false;
+        }
+
         if self.resume_picker.is_some() {
             self.resume_picker = None;
             return false;
