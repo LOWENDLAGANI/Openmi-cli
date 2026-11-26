@@ -25,6 +25,7 @@ pub enum SlashCommand {
     Credits,
     Mcp(Option<String>),
     Help(Option<String>),
+    Version,
     Quit,
     Unknown(String),
 }
@@ -69,6 +70,7 @@ pub fn parse_slash(input: &str) -> Option<SlashCommand> {
         "/credits" => SlashCommand::Credits,
         "/mcp" => SlashCommand::Mcp(arg),
         "/help" => SlashCommand::Help(arg),
+        "/version" => SlashCommand::Version,
         "/quit" | "/exit" => SlashCommand::Quit,
         other => SlashCommand::Unknown(other.to_string()),
     };
@@ -124,6 +126,7 @@ pub fn execute_slash(
                 )),
             },
         },
+        SlashCommand::Version => SlashOutcome::Message(version_text()),
         SlashCommand::Quit => SlashOutcome::Quit,
         SlashCommand::Unknown(name) => {
             SlashOutcome::Error(format!("Unknown slash command `{name}`. Try `/help`."))
@@ -206,6 +209,7 @@ const HELP_COMMANDS: &str = concat!(
     "  /credits                        Refresh plan, daily + wallet credits, and 1-hour pass\n",
     "  /mcp [status|restart [server]]  Inspect or restart configured stdio MCP servers\n",
     "  /help [topic]                   Show full tutorial or topic (steps|commands|modes|keys|mcp|cli)\n",
+    "  /version                        Show the running Openmi CLI version and platform\n",
     "  /quit (or /exit)                Exit Openmi TUI (session is auto-saved)"
 );
 
@@ -286,6 +290,7 @@ pub fn help_text() -> &'static str {
         "  /credits                        Refresh plan, daily + wallet credits, and 1-hour pass\n",
         "  /mcp [status|restart [server]]  Inspect or restart configured stdio MCP servers\n",
         "  /help [topic]                   Show full tutorial or topic (steps|commands|modes|keys|mcp|cli)\n",
+        "  /version                        Show the running Openmi CLI version and platform\n",
         "  /quit (or /exit)                Exit Openmi TUI (session is auto-saved)\n\n",
         "=== PERMISSION MODES & TOOLS ===\n",
         "  read-only    Allow `read_file` & `list_dir` only; block all writes and commands.\n",
@@ -329,6 +334,15 @@ pub fn help_topic_text(topic: &str) -> Option<&'static str> {
         "cli" => Some(HELP_CLI),
         _ => None,
     }
+}
+
+pub fn version_text() -> String {
+    format!(
+        "Openmi CLI v{} ({}-{})",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    )
 }
 
 #[cfg(test)]
@@ -521,6 +535,18 @@ mod tests {
             ),
             SlashOutcome::McpRestart(Some("fs".into()))
         );
+        match execute_slash(
+            parse_slash("/version").unwrap(),
+            "openmi-default",
+            PermissionMode::Ask,
+            &cp,
+            tmp.path(),
+        ) {
+            SlashOutcome::Message(m) => {
+                assert!(m.contains(env!("CARGO_PKG_VERSION")));
+            }
+            other => panic!("expected Version message, got {other:?}"),
+        }
         assert_eq!(
             execute_slash(
                 parse_slash("/quit").unwrap(),
