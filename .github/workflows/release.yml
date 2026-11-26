@@ -39,7 +39,7 @@ jobs:
             archive: tar.gz
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -63,7 +63,7 @@ jobs:
           Compress-Archive -Path "target\${{ matrix.target }}\release\${{ matrix.bin }}" -DestinationPath "dist\$asset"
           $hash = (Get-FileHash "dist\$asset" -Algorithm SHA256).Hash.ToLower()
           "$hash  $asset" | Out-File -Encoding ascii "dist\$asset.sha256"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: openmi-${{ matrix.target }}
           path: dist/*
@@ -72,7 +72,7 @@ jobs:
     name: Build Android/Termux (aarch64-linux-android)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
@@ -91,7 +91,7 @@ jobs:
           ASSET="openmi-aarch64-linux-android.tar.gz"
           tar -C target/aarch64-linux-android/release -czf "dist/$ASSET" openmi
           (cd dist && sha256sum "$ASSET" > "$ASSET.sha256")
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: openmi-aarch64-linux-android
           path: dist/*
@@ -102,14 +102,14 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
       - name: Generate combined SHA256SUMS.txt
         working-directory: artifacts
         run: sha256sum openmi-*.tar.gz openmi-*.zip > SHA256SUMS.txt
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: artifacts/*
           generate_release_notes: true
