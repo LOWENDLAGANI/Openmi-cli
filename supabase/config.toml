@@ -1,9 +1,20 @@
 # Supabase CLI project configuration (partial). Only function-level overrides live here.
 project_id = "umjlmqeghfrfpduhkits"
 
-# `cli-auth` must accept unauthenticated requests: the CLI calls /start and /poll before it
-# has a user session, and browsers open GET /verify without a JWT. The publishable key
-# (sb_publishable_…) is not a JWT, so gateway JWT verification would reject those calls.
-# /approve still validates the user's bearer token itself via `admin.auth.getUser`.
+# Disable gateway-level legacy JWT verification on these functions:
+# - `cli-auth` accepts unauthenticated /start, /poll, and browser GET /verify requests
+#   (and validates the user's token itself on /approve via `admin.auth.getUser`).
+# - `models` is publicly readable (returns the model catalog even before login).
+# - `credits` and `chat` validate the user's Supabase access token explicitly via
+#   `admin.auth.getUser(bearer)` so publishable keys and CORS preflights work cleanly.
 [functions.cli-auth]
+verify_jwt = false
+
+[functions.models]
+verify_jwt = false
+
+[functions.credits]
+verify_jwt = false
+
+[functions.chat]
 verify_jwt = false

@@ -26,5 +26,8 @@ create index if not exists idx_device_codes_expires_at
 -- Lock down direct client access; only the cli-auth Edge Function (service role) accesses this table.
 alter table public.device_codes enable row level security;
 
+-- On fresh Postgres 17 databases, RLS bypass does not replace table-level GRANTs.
+grant select, insert, update, delete on public.device_codes to service_role;
+
 comment on table public.device_codes is
     'Short-lived (10m) single-use device pairing codes for Openmi CLI login.';
