@@ -425,9 +425,47 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                             let shown = app.display_name_for(&m).to_string();
                                             app.push_system(format!("Switched to {shown}.{active_note}"));
                                         }
+                                        SlashOutcome::TogglePlan(desired) => {
+                                            let mut sess = session.lock().await;
+                                            let next = desired.unwrap_or(!sess.plan_mode());
+                                            let effective_mode = sess.set_plan_mode(next);
+                                            app.plan_mode = sess.plan_mode();
+                                            app.mode = effective_mode;
+                                            if app.plan_mode {
+                                                app.push_system("Entered Plan Mode (read-only). Openmi will explore and propose a plan without modifying files. Run `/plan off` when ready to implement.");
+                                            } else {
+                                                app.push_system(format!("Exited Plan Mode (restored {effective_mode:?} mode)."));
+                                            }
+                                        }
+                                        SlashOutcome::Compact(focus) => {
+                                            app.push_system("Compacting conversation history…");
+                                            let cancel = CancellationToken::new();
+                                            let mut sess = session.lock().await;
+                                            match sess.compact_history(focus.as_deref(), &cancel).await {
+                                                Ok(report) => {
+                                                    if report.messages_before == report.messages_after {
+                                                        app.push_system(report.summary);
+                                                    } else {
+                                                        app.transcript.clear();
+                                                        app.tools.clear();
+                                                        app.push_system(format!(
+                                                            "Compacted {} -> {} messages (~{} -> ~{} chars).\n\n{}",
+                                                            report.messages_before,
+                                                            report.messages_after,
+                                                            report.chars_before,
+                                                            report.chars_after,
+                                                            report.summary
+                                                        ));
+                                                    }
+                                                }
+                                                Err(err) => app.push_error(format!("Compaction failed: {err}")),
+                                            }
+                                        }
                                         SlashOutcome::SetMode(new_mode) => {
                                             app.mode = new_mode;
-                                            session.lock().await.set_permission_mode(new_mode);
+                                            let mut sess = session.lock().await;
+                                            sess.set_permission_mode(new_mode);
+                                            app.plan_mode = sess.plan_mode();
                                             app.push_system(format!("Switched permission mode to {new_mode:?}."));
                                         }
                                         SlashOutcome::RequireFullAccessConfirm => {

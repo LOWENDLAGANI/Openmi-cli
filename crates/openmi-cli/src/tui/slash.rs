@@ -57,6 +57,14 @@ pub const SLASH_PALETTE: &[SlashSuggestion] = &[
         description: "Undo the last file edit",
     },
     SlashSuggestion {
+        command: "/plan",
+        description: "Toggle read-only planning mode (/plan on|off)",
+    },
+    SlashSuggestion {
+        command: "/compact",
+        description: "Summarize chat to save context & tokens",
+    },
+    SlashSuggestion {
         command: "/mode",
         description: "Change permission mode (or Shift+Tab)",
     },
@@ -106,6 +114,8 @@ pub enum SlashCommand {
     Model(Option<String>),
     Resume,
     Init,
+    Plan(Option<String>),
+    Compact(Option<String>),
     Mode(Option<String>),
     Undo(Option<String>),
     Diff,
@@ -131,6 +141,8 @@ pub enum SlashOutcome {
     SetModel(String),
     OpenResumePicker,
     InitProjectGuide,
+    TogglePlan(Option<bool>),
+    Compact(Option<String>),
     SetMode(PermissionMode),
     RequireFullAccessConfirm,
     ClearHistory,
@@ -162,6 +174,8 @@ pub fn parse_slash(input: &str) -> Option<SlashCommand> {
         "/model" => SlashCommand::Model(arg),
         "/resume" => SlashCommand::Resume,
         "/init" => SlashCommand::Init,
+        "/plan" => SlashCommand::Plan(arg),
+        "/compact" => SlashCommand::Compact(arg),
         "/mode" => SlashCommand::Mode(arg),
         "/undo" => SlashCommand::Undo(arg),
         "/diff" => SlashCommand::Diff,
@@ -193,6 +207,15 @@ pub fn execute_slash(
         SlashCommand::Model(Some(model)) => SlashOutcome::SetModel(model),
         SlashCommand::Resume => SlashOutcome::OpenResumePicker,
         SlashCommand::Init => SlashOutcome::InitProjectGuide,
+        SlashCommand::Plan(arg) => match arg.as_deref().map(str::to_ascii_lowercase).as_deref() {
+            None | Some("toggle") => SlashOutcome::TogglePlan(None),
+            Some("on") | Some("enter") | Some("start") => SlashOutcome::TogglePlan(Some(true)),
+            Some("off") | Some("exit") | Some("stop") => SlashOutcome::TogglePlan(Some(false)),
+            Some(other) => SlashOutcome::Error(format!(
+                "Unknown `/plan` argument `{other}`. Use `/plan`, `/plan on`, or `/plan off`."
+            )),
+        },
+        SlashCommand::Compact(focus) => SlashOutcome::Compact(focus),
         SlashCommand::Mode(None) => {
             SlashOutcome::Message(format!("Current permission mode: {current_mode:?}"))
         }

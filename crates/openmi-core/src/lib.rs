@@ -18,4 +18,4 @@ pub use mcp::{
 };
 pub use permissions::{ApprovalDecision, ApprovalHandler, ApprovalRequest, PermissionMode};
 pub use registry::{format_mcp_tool_name, DynamicTool, DynamicToolSpec, ToolRegistry};
-pub use session::{AgentSession, BeforeWriteHook, CoreError, Message, Role};
+pub use session::{AgentSession, BeforeWriteHook, CompactReport, CoreError, Message, Role};

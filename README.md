@@ -98,8 +98,8 @@ another Supabase project.
 
 | Mode | Behavior |
 | --- | --- |
-| `read-only` | Only `read_file` and `list_dir`; writes and commands are blocked |
-| `ask` | Asks before `write_file`, `run_command` and MCP tools |
+| `read-only` | Only `read_file`, `list_dir`, `grep`, and `glob`; writes and commands are blocked |
+| `ask` | Asks before `edit_file`, `write_file`, `run_command` and MCP tools |
 | `trusted` | **Default.** Auto-approves workspace tools within PathGuard; MCP tools still ask unless allowlisted |
 | `full-access` | No prompts; in the TUI requires typing `I UNDERSTAND FULL ACCESS` |
 
@@ -107,11 +107,11 @@ The default comes from `settings.json` (managed by `/settings`): `auto_approve: 
 
 ## Interactive TUI Features
 
-- **Layout**: a header line (`✦ Openmi · <model> · <folder>`, a mode badge when not `trusted`, and credits / active pass on the right), the chat transcript with inline tool activity lines, a multiline prompt box, and a footer with key hints. There is no separate tool pane.
+- **Layout**: a header line (`✦ Openmi · <model> · <folder>`, a mode/PLAN badge when active, and credits / active pass on the right), the chat transcript with inline tool activity lines, a multiline prompt box, and a footer with key hints. There is no separate tool pane.
 - **Input**: `Enter` sends, `Shift+Enter` / `Alt+Enter` inserts a newline, `↑`/`↓` browse prompt history, `Tab` completes `/` commands or `@path` mentions.
 - **Scrolling**: `PageUp`/`PageDown` (5 lines) or `Ctrl`/`Alt` + `↑`/`↓` (3 lines). Mouse capture is disabled so the Termux soft keyboard works.
 - **Mode cycling**: `Shift+Tab` cycles `ask → trusted → read-only → ask` (`full-access` only via `/mode full-access`).
-- **Approval popup**: shows the tool, a summary and, for file writes, a diff preview. Choose `[y]` allow once, `[a]` always allow this tool for the session, `[n]` cancel — or move with `↑`/`↓` (`j`/`k`) and press `Enter`.
+- **Approval popup**: shows the tool, a summary and, for file writes/edits (`write_file` / `edit_file`), a diff preview. Choose `[y]` allow once, `[a]` always allow this tool for the session, `[n]` cancel — or move with `↑`/`↓` (`j`/`k`) and press `Enter`.
 - **Esc / Ctrl-C**: closes any open popup first (a pending approval is denied). While the agent is working, the first press stops the turn and a second press quits. When idle, press twice to quit.
 - **Slash Commands** (type `/` to see a live palette):
   - `/settings` — toggle auto-approve, read-only, and inline tool activity (saved to `settings.json`)
@@ -119,11 +119,14 @@ The default comes from `settings.json` (managed by `/settings`): `auto_approve: 
   - `/model [id]` — open the model picker or switch directly
   - `/resume` — pick a previous chat to continue
   - `/new` (alias `/clear`) — start a fresh chat
-  - `/init` — create a starter `OPENMI.md` tailored to the detected stack
+  - `/init` — create a starter `OPENMI.md` guide tailored to the detected stack
+  - `/plan [on|off]` — toggle read-only Plan Mode (explores & proposes a step-by-step plan before editing)
+  - `/compact [focus]` — summarize conversation history to free context & save daily tokens
   - `/mode [read-only|ask|trusted|full-access]` — show or change permission mode
   - `/diff` — colored unified diff of the latest checkpointed run
   - `/undo [file|run_id]` — restore exact pre-write bytes (including UTF-8 BOM and CRLF)
   - `/credits` — refresh plan, daily + wallet credits, and pass status
+  - `/upgrade` — open the `/pay` page in your browser
   - `/mcp [status|restart [server]]` — inspect or restart configured stdio MCP servers
   - `/help [steps|commands|modes|keys|mcp|cli]` — full guide or one topic
   - `/version` — show version and platform

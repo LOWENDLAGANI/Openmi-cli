@@ -65,10 +65,27 @@ pub struct Message {
 /// Callback invoked right before any workspace file write (used for checkpoints).
 pub type BeforeWriteHook = Arc<dyn Fn(&Path) -> Result<(), String> + Send + Sync>;
 
+const PLAN_MODE_SYSTEM_PROMPT: &str = "\
+PLAN MODE ACTIVE (read-only): Explore the codebase using read_file, list_dir, grep, and glob. \
+Do NOT attempt to edit files or run commands. Produce a clear, concrete step-by-step implementation \
+plan listing exact file paths and changes, then ask the user to approve or run `/plan off` to begin implementing.";
+
+/// Result of compacting conversation history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactReport {
+    pub messages_before: usize,
+    pub messages_after: usize,
+    pub chars_before: usize,
+    pub chars_after: usize,
+    pub summary: String,
+}
+
 /// UI-agnostic agent session state and turn runner.
 pub struct AgentSession {
     model: String,
     permission_mode: PermissionMode,
+    plan_mode: bool,
+    pre_plan_mode: Option<PermissionMode>,
     path_guard: PathGuard,
     history: Vec<Message>,
     system_prompt: Option<String>,
@@ -86,6 +103,8 @@ impl AgentSession {
         Ok(Self {
             model: model.into(),
             permission_mode: PermissionMode::Ask,
+            plan_mode: false,
+            pre_plan_mode: None,
             path_guard,
             history: Vec::new(),
             system_prompt: None,
@@ -119,7 +138,31 @@ impl AgentSession {
     }
 
     pub fn set_permission_mode(&mut self, mode: PermissionMode) {
+        if self.plan_mode && mode != PermissionMode::ReadOnly {
+            self.plan_mode = false;
+            self.pre_plan_mode = None;
+        }
         self.permission_mode = mode;
+    }
+
+    pub fn plan_mode(&self) -> bool {
+        self.plan_mode
+    }
+
+    /// Enable or disable Plan Mode. Entering Plan Mode saves the current permission mode
+    /// and switches to `ReadOnly`; leaving restores the saved mode.
+    pub fn set_plan_mode(&mut self, enabled: bool) -> PermissionMode {
+        if enabled && !self.plan_mode {
+            self.pre_plan_mode = Some(self.permission_mode);
+            self.permission_mode = PermissionMode::ReadOnly;
+            self.plan_mode = true;
+        } else if !enabled && self.plan_mode {
+            self.plan_mode = false;
+            if let Some(prev) = self.pre_plan_mode.take() {
+                self.permission_mode = prev;
+            }
+        }
+        self.permission_mode
     }
 
     pub fn set_approval_handler(&mut self, handler: Arc<dyn ApprovalHandler>) {
@@ -159,6 +202,93 @@ impl AgentSession {
         self.history = messages;
     }
 
+    pub fn estimated_context_chars(&self) -> usize {
+        self.history.iter().map(|m| m.content.len()).sum()
+    }
+
+    /// Compact conversation history into a concise handoff summary to free context space.
+    pub async fn compact_history(
+        &mut self,
+        focus: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<CompactReport, CoreError> {
+        let messages_before = self.history.len();
+        let chars_before = self.estimated_context_chars();
+        if messages_before <= 2 {
+            return Ok(CompactReport {
+                messages_before,
+                messages_after: messages_before,
+                chars_before,
+                chars_after: chars_before,
+                summary: "Conversation is already short; nothing to compact.".to_string(),
+            });
+        }
+
+        let summary = if let Some(proxy) = self.proxy_config.clone() {
+            let mut transcript = String::new();
+            for m in &self.history {
+                let tag = match m.role {
+                    Role::System => "SYSTEM",
+                    Role::User => "USER",
+                    Role::Assistant => "ASSISTANT",
+                    Role::Tool => "TOOL",
+                };
+                let snippet: String = m.content.chars().take(1500).collect();
+                transcript.push_str(&format!("[{tag}]\n{snippet}\n\n"));
+            }
+            let focus_clause = focus
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|f| format!("\nPrioritize preserving details about: {f}\n"))
+                .unwrap_or_default();
+
+            let req_messages = vec![
+                Message {
+                    role: Role::System,
+                    content: "You are a concise technical summarizer. Do not call any tools. Produce a structured handoff summary in markdown with: Goal, Key Files & Edits, Decisions, and Next Steps.".to_string(),
+                },
+                Message {
+                    role: Role::User,
+                    content: format!(
+                        "Summarize this coding session so we can continue seamlessly with minimal tokens.{focus_clause}\n---\n{transcript}"
+                    ),
+                },
+            ];
+            let (sink_tx, _sink_rx) = mpsc::channel(64);
+            let step = stream_step(&proxy, &self.model, &req_messages, &sink_tx, cancel).await?;
+            let text = step.text.trim().to_string();
+            if text.is_empty() {
+                build_local_compact_digest(&self.history, focus)
+            } else {
+                text
+            }
+        } else {
+            build_local_compact_digest(&self.history, focus)
+        };
+
+        self.history = vec![
+            Message {
+                role: Role::User,
+                content: format!("[Compacted conversation context]\n\n{summary}"),
+            },
+            Message {
+                role: Role::Assistant,
+                content: "Understood. I have the compacted context and am ready to continue."
+                    .to_string(),
+            },
+        ];
+
+        let messages_after = self.history.len();
+        let chars_after = self.estimated_context_chars();
+        Ok(CompactReport {
+            messages_before,
+            messages_after,
+            chars_before,
+            chars_after,
+            summary,
+        })
+    }
+
     pub fn workspace_root(&self) -> &Path {
         self.path_guard.root()
     }
@@ -181,11 +311,17 @@ impl AgentSession {
     }
 
     fn build_request_messages(&self) -> Vec<Message> {
-        let mut msgs = Vec::with_capacity(self.history.len() + 1);
+        let mut msgs = Vec::with_capacity(self.history.len() + 2);
         if let Some(sys) = &self.system_prompt {
             msgs.push(Message {
                 role: Role::System,
                 content: sys.clone(),
+            });
+        }
+        if self.plan_mode {
+            msgs.push(Message {
+                role: Role::System,
+                content: PLAN_MODE_SYSTEM_PROMPT.to_string(),
             });
         }
         msgs.extend(self.history.iter().cloned());
@@ -444,6 +580,38 @@ impl AgentSession {
             .await;
         Err(CoreError::LoopCapExceeded(self.max_steps))
     }
+}
+
+fn build_local_compact_digest(history: &[Message], focus: Option<&str>) -> String {
+    let mut lines = Vec::new();
+    if let Some(f) = focus.map(str::trim).filter(|s| !s.is_empty()) {
+        lines.push(format!("Focus: {f}"));
+    }
+    lines.push(format!(
+        "Condensed {} previous messages:",
+        history.len()
+    ));
+    for msg in history {
+        if matches!(msg.role, Role::User | Role::Assistant) {
+            let role = match msg.role {
+                Role::User => "User",
+                Role::Assistant => "Assistant",
+                _ => continue,
+            };
+            let snippet: String = msg
+                .content
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(180)
+                .collect();
+            if !snippet.is_empty() {
+                lines.push(format!("- {role}: {snippet}"));
+            }
+        }
+    }
+    lines.join("\n")
 }
 
 #[cfg(test)]

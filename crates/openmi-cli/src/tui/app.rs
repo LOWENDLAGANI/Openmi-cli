@@ -287,6 +287,7 @@ impl SettingsModalState {
 pub struct TuiApp {
     pub model: String,
     pub mode: PermissionMode,
+    pub plan_mode: bool,
     pub settings: UserSettings,
     pub credits: Option<i64>,
     pub credit_status: Option<CreditStatus>,
@@ -323,6 +324,7 @@ impl TuiApp {
         Self {
             model,
             mode,
+            plan_mode: false,
             settings: UserSettings::default(),
             credits: None,
             credit_status: None,
@@ -408,10 +410,11 @@ impl TuiApp {
         }
     }
 
-    /// Compute a concise unified diff preview for a pending `write_file` approval popup.
+    /// Compute a concise unified diff preview for a pending `write_file` or `edit_file` approval popup.
     pub fn approval_preview_diff(&self) -> Option<String> {
         let pending = self.pending_approval.as_ref()?;
-        if pending.request.tool_name != "write_file" {
+        let tool = pending.request.tool_name.as_str();
+        if tool != "write_file" && tool != "edit_file" {
             return None;
         }
         let raw_args = self
@@ -422,11 +425,26 @@ impl TuiApp {
             .and_then(|t| t.raw_args.as_deref())?;
         let val = serde_json::from_str::<serde_json::Value>(raw_args).ok()?;
         let rel_path = val.get("path").and_then(|v| v.as_str())?;
-        let new_content = val.get("content").and_then(|v| v.as_str())?;
 
         let full_path = self.cwd.join(rel_path);
         let old_content = fs::read_to_string(&full_path).unwrap_or_default();
-        let diff = TextDiff::from_lines(old_content.as_str(), new_content);
+        let new_content = if tool == "write_file" {
+            val.get("content").and_then(|v| v.as_str())?.to_string()
+        } else {
+            let old_str = val.get("old_string").and_then(|v| v.as_str())?;
+            let new_str = val.get("new_string").and_then(|v| v.as_str())?;
+            let replace_all = val
+                .get("replace_all")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if replace_all {
+                old_content.replace(old_str, new_str)
+            } else {
+                old_content.replacen(old_str, new_str, 1)
+            }
+        };
+
+        let diff = TextDiff::from_lines(old_content.as_str(), new_content.as_str());
         let mut out = String::new();
         let mut shown = 0usize;
         for change in diff.iter_all_changes() {
@@ -878,7 +896,9 @@ pub fn friendly_tool_progress(tool_name: &str) -> String {
     match tool_name {
         "read_file" => "Reading a file...".to_string(),
         "list_dir" => "Looking at your files...".to_string(),
-        "write_file" => "Editing a file...".to_string(),
+        "grep" => "Searching code...".to_string(),
+        "glob" => "Finding files...".to_string(),
+        "edit_file" | "write_file" => "Editing a file...".to_string(),
         "run_command" => "Running a command...".to_string(),
         other => format!("Using {other}..."),
     }
@@ -889,22 +909,26 @@ pub fn friendly_tool_title(tool_name: &str) -> String {
     match tool_name {
         "read_file" => "Read a file".to_string(),
         "list_dir" => "View a folder".to_string(),
-        "write_file" => "Edit a file".to_string(),
+        "grep" => "Search code".to_string(),
+        "glob" => "Find files".to_string(),
+        "edit_file" => "Edit a file".to_string(),
+        "write_file" => "Write a file".to_string(),
         "run_command" => "Run a command".to_string(),
         other => format!("Use `{other}`"),
     }
 }
 
-/// Extract a concise target (file path or command) from raw tool JSON arguments.
+/// Extract a concise target (file path, pattern, or command) from raw tool JSON arguments.
 pub fn extract_tool_target(tool_name: &str, arguments_json: &str) -> String {
     let Ok(val) = serde_json::from_str::<serde_json::Value>(arguments_json) else {
         return String::new();
     };
     let raw = match tool_name {
-        "read_file" | "write_file" | "list_dir" => val
+        "read_file" | "edit_file" | "write_file" | "list_dir" => val
             .get("path")
             .or_else(|| val.get("file_path"))
             .and_then(|v| v.as_str()),
+        "grep" | "glob" => val.get("pattern").and_then(|v| v.as_str()),
         "run_command" => val
             .get("command")
             .or_else(|| val.get("cmd"))
@@ -928,7 +952,9 @@ pub fn format_inline_tool_summary(tool_name: &str, target: &str, ok: bool) -> St
     let verb = match tool_name {
         "read_file" => "Read",
         "list_dir" => "Listed",
-        "write_file" => "Edited",
+        "grep" => "Searched",
+        "glob" => "Found",
+        "edit_file" | "write_file" => "Edited",
         "run_command" => "Ran",
         other => other,
     };
@@ -936,7 +962,9 @@ pub fn format_inline_tool_summary(tool_name: &str, target: &str, ok: bool) -> St
         match tool_name {
             "read_file" => "Read file".to_string(),
             "list_dir" => "Listed folder".to_string(),
-            "write_file" => "Edited file".to_string(),
+            "grep" => "Searched workspace".to_string(),
+            "glob" => "Found files".to_string(),
+            "edit_file" | "write_file" => "Edited file".to_string(),
             "run_command" => "Ran command".to_string(),
             other => format!("Used {other}"),
         }

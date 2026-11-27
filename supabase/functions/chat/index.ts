@@ -30,11 +30,14 @@ const BUILTIN_TOOLS = [
     type: "function",
     function: {
       name: "read_file",
-      description: "Read a UTF-8 text file inside the user's workspace.",
+      description:
+        "Read a UTF-8 text file inside the user's workspace. Pass optional 1-indexed `offset` and `limit` to read specific line slices of large files.",
       parameters: {
         type: "object",
         properties: {
           path: { type: "string", description: "Relative path inside the workspace." },
+          offset: { type: "integer", description: "Optional 1-indexed starting line number." },
+          limit: { type: "integer", description: "Optional maximum number of lines to return." },
         },
         required: ["path"],
       },
@@ -56,8 +59,68 @@ const BUILTIN_TOOLS = [
   {
     type: "function",
     function: {
+      name: "grep",
+      description:
+        "Search file contents across the workspace (.gitignore-aware). Prefer this over run_command for finding symbols or strings.",
+      parameters: {
+        type: "object",
+        properties: {
+          pattern: { type: "string", description: "Text pattern to search for." },
+          path: { type: "string", description: "Optional relative subdirectory or file (defaults to '.')." },
+          include: { type: "string", description: "Optional filename/glob filter such as '*.rs' or '*.ts'." },
+          case_sensitive: { type: "boolean", description: "Whether match is case-sensitive (default true)." },
+          max_results: { type: "integer", description: "Maximum matching lines to return (default 60, max 200)." },
+        },
+        required: ["pattern"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "glob",
+      description:
+        "Find files in the workspace matching a glob pattern (e.g. '**/*.rs', 'src/*.ts'). Respects .gitignore.",
+      parameters: {
+        type: "object",
+        properties: {
+          pattern: { type: "string", description: "Glob pattern to match file paths." },
+          path: { type: "string", description: "Optional relative subdirectory (defaults to '.')." },
+          max_results: { type: "integer", description: "Maximum file paths to return (default 100, max 300)." },
+        },
+        required: ["pattern"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "edit_file",
+      description:
+        "Make a targeted exact search-and-replace edit in an existing workspace file. Prefer this over write_file when modifying existing files.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Relative path inside the workspace." },
+          old_string: {
+            type: "string",
+            description: "Exact existing text to replace (must match uniquely unless replace_all is true).",
+          },
+          new_string: { type: "string", description: "Replacement text." },
+          replace_all: {
+            type: "boolean",
+            description: "Replace all occurrences instead of requiring a unique match (default false).",
+          },
+        },
+        required: ["path", "old_string", "new_string"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "write_file",
-      description: "Create or overwrite a file inside the user's workspace.",
+      description: "Create a new file or completely overwrite a file inside the user's workspace.",
       parameters: {
         type: "object",
         properties: {

@@ -163,20 +163,27 @@ fn render_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         ));
     }
 
-    // Only show permission mode if the user changed it away from the default Trusted mode.
-    match app.mode {
-        PermissionMode::Trusted => {}
-        PermissionMode::Ask => {
-            left_spans.push(Span::styled("  Ask", Style::default().fg(WARNING)));
-        }
-        PermissionMode::ReadOnly => {
-            left_spans.push(Span::styled("  Read-only", Style::default().fg(MUTED)));
-        }
-        PermissionMode::FullAccess => {
-            left_spans.push(Span::styled(
-                "  Full access",
-                Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
-            ));
+    // Show PLAN badge when Plan Mode is active, or permission mode when changed from default Trusted.
+    if app.plan_mode {
+        left_spans.push(Span::styled(
+            "  PLAN",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ));
+    } else {
+        match app.mode {
+            PermissionMode::Trusted => {}
+            PermissionMode::Ask => {
+                left_spans.push(Span::styled("  Ask", Style::default().fg(WARNING)));
+            }
+            PermissionMode::ReadOnly => {
+                left_spans.push(Span::styled("  Read-only", Style::default().fg(MUTED)));
+            }
+            PermissionMode::FullAccess => {
+                left_spans.push(Span::styled(
+                    "  Full access",
+                    Style::default().fg(DANGER).add_modifier(Modifier::BOLD),
+                ));
+            }
         }
     }
 
