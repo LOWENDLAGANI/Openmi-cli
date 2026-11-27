@@ -1,4 +1,5 @@
 import { readBody, requireAdminAuth, sendJson, supabaseFetch } from "./_supabase.js";
+import { clearUserCooldown } from "./_upstash.js";
 
 function isCurrentlyBanned(user) {
   if (!user?.banned_until) return false;
@@ -116,7 +117,13 @@ export default async function handler(req, res) {
           method: "PUT",
           body: JSON.stringify({ ban_duration: banned ? "876000h" : "none" }),
         });
+        if (!banned) await clearUserCooldown(userId);
         return sendJson(res, 200, { ok: true, user_id: userId, banned });
+      }
+
+      if (body.action === "clear_cooldown") {
+        await clearUserCooldown(userId);
+        return sendJson(res, 200, { ok: true, user_id: userId, cleared: true });
       }
 
       if (body.action === "grant_wallet") {

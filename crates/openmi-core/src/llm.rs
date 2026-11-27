@@ -133,29 +133,82 @@ pub async fn stream_step(
         payload["tools"] = serde_json::Value::Array(tools_json);
     }
 
-    let send_fut = client
-        .post(&config.endpoint)
-        .bearer_auth(&config.bearer_token)
-        .header("Accept", "text/event-stream")
-        .json(&payload)
-        .send();
+    const MAX_RATE_LIMIT_RETRIES: u8 = 3;
+    let mut attempt: u8 = 0;
 
-    let resp = tokio::select! {
-        _ = cancel.cancelled() => return Err(CoreError::Cancelled),
-        res = send_fut => res.map_err(|e| CoreError::Llm(e.to_string()))?,
+    let resp = loop {
+        let send_fut = client
+            .post(&config.endpoint)
+            .bearer_auth(&config.bearer_token)
+            .header("Accept", "text/event-stream")
+            .json(&payload)
+            .send();
+
+        let resp = tokio::select! {
+            _ = cancel.cancelled() => return Err(CoreError::Cancelled),
+            res = send_fut => res.map_err(|e| CoreError::Llm(e.to_string()))?,
+        };
+
+        let status = resp.status().as_u16();
+        if status == 401 || status == 403 {
+            return Err(CoreError::Unauthorized);
+        }
+        if status == 402 {
+            return Err(CoreError::OutOfCredits);
+        }
+        if status == 429 {
+            let retry_after_hdr = resp
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.trim().parse::<u64>().ok());
+            let body = resp.text().await.unwrap_or_default();
+            let parsed_json = serde_json::from_str::<serde_json::Value>(&body).ok();
+            let err_code = parsed_json
+                .as_ref()
+                .and_then(|v| v.get("error").and_then(|e| e.as_str()))
+                .unwrap_or("rate_limited");
+            let err_msg = parsed_json
+                .as_ref()
+                .and_then(|v| v.get("message").and_then(|m| m.as_str()))
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("HTTP 429: {body}"));
+            let retry_after_body = parsed_json
+                .as_ref()
+                .and_then(|v| v.get("retry_after").and_then(|r| r.as_u64()));
+
+            let is_transient = matches!(
+                err_code,
+                "rate_limited_burst"
+                    | "rate_limited_rpm"
+                    | "rate_limited_tpm"
+                    | "concurrency_limit"
+                    | "rate_limited_ip"
+                    | "global_rate_limited"
+            );
+
+            if is_transient && attempt < MAX_RATE_LIMIT_RETRIES {
+                attempt += 1;
+                let wait_secs = retry_after_hdr.or(retry_after_body).unwrap_or(3).clamp(1, 15);
+                tokio::select! {
+                    _ = cancel.cancelled() => return Err(CoreError::Cancelled),
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(wait_secs)) => {}
+                }
+                continue;
+            }
+            return Err(CoreError::Llm(err_msg));
+        }
+        if !(200..300).contains(&status) {
+            let body = resp.text().await.unwrap_or_default();
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) {
+                if let Some(msg) = parsed.get("message").and_then(|m| m.as_str()) {
+                    return Err(CoreError::Llm(format!("HTTP {status}: {msg}")));
+                }
+            }
+            return Err(CoreError::Llm(format!("HTTP {status}: {body}")));
+        }
+        break resp;
     };
-
-    let status = resp.status().as_u16();
-    if status == 401 || status == 403 {
-        return Err(CoreError::Unauthorized);
-    }
-    if status == 402 {
-        return Err(CoreError::OutOfCredits);
-    }
-    if !(200..300).contains(&status) {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(CoreError::Llm(format!("HTTP {status}: {body}")));
-    }
 
     let mut stream = resp.bytes_stream();
     let mut buffer = String::new();

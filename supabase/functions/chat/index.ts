@@ -20,8 +20,18 @@
 //     a brand-new pass, refund_hour_session returns exact daily & wallet portions and ends the hour.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  checkAndAcquireChatLimits,
+  getClientIp,
+  releaseChatSlotAndRecordTokens,
+} from "../_shared/upstash.ts";
 
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
+const MAX_HARD_BODY_BYTES = 8 * 1024 * 1024; // 8 MB hard ceiling before JSON parse
+const MAX_FREE_BODY_BYTES = 4 * 1024 * 1024; // 4 MB free tier body cap
+const MAX_PAID_BODY_BYTES = 8 * 1024 * 1024; // 8 MB paid tier body cap
+const MAX_EXTRA_TOOLS_BYTES = 32 * 1024; // 32 KB cap on client-registered MCP tool schemas
+const UPSTREAM_TIMEOUT_MS = 120_000;
 const DEFAULT_MODEL = "openai/gpt-4o-mini";
 const DEFAULT_PAYMENT_LINK = "https://sociabuzz.com/minetallestmc/tribe";
 
@@ -339,18 +349,50 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Expose-Headers":
-    "X-Openmi-Plan, X-Openmi-Credits-Remaining, X-Openmi-Wallet-Credit, X-Openmi-Active-Model, X-Openmi-Pass-Expires-At, X-Openmi-Daily-Tokens-Used, X-Openmi-Daily-Token-Limit, X-Openmi-Max-Steps",
+    "X-Openmi-Plan, X-Openmi-Credits-Remaining, X-Openmi-Wallet-Credit, X-Openmi-Active-Model, X-Openmi-Pass-Expires-At, X-Openmi-Daily-Tokens-Used, X-Openmi-Daily-Token-Limit, X-Openmi-Max-Steps, Retry-After, X-RateLimit-Limit-RPM, X-RateLimit-Remaining-RPM, X-RateLimit-Reset",
 };
 
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(body: unknown, status = 200, extraHeaders?: Record<string, string>): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       "Content-Type": "application/json",
       "Cache-Control": "no-store",
       ...CORS_HEADERS,
+      ...(extraHeaders ?? {}),
     },
   });
+}
+
+async function readBodyWithLimit(req: Request, maxBytes: number): Promise<{ text: string; bytes: number } | null> {
+  const clHeader = req.headers.get("content-length");
+  if (clHeader) {
+    const declared = Number(clHeader);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      return null;
+    }
+  }
+  if (!req.body) return { text: "", bytes: 0 };
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    merged.set(c, offset);
+    offset += c.byteLength;
+  }
+  return { text: new TextDecoder().decode(merged), bytes: total };
 }
 
 function sseLine(payload: unknown): Uint8Array {
@@ -377,7 +419,16 @@ interface CatalogModel {
   api_key?: string;
 }
 
-function normalizeContent(raw: unknown): MessageContent {
+interface NormalizedMessagesResult {
+  messages: Array<{ role: string; content: MessageContent }>;
+  imageCount: number;
+  maxSingleImageChars: number;
+}
+
+function normalizeContent(
+  raw: unknown,
+  stats: { imageCount: number; maxSingleImageChars: number },
+): MessageContent {
   if (typeof raw === "string") return raw;
   if (!Array.isArray(raw)) return "";
   const parts: MessageContentPart[] = [];
@@ -393,7 +444,10 @@ function normalizeContent(raw: unknown): MessageContent {
       typeof (p.image_url as Record<string, unknown>).url === "string"
     ) {
       const url = (p.image_url as { url: string }).url;
-      if (url.startsWith("data:image/") || url.startsWith("https://")) {
+      // Only allow inline base64 data:image/ URLs (blocks arbitrary remote URL fetching / SSRF via upstream).
+      if (url.startsWith("data:image/")) {
+        stats.imageCount += 1;
+        if (url.length > stats.maxSingleImageChars) stats.maxSingleImageChars = url.length;
         parts.push({ type: "image_url", image_url: { url } });
       }
     }
@@ -401,14 +455,15 @@ function normalizeContent(raw: unknown): MessageContent {
   return parts.length > 0 ? parts : "";
 }
 
-function normalizeMessages(raw: unknown): Array<{ role: string; content: MessageContent }> {
-  if (!Array.isArray(raw)) return [];
+function normalizeMessages(raw: unknown): NormalizedMessagesResult {
+  const stats = { imageCount: 0, maxSingleImageChars: 0 };
+  if (!Array.isArray(raw)) return { messages: [], ...stats };
   const out: Array<{ role: string; content: MessageContent }> = [];
   for (const item of raw) {
     if (!item || typeof item !== "object") continue;
     const msg = item as Partial<IncomingMessage>;
     const role = typeof msg.role === "string" ? msg.role.toLowerCase() : "user";
-    const content = normalizeContent(msg.content);
+    const content = normalizeContent(msg.content, stats);
     if (role === "tool") {
       const text = typeof content === "string" ? content : JSON.stringify(content);
       out.push({ role: "user", content: `[Tool Result]\n${text}` });
@@ -418,7 +473,7 @@ function normalizeMessages(raw: unknown): Array<{ role: string; content: Message
       out.push({ role: "user", content });
     }
   }
-  return out;
+  return { messages: out, ...stats };
 }
 
 interface PendingToolCall {
@@ -470,7 +525,15 @@ Deno.serve(async (req: Request) => {
   if (userErr || !userData?.user) {
     return jsonResponse({ error: "unauthorized", message: "Invalid or expired token" }, 401);
   }
+  const bannedUntil = (userData.user as { banned_until?: string | null }).banned_until;
+  if (bannedUntil && Date.parse(bannedUntil) > Date.now()) {
+    return jsonResponse(
+      { error: "account_banned", message: "This account has been suspended by an administrator." },
+      403,
+    );
+  }
   const userId = userData.user.id;
+  const clientIp = getClientIp(req);
 
   // 2. Load live admin settings from public.app_settings (falling back to env secrets)
   let aiEnabled = true;
@@ -482,11 +545,29 @@ Deno.serve(async (req: Request) => {
   let dbPaymentLink = DEFAULT_PAYMENT_LINK;
   let dbModels: CatalogModel[] = [];
 
+  // Generous defaults tuned so normal Free-tier "implement feature" agentic loops
+  // run smoothly without frustrating users, while stopping scraping and exploits.
+  let freeRpm = 30;
+  let paidRpm = 60;
+  let freeBurst10s = 10;
+  let paidBurst10s = 20;
+  let freeTpm = 400_000;
+  let paidTpm = 1_000_000;
+  let freeMaxConcurrency = 3;
+  let paidMaxConcurrency = 6;
+  let freeMaxInputTokens = 100_000;
+  let paidMaxInputTokens = 180_000;
+  let freeMaxOutputTokens = 8_192;
+  let paidMaxOutputTokens = 16_384;
+  let ipChatRpm = 90;
+  let globalChatRpm = 600;
+  let globalDailyTokenLimit = 150_000_000;
+
   try {
     const { data: cfg } = await admin
       .from("app_settings")
       .select(
-        "ai_enabled, llm_base_url, llm_api_key, llm_default_model, credit_cost, pass_duration_minutes, payment_link, models",
+        "ai_enabled, llm_base_url, llm_api_key, llm_default_model, credit_cost, pass_duration_minutes, payment_link, models, free_rpm, paid_rpm, free_burst_10s, paid_burst_10s, free_tpm, paid_tpm, free_max_concurrency, paid_max_concurrency, free_max_input_tokens, paid_max_input_tokens, free_max_output_tokens, paid_max_output_tokens, ip_chat_rpm, global_chat_rpm, global_daily_token_limit",
       )
       .eq("id", 1)
       .maybeSingle();
@@ -505,9 +586,46 @@ Deno.serve(async (req: Request) => {
       if (Array.isArray(cfg.models)) {
         dbModels = cfg.models as CatalogModel[];
       }
+      if (typeof cfg.free_rpm === "number" && cfg.free_rpm >= 0) freeRpm = Math.floor(cfg.free_rpm);
+      if (typeof cfg.paid_rpm === "number" && cfg.paid_rpm >= 0) paidRpm = Math.floor(cfg.paid_rpm);
+      if (typeof cfg.free_burst_10s === "number" && cfg.free_burst_10s >= 0) {
+        freeBurst10s = Math.floor(cfg.free_burst_10s);
+      }
+      if (typeof cfg.paid_burst_10s === "number" && cfg.paid_burst_10s >= 0) {
+        paidBurst10s = Math.floor(cfg.paid_burst_10s);
+      }
+      if (typeof cfg.free_tpm === "number" && cfg.free_tpm >= 0) freeTpm = Math.floor(cfg.free_tpm);
+      if (typeof cfg.paid_tpm === "number" && cfg.paid_tpm >= 0) paidTpm = Math.floor(cfg.paid_tpm);
+      if (typeof cfg.free_max_concurrency === "number" && cfg.free_max_concurrency >= 1) {
+        freeMaxConcurrency = Math.floor(cfg.free_max_concurrency);
+      }
+      if (typeof cfg.paid_max_concurrency === "number" && cfg.paid_max_concurrency >= 1) {
+        paidMaxConcurrency = Math.floor(cfg.paid_max_concurrency);
+      }
+      if (typeof cfg.free_max_input_tokens === "number" && cfg.free_max_input_tokens >= 0) {
+        freeMaxInputTokens = Math.floor(cfg.free_max_input_tokens);
+      }
+      if (typeof cfg.paid_max_input_tokens === "number" && cfg.paid_max_input_tokens >= 0) {
+        paidMaxInputTokens = Math.floor(cfg.paid_max_input_tokens);
+      }
+      if (typeof cfg.free_max_output_tokens === "number" && cfg.free_max_output_tokens >= 256) {
+        freeMaxOutputTokens = Math.floor(cfg.free_max_output_tokens);
+      }
+      if (typeof cfg.paid_max_output_tokens === "number" && cfg.paid_max_output_tokens >= 256) {
+        paidMaxOutputTokens = Math.floor(cfg.paid_max_output_tokens);
+      }
+      if (typeof cfg.ip_chat_rpm === "number" && cfg.ip_chat_rpm >= 0) {
+        ipChatRpm = Math.floor(cfg.ip_chat_rpm);
+      }
+      if (typeof cfg.global_chat_rpm === "number" && cfg.global_chat_rpm >= 0) {
+        globalChatRpm = Math.floor(cfg.global_chat_rpm);
+      }
+      if (typeof cfg.global_daily_token_limit === "number" && cfg.global_daily_token_limit >= 0) {
+        globalDailyTokenLimit = Math.floor(cfg.global_daily_token_limit);
+      }
     }
   } catch (_) {
-    // Fall back to env secrets if app_settings is not migrated yet.
+    // Fall back to env secrets & defaults if app_settings is not migrated yet.
   }
 
   if (!aiEnabled) {
@@ -549,12 +667,30 @@ Deno.serve(async (req: Request) => {
   }
   const upgradeLink = (derivedPayUrl || dbPaymentLink || DEFAULT_PAYMENT_LINK).trim();
 
-  // 3. Parse request body
-  const body = await req.json().catch(() => null);
-  if (!body || typeof body !== "object") {
+  // 3. Parse request body with hard size ceiling to prevent isolate OOM
+  const rawBody = await readBodyWithLimit(req, MAX_HARD_BODY_BYTES);
+  if (rawBody === null) {
+    return jsonResponse(
+      {
+        error: "payload_too_large",
+        message: `Request body exceeds maximum size (${Math.round(MAX_HARD_BODY_BYTES / (1024 * 1024))} MB). Run /compact or reduce attachments.`,
+      },
+      413,
+    );
+  }
+  const bodyBytes = rawBody.bytes;
+  let body: Record<string, unknown> | null = null;
+  try {
+    const parsed = JSON.parse(rawBody.text);
+    if (parsed && typeof parsed === "object") body = parsed as Record<string, unknown>;
+  } catch (_) {
+    body = null;
+  }
+  if (!body) {
     return jsonResponse({ error: "invalid_request", message: "Expected JSON body" }, 400);
   }
-  const messages = normalizeMessages((body as Record<string, unknown>).messages);
+  const normalized = normalizeMessages(body.messages);
+  const messages = normalized.messages;
   if (messages.length === 0) {
     return jsonResponse({ error: "invalid_request", message: "messages array is required" }, 400);
   }
@@ -717,6 +853,17 @@ Deno.serve(async (req: Request) => {
           },
         }))
     : [];
+  const extraToolsJson = JSON.stringify(extraTools);
+  if (extraToolsJson.length > MAX_EXTRA_TOOLS_BYTES) {
+    await refundIfNewlyPurchased();
+    return jsonResponse(
+      {
+        error: "payload_too_large",
+        message: "Registered MCP tool schemas exceed the 32 KB limit.",
+      },
+      413,
+    );
+  }
   const allowedSet = Array.isArray(body?.allowed_tools)
     ? new Set(
         body.allowed_tools.filter((t: unknown): t is string => typeof t === "string"),
@@ -732,7 +879,7 @@ Deno.serve(async (req: Request) => {
     ? messages
     : [{ role: "system", content: OPENMI_SYSTEM_PROMPT }, ...messages];
 
-  // Estimate input characters for fallback token counting when upstream omits `usage`.
+  // Estimate input characters & tokens for pre-flight checks and fallback token counting.
   const inputChars =
     upstreamMessages.reduce((sum, m) => {
       const contentLen =
@@ -744,6 +891,105 @@ Deno.serve(async (req: Request) => {
             );
       return sum + m.role.length + contentLen + 12;
     }, 0) + JSON.stringify(allTools).length;
+  const estimatedInputTokens = Math.max(1, Math.ceil(inputChars / 4));
+
+  // 4b. Tier-based payload, image, input-token, and Upstash Redis rate-limit enforcement
+  const isPaid = Boolean(passMeta.is_paid);
+  const maxBodyBytes = isPaid ? MAX_PAID_BODY_BYTES : MAX_FREE_BODY_BYTES;
+  const maxImages = isPaid ? 12 : 6;
+  // Base64 overhead is ~4/3 of raw bytes.
+  const maxSingleImageChars = isPaid ? 5_600_000 : 2_800_000;
+  const maxInputTokens = isPaid ? paidMaxInputTokens : freeMaxInputTokens;
+  const maxOutputTokens = isPaid ? paidMaxOutputTokens : freeMaxOutputTokens;
+
+  if (bodyBytes > maxBodyBytes) {
+    await refundIfNewlyPurchased();
+    return jsonResponse(
+      {
+        error: "payload_too_large",
+        message: `Request body exceeds your plan limit (${Math.round(maxBodyBytes / (1024 * 1024))} MB). Run /compact or remove large attachments.`,
+      },
+      413,
+    );
+  }
+  if (normalized.imageCount > maxImages || normalized.maxSingleImageChars > maxSingleImageChars) {
+    await refundIfNewlyPurchased();
+    return jsonResponse(
+      {
+        error: "payload_too_large",
+        message: `Too many or oversized images (max ${maxImages} images, ${isPaid ? "4 MB" : "2 MB"} each on your plan).`,
+      },
+      413,
+    );
+  }
+  if (maxInputTokens > 0 && estimatedInputTokens > maxInputTokens) {
+    await refundIfNewlyPurchased();
+    return jsonResponse(
+      {
+        error: "input_too_large",
+        message: `Prompt is too large (~${estimatedInputTokens.toLocaleString("en-US")} tokens; limit is ${maxInputTokens.toLocaleString("en-US")}). Run /compact to trim history.`,
+      },
+      413,
+    );
+  }
+
+  const streamId = crypto.randomUUID();
+  const dailyTokensUsed = Number(passMeta.daily_tokens_used ?? 0);
+  const dailyTokenLimit = Number(passMeta.daily_token_limit ?? 0);
+
+  const rl = await checkAndAcquireChatLimits({
+    userId,
+    clientIp,
+    streamId,
+    rpmLimit: isPaid ? paidRpm : freeRpm,
+    burst10sLimit: isPaid ? paidBurst10s : freeBurst10s,
+    tpmLimit: isPaid ? paidTpm : freeTpm,
+    maxConcurrency: isPaid ? paidMaxConcurrency : freeMaxConcurrency,
+    ipRpmLimit: ipChatRpm,
+    globalRpmLimit: globalChatRpm,
+    globalDailyTokenLimit,
+    estimatedInputTokens,
+    dailyTokensUsed,
+    dailyTokenLimit,
+  });
+
+  if (!rl.allowed) {
+    await refundIfNewlyPurchased();
+    const rateHeaders: Record<string, string> = {
+      "Retry-After": String(Math.max(1, rl.retryAfterSecs)),
+      "X-RateLimit-Limit-RPM": String(isPaid ? paidRpm : freeRpm),
+      "X-RateLimit-Remaining-RPM": String(rl.remaining),
+      "X-RateLimit-Reset": String(rl.resetSecs),
+    };
+    const reasonMessages: Record<string, string> = {
+      account_cooldown: `Temporarily paused due to repeated rate-limit violations. Try again in ${rl.retryAfterSecs}s.`,
+      concurrency_limit: `Too many concurrent requests active (max ${isPaid ? paidMaxConcurrency : freeMaxConcurrency} on your plan). Retrying in ${rl.retryAfterSecs}s.`,
+      daily_token_limit_exceeded: `Daily token limit reached (${dailyTokensUsed.toLocaleString("en-US")} / ${dailyTokenLimit.toLocaleString("en-US")} tokens). Resets at 00:00 UTC.`,
+      rate_limited_burst: `Sending requests too quickly. Please wait ${rl.retryAfterSecs}s.`,
+      rate_limited_rpm: `Rate limit reached (${isPaid ? paidRpm : freeRpm} requests/min). Retrying in ${rl.retryAfterSecs}s.`,
+      rate_limited_tpm: `Token throughput limit reached (${(isPaid ? paidTpm : freeTpm).toLocaleString("en-US")} tokens/min). Please wait ${rl.retryAfterSecs}s.`,
+      rate_limited_ip: `Too many requests from this network. Please wait ${rl.retryAfterSecs}s.`,
+      global_rate_limited: `Service is experiencing high traffic. Please retry in ${rl.retryAfterSecs}s.`,
+      global_daily_limit: `Service daily capacity reached. Please try again later.`,
+    };
+    return jsonResponse(
+      {
+        error: rl.reason,
+        message: reasonMessages[rl.reason] ?? `Rate limited. Please retry in ${rl.retryAfterSecs}s.`,
+        retry_after: rl.retryAfterSecs,
+        upgrade_url: upgradeLink,
+      },
+      429,
+      rateHeaders,
+    );
+  }
+
+  let slotReleased = false;
+  const releaseSlot = async (actualTokens: number) => {
+    if (slotReleased) return;
+    slotReleased = true;
+    await releaseChatSlotAndRecordTokens(userId, rl.leaseMember, actualTokens);
+  };
 
   // 5. Call upstream OpenAI-compatible chat completions API with streaming + usage reporting
   const fetchUpstream = (includeStreamOptions: boolean) =>
@@ -757,11 +1003,13 @@ Deno.serve(async (req: Request) => {
       body: JSON.stringify({
         model: upstreamModel,
         stream: true,
+        max_tokens: maxOutputTokens,
         ...(includeStreamOptions ? { stream_options: { include_usage: true } } : {}),
         messages: upstreamMessages,
         tools: allTools,
         tool_choice: "auto",
       }),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
 
   let upstreamResp: Response;
@@ -774,7 +1022,7 @@ Deno.serve(async (req: Request) => {
       }
     }
   } catch (err) {
-    await refundIfNewlyPurchased();
+    await Promise.all([refundIfNewlyPurchased(), releaseSlot(0)]);
     return jsonResponse(
       { error: "upstream_unreachable", message: err instanceof Error ? err.message : String(err) },
       502,
@@ -782,7 +1030,7 @@ Deno.serve(async (req: Request) => {
   }
 
   if (!upstreamResp.ok || !upstreamResp.body) {
-    await refundIfNewlyPurchased();
+    await Promise.all([refundIfNewlyPurchased(), releaseSlot(0)]);
     const errText = await upstreamResp.text().catch(() => "");
     return jsonResponse(
       {
@@ -809,14 +1057,13 @@ Deno.serve(async (req: Request) => {
       reportedTokens > 0
         ? reportedTokens
         : Math.max(1, Math.ceil((inputChars + outputChars) / 4));
-    try {
-      await admin.rpc("record_token_usage", {
+    await Promise.allSettled([
+      admin.rpc("record_token_usage", {
         p_user_id: userId,
         p_tokens: tokensToRecord,
-      });
-    } catch (_) {
-      // Best-effort recording; never break an already-streaming response.
-    }
+      }),
+      releaseSlot(tokensToRecord),
+    ]);
   };
 
   const stream = new ReadableStream<Uint8Array>({
@@ -991,6 +1238,9 @@ Deno.serve(async (req: Request) => {
   if (typeof passMeta.max_steps === "number") {
     extraHeaders["X-Openmi-Max-Steps"] = String(passMeta.max_steps);
   }
+  extraHeaders["X-RateLimit-Limit-RPM"] = String(isPaid ? paidRpm : freeRpm);
+  extraHeaders["X-RateLimit-Remaining-RPM"] = String(rl.remaining);
+  extraHeaders["X-RateLimit-Reset"] = String(rl.resetSecs);
 
   return new Response(stream, {
     status: 200,

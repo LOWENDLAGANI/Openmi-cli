@@ -6,6 +6,7 @@
 // `OPENMI_MODELS_JSON` secret or the built-in default catalog.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkSimpleRateLimit, getClientIp } from "../_shared/upstash.ts";
 
 interface ModelInfo {
   id: string;
@@ -24,7 +25,7 @@ const DEFAULT_MODELS: ModelInfo[] = [
   { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet", context_window: 200000, credit_cost: 3, paid_only: true },
 ];
 
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(body: unknown, status = 200, extraHeaders?: Record<string, string>): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
@@ -33,6 +34,7 @@ function jsonResponse(body: unknown, status = 200): Response {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
       "Access-Control-Allow-Methods": "GET, OPTIONS",
+      ...(extraHeaders ?? {}),
     },
   });
 }
@@ -91,6 +93,18 @@ Deno.serve(async (req: Request) => {
   }
   if (req.method !== "GET") {
     return jsonResponse({ error: "method_not_allowed" }, 405);
+  }
+
+  const clientIp = getClientIp(req);
+  if (clientIp !== "unknown") {
+    const rl = await checkSimpleRateLimit("models", clientIp, 60, 60);
+    if (!rl.allowed) {
+      return jsonResponse(
+        { error: "rate_limited", message: "Too many model catalog requests. Please wait a moment." },
+        429,
+        { "Retry-After": String(rl.resetSecs) },
+      );
+    }
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";

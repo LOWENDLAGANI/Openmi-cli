@@ -114,6 +114,21 @@ function renderSettings(s) {
   $("paid-max-steps").value = s.paid_max_steps ?? 70;
   $("pass-duration-minutes").value = s.pass_duration_minutes ?? 60;
   $("credit-cost").value = s.credit_cost ?? 3;
+  $("free-rpm").value = s.free_rpm ?? 30;
+  $("paid-rpm").value = s.paid_rpm ?? 60;
+  $("free-burst-10s").value = s.free_burst_10s ?? 10;
+  $("paid-burst-10s").value = s.paid_burst_10s ?? 20;
+  $("free-tpm").value = s.free_tpm ?? 400000;
+  $("paid-tpm").value = s.paid_tpm ?? 1000000;
+  $("free-max-concurrency").value = s.free_max_concurrency ?? 3;
+  $("paid-max-concurrency").value = s.paid_max_concurrency ?? 6;
+  $("free-max-input-tokens").value = s.free_max_input_tokens ?? 100000;
+  $("paid-max-input-tokens").value = s.paid_max_input_tokens ?? 180000;
+  $("free-max-output-tokens").value = s.free_max_output_tokens ?? 8192;
+  $("paid-max-output-tokens").value = s.paid_max_output_tokens ?? 16384;
+  $("ip-chat-rpm").value = s.ip_chat_rpm ?? 90;
+  $("global-chat-rpm").value = s.global_chat_rpm ?? 600;
+  $("global-daily-token-limit").value = s.global_daily_token_limit ?? 150000000;
   $("payment-link").value = s.payment_link || "https://sociabuzz.com/minetallestmc/tribe";
   $("topup-paused").checked = Boolean(s.topup_paused);
   $("llm-api-key").value = "";
@@ -564,6 +579,21 @@ $("save-provider-btn").addEventListener("click", async () => {
       paid_max_steps: Number($("paid-max-steps").value),
       pass_duration_minutes: Number($("pass-duration-minutes").value),
       credit_cost: Number($("credit-cost").value),
+      free_rpm: Number($("free-rpm").value),
+      paid_rpm: Number($("paid-rpm").value),
+      free_burst_10s: Number($("free-burst-10s").value),
+      paid_burst_10s: Number($("paid-burst-10s").value),
+      free_tpm: Number($("free-tpm").value),
+      paid_tpm: Number($("paid-tpm").value),
+      free_max_concurrency: Number($("free-max-concurrency").value),
+      paid_max_concurrency: Number($("paid-max-concurrency").value),
+      free_max_input_tokens: Number($("free-max-input-tokens").value),
+      paid_max_input_tokens: Number($("paid-max-input-tokens").value),
+      free_max_output_tokens: Number($("free-max-output-tokens").value),
+      paid_max_output_tokens: Number($("paid-max-output-tokens").value),
+      ip_chat_rpm: Number($("ip-chat-rpm").value),
+      global_chat_rpm: Number($("global-chat-rpm").value),
+      global_daily_token_limit: Number($("global-daily-token-limit").value),
       payment_link: $("payment-link").value.trim(),
       topup_paused: $("topup-paused").checked,
     };

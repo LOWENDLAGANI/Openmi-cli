@@ -6,6 +6,7 @@
 //   GET  /verify   -> Web approval page for interactive browser sign-in & code approval
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkSimpleRateLimit, getClientIp, isUpstashConfigured } from "../_shared/upstash.ts";
 
 const DEVICE_CODE_TTL_SECONDS = 600; // 10 minutes
 const POLL_INTERVAL_SECONDS = 5;
@@ -183,12 +184,12 @@ Deno.serve(async (req: Request) => {
 
   // POST /start
   if (req.method === "POST" && path.endsWith("/start")) {
-    // Rate-limit device code creation: per-IP sliding window + global recent-pending cap.
-    const clientIp =
-      (req.headers.get("cf-connecting-ip") ??
-        req.headers.get("x-forwarded-for")?.split(",")[0] ??
-        "unknown").trim();
-    if (!allowStartFromIp(clientIp)) {
+    // Rate-limit device code creation: distributed Upstash per-IP sliding window (with in-memory fallback) + global recent-pending cap.
+    const clientIp = getClientIp(req);
+    const startAllowed = isUpstashConfigured()
+      ? (await checkSimpleRateLimit("cli_start", clientIp, MAX_STARTS_PER_IP_PER_MINUTE, 60)).allowed
+      : allowStartFromIp(clientIp);
+    if (!startAllowed) {
       return jsonResponse(
         { error: "rate_limited", message: "Too many login requests. Please wait a minute and try again." },
         429,
@@ -246,6 +247,14 @@ Deno.serve(async (req: Request) => {
     const { data: userData, error: userErr } = await admin.auth.getUser(bearer);
     if (userErr || !userData?.user) {
       return jsonResponse({ error: "unauthorized", message: "Invalid or expired user token" }, 401);
+    }
+
+    const approveRl = await checkSimpleRateLimit("cli_approve", userData.user.id, 15, 60);
+    if (!approveRl.allowed) {
+      return jsonResponse(
+        { error: "rate_limited", message: "Too many approval attempts. Please wait a minute and try again." },
+        429,
+      );
     }
 
     const body = await req.json().catch(() => ({}));

@@ -83,6 +83,22 @@ function formatSettings(row, supabaseUrl) {
     free_max_steps: typeof row?.free_max_steps === "number" ? row.free_max_steps : 40,
     paid_max_steps: typeof row?.paid_max_steps === "number" ? row.paid_max_steps : 70,
     pass_duration_minutes: typeof row?.pass_duration_minutes === "number" ? row.pass_duration_minutes : 60,
+    free_rpm: typeof row?.free_rpm === "number" ? row.free_rpm : 30,
+    paid_rpm: typeof row?.paid_rpm === "number" ? row.paid_rpm : 60,
+    free_burst_10s: typeof row?.free_burst_10s === "number" ? row.free_burst_10s : 10,
+    paid_burst_10s: typeof row?.paid_burst_10s === "number" ? row.paid_burst_10s : 20,
+    free_tpm: typeof row?.free_tpm === "number" ? row.free_tpm : 400000,
+    paid_tpm: typeof row?.paid_tpm === "number" ? row.paid_tpm : 1000000,
+    free_max_concurrency: typeof row?.free_max_concurrency === "number" ? row.free_max_concurrency : 3,
+    paid_max_concurrency: typeof row?.paid_max_concurrency === "number" ? row.paid_max_concurrency : 6,
+    free_max_input_tokens: typeof row?.free_max_input_tokens === "number" ? row.free_max_input_tokens : 100000,
+    paid_max_input_tokens: typeof row?.paid_max_input_tokens === "number" ? row.paid_max_input_tokens : 180000,
+    free_max_output_tokens: typeof row?.free_max_output_tokens === "number" ? row.free_max_output_tokens : 8192,
+    paid_max_output_tokens: typeof row?.paid_max_output_tokens === "number" ? row.paid_max_output_tokens : 16384,
+    ip_chat_rpm: typeof row?.ip_chat_rpm === "number" ? row.ip_chat_rpm : 90,
+    global_chat_rpm: typeof row?.global_chat_rpm === "number" ? row.global_chat_rpm : 600,
+    global_daily_token_limit:
+      typeof row?.global_daily_token_limit === "number" ? row.global_daily_token_limit : 150000000,
     payment_link: row?.payment_link || DEFAULT_PAYMENT_LINK,
     topup_paused: Boolean(row?.topup_paused),
     models: normalizeModels(row?.models, row?.models).map(publicModel),
@@ -218,6 +234,46 @@ export default async function handler(req, res) {
           return sendJson(res, 400, { error: "pass_duration_minutes must be >= 1" });
         }
         patch.pass_duration_minutes = Math.floor(v);
+      }
+      const nonNegIntFields = [
+        "free_rpm",
+        "paid_rpm",
+        "free_burst_10s",
+        "paid_burst_10s",
+        "free_tpm",
+        "paid_tpm",
+        "free_max_input_tokens",
+        "paid_max_input_tokens",
+        "ip_chat_rpm",
+        "global_chat_rpm",
+        "global_daily_token_limit",
+      ];
+      for (const field of nonNegIntFields) {
+        if (body[field] !== undefined) {
+          const v = Number(body[field]);
+          if (!Number.isFinite(v) || v < 0) {
+            return sendJson(res, 400, { error: `${field} must be >= 0` });
+          }
+          patch[field] = Math.floor(v);
+        }
+      }
+      for (const field of ["free_max_concurrency", "paid_max_concurrency"]) {
+        if (body[field] !== undefined) {
+          const v = Number(body[field]);
+          if (!Number.isFinite(v) || v < 1) {
+            return sendJson(res, 400, { error: `${field} must be >= 1` });
+          }
+          patch[field] = Math.floor(v);
+        }
+      }
+      for (const field of ["free_max_output_tokens", "paid_max_output_tokens"]) {
+        if (body[field] !== undefined) {
+          const v = Number(body[field]);
+          if (!Number.isFinite(v) || v < 256) {
+            return sendJson(res, 400, { error: `${field} must be >= 256` });
+          }
+          patch[field] = Math.floor(v);
+        }
       }
       if (Array.isArray(body.models)) {
         const current = await fetchRow();

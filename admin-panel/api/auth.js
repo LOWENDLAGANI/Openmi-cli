@@ -7,6 +7,12 @@ import {
   sendJson,
   verifyPassphrase,
 } from "./_supabase.js";
+import {
+  checkAdminLoginLockout,
+  clearAdminLoginFailures,
+  getRequestIp,
+  recordAdminLoginFailure,
+} from "./_upstash.js";
 
 const FAIL_DELAY_MS = 350;
 
@@ -40,12 +46,23 @@ export default async function handler(req, res) {
         });
       }
 
+      const clientIp = getRequestIp(req);
+      const lockout = await checkAdminLoginLockout(clientIp);
+      if (lockout.locked) {
+        res.setHeader("Retry-After", String(lockout.retryAfterSecs));
+        return sendJson(res, 429, {
+          error: `Too many failed attempts. Locked for ${Math.ceil(lockout.retryAfterSecs / 60)} min.`,
+        });
+      }
+
       const candidate = String(body.passphrase || "").trim();
       if (!verifyPassphrase(candidate, passphrase)) {
+        await recordAdminLoginFailure(clientIp);
         await new Promise((resolve) => setTimeout(resolve, FAIL_DELAY_MS));
         return sendJson(res, 401, { error: "Invalid passphrase." });
       }
 
+      await clearAdminLoginFailures(clientIp);
       res.setHeader("Set-Cookie", buildSessionCookie(passphrase, req));
       return sendJson(res, 200, { ok: true, authenticated: true });
     }

@@ -7,10 +7,11 @@
 // daily balance, wallet credit, paid_until window, active hourly pass, and checkout link.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkSimpleRateLimit } from "../_shared/upstash.ts";
 
 const DEFAULT_PAYMENT_LINK = "https://sociabuzz.com/minetallestmc/tribe";
 
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(body: unknown, status = 200, extraHeaders?: Record<string, string>): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
@@ -19,6 +20,7 @@ function jsonResponse(body: unknown, status = 200): Response {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
       "Access-Control-Allow-Methods": "GET, OPTIONS",
+      ...(extraHeaders ?? {}),
     },
   });
 }
@@ -69,6 +71,14 @@ Deno.serve(async (req: Request) => {
   }
 
   const userId = userData.user.id;
+  const rl = await checkSimpleRateLimit("credits", userId, 60, 60);
+  if (!rl.allowed) {
+    return jsonResponse(
+      { error: "rate_limited", message: "Too many credit status requests. Please wait a moment." },
+      429,
+      { "Retry-After": String(rl.resetSecs) },
+    );
+  }
   const envPayUrl = derivePayUrl();
 
   // Preferred path: atomic UTC daily-reset + active pass sync RPC, plus live service status.

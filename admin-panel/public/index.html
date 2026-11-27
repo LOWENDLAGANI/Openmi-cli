@@ -195,6 +195,96 @@
           <span class="field-help">Used if a model has no custom cost set.</span>
         </div>
 
+        <div class="field">
+          <label for="free-rpm">Free RPM (requests/min)</label>
+          <input id="free-rpm" type="number" min="0" step="1" class="input mono" />
+          <span class="field-help">Default: <code>30</code> RPM (0 = unlimited).</span>
+        </div>
+
+        <div class="field">
+          <label for="paid-rpm">Paid RPM (requests/min)</label>
+          <input id="paid-rpm" type="number" min="0" step="1" class="input mono" />
+          <span class="field-help">Default: <code>60</code> RPM (0 = unlimited).</span>
+        </div>
+
+        <div class="field">
+          <label for="free-burst-10s">Free Burst (requests / 10s)</label>
+          <input id="free-burst-10s" type="number" min="0" step="1" class="input mono" />
+          <span class="field-help">Default: <code>10</code> req/10s (allows fast tool loops).</span>
+        </div>
+
+        <div class="field">
+          <label for="paid-burst-10s">Paid Burst (requests / 10s)</label>
+          <input id="paid-burst-10s" type="number" min="0" step="1" class="input mono" />
+          <span class="field-help">Default: <code>20</code> req/10s.</span>
+        </div>
+
+        <div class="field">
+          <label for="free-tpm">Free TPM (tokens/min)</label>
+          <input id="free-tpm" type="number" min="0" step="50000" class="input mono" />
+          <span class="field-help">Default: <code>400000</code> tok/min (0 = unlimited).</span>
+        </div>
+
+        <div class="field">
+          <label for="paid-tpm">Paid TPM (tokens/min)</label>
+          <input id="paid-tpm" type="number" min="0" step="50000" class="input mono" />
+          <span class="field-help">Default: <code>1000000</code> tok/min (0 = unlimited).</span>
+        </div>
+
+        <div class="field">
+          <label for="free-max-concurrency">Free Max Concurrent Streams</label>
+          <input id="free-max-concurrency" type="number" min="1" step="1" class="input mono" />
+          <span class="field-help">Default: <code>3</code> parallel streams per user.</span>
+        </div>
+
+        <div class="field">
+          <label for="paid-max-concurrency">Paid Max Concurrent Streams</label>
+          <input id="paid-max-concurrency" type="number" min="1" step="1" class="input mono" />
+          <span class="field-help">Default: <code>6</code> parallel streams per user.</span>
+        </div>
+
+        <div class="field">
+          <label for="free-max-input-tokens">Free Max Input Tokens / Req</label>
+          <input id="free-max-input-tokens" type="number" min="0" step="10000" class="input mono" />
+          <span class="field-help">Default: <code>100000</code> est. input tokens (0 = unlimited).</span>
+        </div>
+
+        <div class="field">
+          <label for="paid-max-input-tokens">Paid Max Input Tokens / Req</label>
+          <input id="paid-max-input-tokens" type="number" min="0" step="10000" class="input mono" />
+          <span class="field-help">Default: <code>180000</code> est. input tokens (0 = unlimited).</span>
+        </div>
+
+        <div class="field">
+          <label for="free-max-output-tokens">Free Max Output Tokens / Req</label>
+          <input id="free-max-output-tokens" type="number" min="256" step="512" class="input mono" />
+          <span class="field-help">Default: <code>8192</code> completion tokens.</span>
+        </div>
+
+        <div class="field">
+          <label for="paid-max-output-tokens">Paid Max Output Tokens / Req</label>
+          <input id="paid-max-output-tokens" type="number" min="256" step="512" class="input mono" />
+          <span class="field-help">Default: <code>16384</code> completion tokens.</span>
+        </div>
+
+        <div class="field">
+          <label for="ip-chat-rpm">Per-IP Chat RPM</label>
+          <input id="ip-chat-rpm" type="number" min="0" step="5" class="input mono" />
+          <span class="field-help">Default: <code>90</code> RPM per IP (blocks multi-account farming).</span>
+        </div>
+
+        <div class="field">
+          <label for="global-chat-rpm">Global Chat RPM Circuit Breaker</label>
+          <input id="global-chat-rpm" type="number" min="0" step="50" class="input mono" />
+          <span class="field-help">Default: <code>600</code> RPM across all users (0 = unlimited).</span>
+        </div>
+
+        <div class="field field-span-2">
+          <label for="global-daily-token-limit">Global Daily Token Circuit Breaker</label>
+          <input id="global-daily-token-limit" type="number" min="0" step="10000000" class="input mono" />
+          <span class="field-help">Default: <code>150000000</code> tokens/day across all users (0 = unlimited). Requires Upstash Redis secrets.</span>
+        </div>
+
         <div class="field field-span-2">
           <label for="payment-link">Sociabuzz Checkout URL</label>
           <input id="payment-link" type="url" class="input mono" placeholder="https://sociabuzz.com/minetallestmc/tribe" autocomplete="off" />
