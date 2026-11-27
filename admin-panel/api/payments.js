@@ -1,4 +1,4 @@
-import { getSupabaseConfig, readBody, sendJson, supabaseFetch } from "./_supabase.js";
+import { getSupabaseConfig, readBody, requireAdminAuth, sendJson, supabaseFetch } from "./_supabase.js";
 
 async function signReceiptUrl(supabaseUrl, receiptPath, expiresIn = 600) {
   if (!receiptPath) return null;
@@ -22,6 +22,7 @@ async function signReceiptUrl(supabaseUrl, receiptPath, expiresIn = 600) {
 
 export default async function handler(req, res) {
   try {
+    if (!requireAdminAuth(req, res)) return;
     const { url: supabaseUrl } = getSupabaseConfig();
 
     if (req.method === "GET") {

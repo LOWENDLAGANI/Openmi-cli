@@ -1,7 +1,7 @@
+use ignore::WalkBuilder;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
-use ignore::WalkBuilder;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
@@ -288,8 +288,7 @@ fn exec_delete_file(
     if let Some(hook) = before_write_hook {
         hook(&resolved).map_err(CoreError::BeforeWriteHook)?;
     }
-    fs::remove_file(&resolved)
-        .map_err(|e| CoreError::Tool(format!("delete_file failed: {e}")))?;
+    fs::remove_file(&resolved).map_err(|e| CoreError::Tool(format!("delete_file failed: {e}")))?;
     Ok(format!("deleted {path}"))
 }
 
@@ -335,7 +334,9 @@ fn exec_move_file(
     if let Err(rename_err) = fs::rename(&src, &dst) {
         // Fallback across mount boundaries: copy + remove.
         fs::copy(&src, &dst).map_err(|e| {
-            CoreError::Tool(format!("move_file failed (rename: {rename_err}; copy: {e})"))
+            CoreError::Tool(format!(
+                "move_file failed (rename: {rename_err}; copy: {e})"
+            ))
         })?;
         fs::remove_file(&src)
             .map_err(|e| CoreError::Tool(format!("move_file cleanup failed: {e}")))?;
@@ -742,7 +743,11 @@ mod tests {
     async fn edit_file_replaces_unique_and_invokes_checkpoint_hook() {
         let tmp = tempfile::tempdir().unwrap();
         let file_path = tmp.path().join("demo.rs");
-        fs::write(&file_path, "fn main() {\n    let x = 1;\n    println!(\"{x}\");\n}\n").unwrap();
+        fs::write(
+            &file_path,
+            "fn main() {\n    let x = 1;\n    println!(\"{x}\");\n}\n",
+        )
+        .unwrap();
 
         let guard = PathGuard::new(tmp.path()).unwrap();
         let hook_hits = Arc::new(AtomicUsize::new(0));
@@ -769,7 +774,9 @@ mod tests {
         .unwrap();
         assert!(res.contains("replaced 1 occurrence"));
         assert_eq!(hook_hits.load(Ordering::SeqCst), 1);
-        assert!(fs::read_to_string(&file_path).unwrap().contains("let x = 42;"));
+        assert!(fs::read_to_string(&file_path)
+            .unwrap()
+            .contains("let x = 42;"));
     }
 
     #[tokio::test]
@@ -891,9 +898,15 @@ mod tests {
             "timeout_ms": 150
         })
         .to_string();
-        let out = execute_tool("run_command", &args, &guard, None, &CancellationToken::new())
-            .await
-            .unwrap();
+        let out = execute_tool(
+            "run_command",
+            &args,
+            &guard,
+            None,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
         assert!(out.contains("exit=timeout"));
         assert!(out.contains("150ms"));
     }

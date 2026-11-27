@@ -1,7 +1,7 @@
 use std::env;
 use std::path::PathBuf;
 
-use openmi_core::{load_merged_mcp_config, McpManager, ToolRegistry};
+use openmi_core::{load_merged_mcp_config_with_trust, McpManager, ToolRegistry};
 
 use crate::exit_codes::CliError;
 
@@ -11,7 +11,9 @@ pub async fn list(cwd: Option<PathBuf>, json: bool) -> Result<(), CliError> {
         None => env::current_dir().map_err(anyhow::Error::from)?,
     };
 
-    let cfg = load_merged_mcp_config(None, &workdir).map_err(anyhow::Error::from)?;
+    let trusted = crate::trust::ensure_workspace_trust(&workdir, !json);
+    let cfg =
+        load_merged_mcp_config_with_trust(None, &workdir, trusted).map_err(anyhow::Error::from)?;
     if cfg.mcp_servers.is_empty() {
         if json {
             println!("[]");

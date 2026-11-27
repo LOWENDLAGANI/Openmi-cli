@@ -124,9 +124,7 @@ pub fn parse_skill_markdown(raw: &str, source: &Path) -> Option<SkillDef> {
                     let val = v.trim();
                     match key.as_str() {
                         "name" => {
-                            let cleaned = unquote(val)
-                                .trim_start_matches('/')
-                                .to_ascii_lowercase();
+                            let cleaned = unquote(val).trim_start_matches('/').to_ascii_lowercase();
                             if !cleaned.is_empty() {
                                 name = cleaned;
                             }
@@ -215,11 +213,7 @@ Inspect the diff and report any correctness or security issues.
         assert_eq!(skill.description, "Review recent git changes for bugs");
         assert_eq!(
             skill.allowed_tools,
-            Some(vec![
-                "read_file".into(),
-                "grep".into(),
-                "glob".into()
-            ])
+            Some(vec!["read_file".into(), "grep".into(), "glob".into()])
         );
         let expanded = skill.expand_prompt(Some("focus on auth"));
         assert!(expanded.contains("[Skill: /review]"));

@@ -11,6 +11,29 @@ const DEVICE_CODE_TTL_SECONDS = 600; // 10 minutes
 const POLL_INTERVAL_SECONDS = 5;
 const MIN_POLL_GAP_MS = 2500;
 const MAX_POLL_ATTEMPTS = 150;
+const START_RATE_WINDOW_MS = 60_000;
+const MAX_STARTS_PER_IP_PER_MINUTE = 10;
+
+const startRateBuckets = new Map<string, number[]>();
+
+function allowStartFromIp(ip: string): boolean {
+  const now = Date.now();
+  const cutoff = now - START_RATE_WINDOW_MS;
+  const recent = (startRateBuckets.get(ip) ?? []).filter((ts) => ts > cutoff);
+  if (recent.length >= MAX_STARTS_PER_IP_PER_MINUTE) {
+    startRateBuckets.set(ip, recent);
+    return false;
+  }
+  recent.push(now);
+  startRateBuckets.set(ip, recent);
+  // Prevent unbounded map growth across long-lived isolate instances.
+  if (startRateBuckets.size > 2000) {
+    for (const [k, list] of startRateBuckets) {
+      if (list.every((ts) => ts <= cutoff)) startRateBuckets.delete(k);
+    }
+  }
+  return true;
+}
 
 const USER_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -147,12 +170,45 @@ Deno.serve(async (req: Request) => {
     const approveUrl = `${url.origin}${path.replace(/\/verify$/, "/approve")}`;
     return new Response(renderVerifyHtml(prefill, approveUrl), {
       status: 200,
-      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Frame-Options": "DENY",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+      },
     });
   }
 
   // POST /start
   if (req.method === "POST" && path.endsWith("/start")) {
+    // Rate-limit device code creation: per-IP sliding window + global recent-pending cap.
+    const clientIp =
+      (req.headers.get("cf-connecting-ip") ??
+        req.headers.get("x-forwarded-for")?.split(",")[0] ??
+        "unknown").trim();
+    if (!allowStartFromIp(clientIp)) {
+      return jsonResponse(
+        { error: "rate_limited", message: "Too many login requests. Please wait a minute and try again." },
+        429,
+      );
+    }
+
+    const tenMinsAgo = new Date(Date.now() - DEVICE_CODE_TTL_SECONDS * 1000).toISOString();
+    const { count: pendingCount } = await admin
+      .from("device_codes")
+      .select("device_code_hash", { count: "exact", head: true })
+      .eq("status", "pending")
+      .gte("created_at", tenMinsAgo);
+
+    if ((pendingCount ?? 0) >= 500) {
+      return jsonResponse(
+        { error: "rate_limited", message: "Login service is temporarily busy. Please try again shortly." },
+        429,
+      );
+    }
+
     const deviceCode = randomHex(32);
     const deviceCodeHash = await sha256Hex(deviceCode);
     const userCode = generateUserCode();
@@ -232,7 +288,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const tokenExpiresAt = jwtExpiryIso(bearer, 3600);
-    const { error: updateErr } = await admin
+    const { data: approvedRow, error: updateErr } = await admin
       .from("device_codes")
       .update({
         status: "approved",
@@ -242,10 +298,16 @@ Deno.serve(async (req: Request) => {
         refresh_token: refreshToken,
         token_expires_at: tokenExpiresAt,
       })
-      .eq("device_code_hash", row.device_code_hash);
+      .eq("device_code_hash", row.device_code_hash)
+      .eq("status", "pending")
+      .select("device_code_hash")
+      .maybeSingle();
 
     if (updateErr) {
       return jsonResponse({ error: "update_failed", message: updateErr.message }, 500);
+    }
+    if (!approvedRow) {
+      return jsonResponse({ error: "already_used", message: "Device code already processed" }, 409);
     }
     return jsonResponse({ status: "approved" });
   }
@@ -305,8 +367,9 @@ Deno.serve(async (req: Request) => {
     }
 
     if (row.status === "approved") {
-      // Single-use: consume and wipe stored tokens immediately on delivery.
-      const { error: consumeErr } = await admin
+      // Single-use: atomically consume and wipe stored tokens immediately on delivery.
+      // Requiring a returned row prevents concurrent /poll requests from both receiving tokens.
+      const { data: consumedRow, error: consumeErr } = await admin
         .from("device_codes")
         .update({
           status: "consumed",
@@ -314,10 +377,15 @@ Deno.serve(async (req: Request) => {
           refresh_token: null,
         })
         .eq("device_code_hash", hash)
-        .eq("status", "approved");
+        .eq("status", "approved")
+        .select("device_code_hash")
+        .maybeSingle();
 
       if (consumeErr) {
         return jsonResponse({ error: "consume_failed" }, 500);
+      }
+      if (!consumedRow) {
+        return jsonResponse({ status: "expired", error: "already_consumed" }, 410);
       }
 
       return jsonResponse({

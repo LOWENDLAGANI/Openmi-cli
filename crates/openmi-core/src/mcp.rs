@@ -73,11 +73,12 @@ pub struct McpServerStatus {
     pub error: Option<String>,
 }
 
-/// Load and merge `~/.config/openmi/mcp.json` (global) and `<workspace>/.openmi/mcp.json` (project).
-/// Project definitions override global servers with the same name.
-pub fn load_merged_mcp_config(
+/// Load and merge `~/.config/openmi/mcp.json` (global) and optionally `<workspace>/.openmi/mcp.json` (project).
+/// Project definitions override global servers with the same name when `include_project` is `true`.
+pub fn load_merged_mcp_config_with_trust(
     global_path: Option<&Path>,
     workspace_root: &Path,
+    include_project: bool,
 ) -> Result<McpConfigFile, McpError> {
     let mut merged = McpConfigFile::default();
 
@@ -96,16 +97,27 @@ pub fn load_merged_mcp_config(
         }
     }
 
-    let project_path = workspace_root.join(".openmi").join("mcp.json");
-    if project_path.exists() {
-        let raw = fs::read(&project_path)?;
-        let parsed: McpConfigFile = serde_json::from_slice(&raw)?;
-        for (k, v) in parsed.mcp_servers {
-            merged.mcp_servers.insert(k, v);
+    if include_project {
+        let project_path = workspace_root.join(".openmi").join("mcp.json");
+        if project_path.exists() {
+            let raw = fs::read(&project_path)?;
+            let parsed: McpConfigFile = serde_json::from_slice(&raw)?;
+            for (k, v) in parsed.mcp_servers {
+                merged.mcp_servers.insert(k, v);
+            }
         }
     }
 
     Ok(merged)
+}
+
+/// Load and merge `~/.config/openmi/mcp.json` (global) and `<workspace>/.openmi/mcp.json` (project).
+/// Project definitions override global servers with the same name.
+pub fn load_merged_mcp_config(
+    global_path: Option<&Path>,
+    workspace_root: &Path,
+) -> Result<McpConfigFile, McpError> {
+    load_merged_mcp_config_with_trust(global_path, workspace_root, true)
 }
 
 struct StdioTransport {
@@ -201,6 +213,9 @@ impl McpStdioClient {
         params: serde_json::Value,
         cancel: &CancellationToken,
     ) -> Result<serde_json::Value, McpError> {
+        const MCP_REQUEST_TIMEOUT_SECS: u64 = 60;
+        const MCP_MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
+
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let req = serde_json::json!({
             "jsonrpc": "2.0",
@@ -215,6 +230,8 @@ impl McpStdioClient {
         guard.stdin.write_all(line.as_bytes()).await?;
         guard.stdin.flush().await?;
 
+        let deadline =
+            tokio::time::Instant::now() + std::time::Duration::from_secs(MCP_REQUEST_TIMEOUT_SECS);
         loop {
             let mut resp_line = String::new();
             let read_res = tokio::select! {
@@ -224,12 +241,24 @@ impl McpStdioClient {
                         message: "cancelled".into(),
                     });
                 }
+                _ = tokio::time::sleep_until(deadline) => {
+                    return Err(McpError::Protocol {
+                        server: self.server_name.clone(),
+                        message: format!("request `{method}` timed out after {MCP_REQUEST_TIMEOUT_SECS}s"),
+                    });
+                }
                 res = guard.stdout.read_line(&mut resp_line) => res?,
             };
             if read_res == 0 {
                 return Err(McpError::Protocol {
                     server: self.server_name.clone(),
                     message: "server closed stdout unexpectedly".into(),
+                });
+            }
+            if resp_line.len() > MCP_MAX_LINE_BYTES {
+                return Err(McpError::Protocol {
+                    server: self.server_name.clone(),
+                    message: "server response exceeded 4 MiB line limit".into(),
                 });
             }
             let trimmed = resp_line.trim();

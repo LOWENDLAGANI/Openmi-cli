@@ -163,7 +163,11 @@ pub fn build_session_with_options(
     session.set_approval_handler(approval_handler);
     session.set_proxy_config(proxy_config);
 
-    let merged_settings = crate::settings::UserSettings::load_merged(session.workspace_root());
+    let workspace_trusted = crate::trust::is_workspace_trusted(session.workspace_root());
+    let merged_settings = crate::settings::UserSettings::load_merged_with_trust(
+        session.workspace_root(),
+        workspace_trusted,
+    );
     session.set_permission_rules(merged_settings.permissions);
     session.set_hooks(merged_settings.hooks);
 

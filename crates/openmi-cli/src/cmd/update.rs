@@ -240,6 +240,17 @@ pub async fn run_update(
     Ok(true)
 }
 
+fn ensure_safe_download_url(url: &str) -> Result<()> {
+    let parsed = reqwest::Url::parse(url).context("invalid download URL")?;
+    match parsed.scheme() {
+        "https" => Ok(()),
+        "http" if matches!(parsed.host_str(), Some("127.0.0.1" | "localhost" | "::1")) => Ok(()),
+        _ => Err(anyhow!(
+            "refusing insecure non-HTTPS release download URL: {url}"
+        )),
+    }
+}
+
 async fn install_release(
     client: &reqwest::Client,
     release: &ReleaseInfo,
@@ -251,6 +262,8 @@ async fn install_release(
         .iter()
         .find(|a| a.name == asset_name)
         .ok_or_else(|| anyhow!("no release artifact found for target `{asset_name}`"))?;
+
+    ensure_safe_download_url(&asset.browser_download_url)?;
 
     let archive_bytes = client
         .get(&asset.browser_download_url)
@@ -266,6 +279,7 @@ async fn install_release(
         .iter()
         .find(|a| a.name == "SHA256SUMS.txt" || a.name == format!("{asset_name}.sha256"))
     {
+        ensure_safe_download_url(&sums_asset.browser_download_url)?;
         let sums_txt = client
             .get(&sums_asset.browser_download_url)
             .send()
@@ -273,17 +287,19 @@ async fn install_release(
             .error_for_status()?
             .text()
             .await?;
-        if let Some(expected) = find_expected_sha256(&sums_txt, asset_name) {
-            let actual = sha256_hex(&archive_bytes);
-            ensure!(
-                actual == expected,
-                "checksum mismatch for {asset_name}: expected {expected}, got {actual}"
-            );
-        }
+        let expected = find_expected_sha256(&sums_txt, asset_name)
+            .ok_or_else(|| anyhow!("checksum file did not contain an entry for {asset_name}"))?;
+        let actual = sha256_hex(&archive_bytes);
+        ensure!(
+            actual == expected,
+            "checksum mismatch for {asset_name}: expected {expected}, got {actual}"
+        );
     }
 
     let binary_bytes = if asset_name.ends_with(".tar.gz") {
         extract_binary_from_tar_gz(&archive_bytes)?
+    } else if asset_name.ends_with(".zip") {
+        extract_binary_from_zip(&archive_bytes)?
     } else {
         archive_bytes.to_vec()
     };
@@ -291,16 +307,23 @@ async fn install_release(
     replace_executable(target_binary, &binary_bytes)
 }
 
+const MAX_EXTRACTED_BINARY_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB zip/gzip bomb guard
+
 fn extract_binary_from_tar_gz(archive_bytes: &[u8]) -> Result<Vec<u8>> {
     let gz = GzDecoder::new(archive_bytes);
     let mut archive = tar::Archive::new(gz);
     for entry in archive.entries()? {
-        let mut entry = entry?;
+        let entry = entry?;
         let path = entry.path()?;
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if name == "openmi" || name == "openmi.exe" {
             let mut out = Vec::new();
-            entry.read_to_end(&mut out)?;
+            let mut limited = entry.take(MAX_EXTRACTED_BINARY_BYTES + 1);
+            limited.read_to_end(&mut out)?;
+            ensure!(
+                (out.len() as u64) <= MAX_EXTRACTED_BINARY_BYTES,
+                "extracted binary exceeded maximum allowed size"
+            );
             return Ok(out);
         }
     }
@@ -309,20 +332,140 @@ fn extract_binary_from_tar_gz(archive_bytes: &[u8]) -> Result<Vec<u8>> {
     ))
 }
 
+/// Extract `openmi.exe` / `openmi` from a standard PKZIP archive (Store or Deflate)
+/// using `flate2` without pulling in extra archive dependencies. Verifies CRC-32 and
+/// caps decompressed size to defend against zip bombs.
+fn extract_binary_from_zip(zip_bytes: &[u8]) -> Result<Vec<u8>> {
+    const EOCD_SIG: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
+    const CD_SIG: [u8; 4] = [0x50, 0x4b, 0x01, 0x02];
+    const LFH_SIG: [u8; 4] = [0x50, 0x4b, 0x03, 0x04];
+
+    ensure!(zip_bytes.len() >= 22, "invalid zip archive (too short)");
+
+    // Locate End of Central Directory (EOCD) scanning backwards within the max 64 KiB comment window.
+    let search_start = zip_bytes.len().saturating_sub(22 + 65_535);
+    let eocd_pos = (search_start..=zip_bytes.len() - 22)
+        .rev()
+        .find(|&i| zip_bytes[i..i + 4] == EOCD_SIG)
+        .ok_or_else(|| anyhow!("invalid zip archive (missing EOCD signature)"))?;
+
+    let read_u16 = |off: usize| -> Result<u16> {
+        let slice = zip_bytes
+            .get(off..off + 2)
+            .ok_or_else(|| anyhow!("truncated zip header"))?;
+        Ok(u16::from_le_bytes([slice[0], slice[1]]))
+    };
+    let read_u32 = |off: usize| -> Result<u32> {
+        let slice = zip_bytes
+            .get(off..off + 4)
+            .ok_or_else(|| anyhow!("truncated zip header"))?;
+        Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
+    };
+
+    let total_entries = read_u16(eocd_pos + 10)? as usize;
+    let cd_offset = read_u32(eocd_pos + 16)? as usize;
+
+    let mut pos = cd_offset;
+    for _ in 0..total_entries {
+        ensure!(
+            zip_bytes.get(pos..pos + 4) == Some(&CD_SIG),
+            "invalid zip central directory header"
+        );
+        let method = read_u16(pos + 10)?;
+        let expected_crc = read_u32(pos + 16)?;
+        let comp_size = read_u32(pos + 20)? as usize;
+        let uncomp_size = read_u32(pos + 24)? as u64;
+        let name_len = read_u16(pos + 28)? as usize;
+        let extra_len = read_u16(pos + 30)? as usize;
+        let comment_len = read_u16(pos + 32)? as usize;
+        let lfh_offset = read_u32(pos + 42)? as usize;
+
+        let name_bytes = zip_bytes
+            .get(pos + 46..pos + 46 + name_len)
+            .ok_or_else(|| anyhow!("truncated zip entry filename"))?;
+        let entry_name = std::str::from_utf8(name_bytes).unwrap_or("");
+        let basename = entry_name.rsplit(['/', '\\']).next().unwrap_or("");
+
+        pos = pos
+            .checked_add(46 + name_len + extra_len + comment_len)
+            .ok_or_else(|| anyhow!("zip central directory overflow"))?;
+
+        if basename != "openmi.exe" && basename != "openmi" {
+            continue;
+        }
+
+        ensure!(
+            uncomp_size <= MAX_EXTRACTED_BINARY_BYTES,
+            "zip entry exceeds maximum allowed binary size"
+        );
+        ensure!(
+            zip_bytes.get(lfh_offset..lfh_offset + 4) == Some(&LFH_SIG),
+            "invalid zip local file header"
+        );
+        let lfh_name_len = read_u16(lfh_offset + 26)? as usize;
+        let lfh_extra_len = read_u16(lfh_offset + 28)? as usize;
+        let data_start = lfh_offset
+            .checked_add(30 + lfh_name_len + lfh_extra_len)
+            .ok_or_else(|| anyhow!("zip local header overflow"))?;
+        let data_end = data_start
+            .checked_add(comp_size)
+            .ok_or_else(|| anyhow!("zip compressed data overflow"))?;
+        let comp_data = zip_bytes
+            .get(data_start..data_end)
+            .ok_or_else(|| anyhow!("truncated zip entry payload"))?;
+
+        let out = match method {
+            0 => comp_data.to_vec(),
+            8 => {
+                let mut decoder = flate2::read::DeflateDecoder::new(comp_data)
+                    .take(MAX_EXTRACTED_BINARY_BYTES + 1);
+                let mut buf = Vec::with_capacity(uncomp_size.min(64 * 1024 * 1024) as usize);
+                decoder.read_to_end(&mut buf)?;
+                ensure!(
+                    (buf.len() as u64) <= MAX_EXTRACTED_BINARY_BYTES,
+                    "decompressed zip binary exceeded maximum allowed size"
+                );
+                buf
+            }
+            other => {
+                return Err(anyhow!("unsupported zip compression method: {other}"));
+            }
+        };
+
+        let mut crc = flate2::Crc::new();
+        crc.update(&out);
+        ensure!(
+            crc.sum() == expected_crc,
+            "zip CRC-32 mismatch for {basename}: expected {expected_crc:#010x}, got {:#010x}",
+            crc.sum()
+        );
+        return Ok(out);
+    }
+
+    Err(anyhow!(
+        "release zip archive did not contain an `openmi` binary"
+    ))
+}
+
 fn replace_executable(target: &Path, new_bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+
     let parent = target
         .parent()
         .ok_or_else(|| anyhow!("cannot determine parent directory of {}", target.display()))?;
     fs::create_dir_all(parent)?;
 
-    let staged = parent.join(format!(".openmi-update-{}.tmp", std::process::id()));
-    fs::write(&staged, new_bytes)?;
+    let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+    staged.write_all(new_bytes)?;
+    staged.as_file().sync_all()?;
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))?;
-        fs::rename(&staged, target)?;
+        staged
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(0o755))?;
+        staged.persist(target).map_err(|e| e.error)?;
     }
 
     #[cfg(windows)]
@@ -332,7 +475,7 @@ fn replace_executable(target: &Path, new_bytes: &[u8]) -> Result<()> {
         if target.exists() {
             fs::rename(target, &backup)?;
         }
-        fs::rename(&staged, target)?;
+        staged.persist(target).map_err(|e| e.error)?;
     }
 
     Ok(())
@@ -353,6 +496,73 @@ mod tests {
         assert!(is_newer_version("0.1.0", "0.1.1"));
         assert!(!is_newer_version("0.2.0", "v0.2.0"));
         assert!(!is_newer_version("0.2.0", "v0.1.9"));
+    }
+
+    #[test]
+    fn extracts_deflated_openmi_exe_from_zip() {
+        use flate2::write::DeflateEncoder;
+        use std::io::Write;
+
+        let payload = b"MZ-fake-windows-openmi-binary-payload-0.2.0";
+        let mut crc = flate2::Crc::new();
+        crc.update(payload);
+        let crc32 = crc.sum();
+
+        let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(payload).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        let name = b"openmi.exe";
+        let mut zip = Vec::new();
+        // Local File Header
+        zip.extend_from_slice(&[0x50, 0x4b, 0x03, 0x04]);
+        zip.extend_from_slice(&20u16.to_le_bytes()); // version needed
+        zip.extend_from_slice(&0u16.to_le_bytes()); // flags
+        zip.extend_from_slice(&8u16.to_le_bytes()); // method = Deflate
+        zip.extend_from_slice(&0u16.to_le_bytes()); // mod time
+        zip.extend_from_slice(&0u16.to_le_bytes()); // mod date
+        zip.extend_from_slice(&crc32.to_le_bytes());
+        zip.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
+        zip.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        zip.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        zip.extend_from_slice(&0u16.to_le_bytes()); // extra len
+        zip.extend_from_slice(name);
+        zip.extend_from_slice(&compressed);
+
+        let cd_offset = zip.len() as u32;
+        // Central Directory Header
+        zip.extend_from_slice(&[0x50, 0x4b, 0x01, 0x02]);
+        zip.extend_from_slice(&20u16.to_le_bytes()); // version made by
+        zip.extend_from_slice(&20u16.to_le_bytes()); // version needed
+        zip.extend_from_slice(&0u16.to_le_bytes()); // flags
+        zip.extend_from_slice(&8u16.to_le_bytes()); // method = Deflate
+        zip.extend_from_slice(&0u16.to_le_bytes()); // mod time
+        zip.extend_from_slice(&0u16.to_le_bytes()); // mod date
+        zip.extend_from_slice(&crc32.to_le_bytes());
+        zip.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
+        zip.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        zip.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        zip.extend_from_slice(&0u16.to_le_bytes()); // extra len
+        zip.extend_from_slice(&0u16.to_le_bytes()); // comment len
+        zip.extend_from_slice(&0u16.to_le_bytes()); // disk start
+        zip.extend_from_slice(&0u16.to_le_bytes()); // internal attrs
+        zip.extend_from_slice(&0u32.to_le_bytes()); // external attrs
+        zip.extend_from_slice(&0u32.to_le_bytes()); // LFH offset
+        zip.extend_from_slice(name);
+
+        let cd_size = (zip.len() as u32) - cd_offset;
+        // End of Central Directory
+        zip.extend_from_slice(&[0x50, 0x4b, 0x05, 0x06]);
+        zip.extend_from_slice(&0u16.to_le_bytes()); // disk number
+        zip.extend_from_slice(&0u16.to_le_bytes()); // cd start disk
+        zip.extend_from_slice(&1u16.to_le_bytes()); // entries on disk
+        zip.extend_from_slice(&1u16.to_le_bytes()); // total entries
+        zip.extend_from_slice(&cd_size.to_le_bytes());
+        zip.extend_from_slice(&cd_offset.to_le_bytes());
+        zip.extend_from_slice(&0u16.to_le_bytes()); // comment len
+
+        let extracted = extract_binary_from_zip(&zip).unwrap();
+        assert_eq!(extracted, payload);
     }
 
     #[tokio::test]

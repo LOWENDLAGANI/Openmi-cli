@@ -117,7 +117,7 @@ pub fn detect_image_mentions(input: &str, cwd: &Path) -> Vec<String> {
         let Some(raw) = token.strip_prefix('@') else {
             continue;
         };
-        let cleaned = raw.trim_end_matches(|c: char| matches!(c, ',' | '.' | ';' | ':' | ')' | ']'));
+        let cleaned = raw.trim_end_matches([',', '.', ';', ':', ')', ']']);
         if cleaned.is_empty() {
             continue;
         }

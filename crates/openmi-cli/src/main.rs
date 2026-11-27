@@ -7,6 +7,7 @@ mod session;
 mod session_store;
 mod settings;
 mod skills;
+mod trust;
 mod tui;
 
 use std::path::PathBuf;

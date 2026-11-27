@@ -136,10 +136,21 @@ pub enum PermissionOutcome {
     Deny(String),
 }
 
-/// Normalize a workspace-relative path for consistent glob matching.
+/// Normalize a workspace-relative path for consistent glob matching and sensitive-path checks.
+/// Collapses duplicate slashes, removes `.` segments, and resolves `..` lexically.
 fn normalize_rel_path(path: &str) -> String {
-    let s = path.trim().replace('\\', "/");
-    s.strip_prefix("./").unwrap_or(&s).to_string()
+    let replaced = path.trim().replace('\\', "/");
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in replaced.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            other => parts.push(other),
+        }
+    }
+    parts.join("/")
 }
 
 /// Returns `true` if `path` points to a sensitive file that must never be silently modified
@@ -152,20 +163,33 @@ pub fn is_sensitive_path(path: &str) -> bool {
     let lower = norm.to_ascii_lowercase();
     let basename = lower.rsplit('/').next().unwrap_or(&lower);
 
-    // Protect .env and .env.*
-    if basename == ".env" || basename.starts_with(".env.") {
+    // Protect .env, .env.*, and common credential files
+    if basename == ".env"
+        || basename.starts_with(".env.")
+        || matches!(basename, ".npmrc" | ".pypirc" | ".netrc")
+    {
         return true;
     }
-    // Protect .git/hooks and anything inside it
+    // Protect .git/hooks and .git/config (prevents core.fsmonitor / core.sshCommand RCE)
     if lower == ".git/hooks"
         || lower.starts_with(".git/hooks/")
         || lower.contains("/.git/hooks/")
         || lower.ends_with("/.git/hooks")
+        || lower == ".git/config"
+        || lower.ends_with("/.git/config")
     {
         return true;
     }
-    // Protect .openmi/settings.json
-    if lower == ".openmi/settings.json" || lower.ends_with("/.openmi/settings.json") {
+    // Protect .ssh directories and keys
+    if lower == ".ssh" || lower.starts_with(".ssh/") || lower.contains("/.ssh/") {
+        return true;
+    }
+    // Protect .openmi/settings.json and .openmi/mcp.json
+    if lower == ".openmi/settings.json"
+        || lower.ends_with("/.openmi/settings.json")
+        || lower == ".openmi/mcp.json"
+        || lower.ends_with("/.openmi/mcp.json")
+    {
         return true;
     }
     false
@@ -388,10 +412,7 @@ mod tests {
     #[test]
     fn granular_rules_allow_ask_deny_and_sensitive_paths() {
         let rules = PermissionRules {
-            allow: vec![
-                "Bash(git status*)".into(),
-                "Bash(cargo test *)".into(),
-            ],
+            allow: vec!["Bash(git status*)".into(), "Bash(cargo test *)".into()],
             ask: vec!["Bash(git push*)".into()],
             deny: vec!["Bash(rm -rf *)".into(), "Edit(.env*)".into()],
         };
@@ -469,5 +490,18 @@ mod tests {
             ),
             PermissionOutcome::Ask
         );
+    }
+
+    #[test]
+    fn sensitive_paths_catch_normalization_bypasses_and_extra_targets() {
+        assert!(is_sensitive_path(".git/./hooks/pre-commit"));
+        assert!(is_sensitive_path(".git//hooks/pre-commit"));
+        assert!(is_sensitive_path("sub/../.git/hooks/pre-commit"));
+        assert!(is_sensitive_path(".git/config"));
+        assert!(is_sensitive_path(".openmi/./settings.json"));
+        assert!(is_sensitive_path(".openmi/mcp.json"));
+        assert!(is_sensitive_path(".ssh/authorized_keys"));
+        assert!(is_sensitive_path(".npmrc"));
+        assert!(!is_sensitive_path("src/main.rs"));
     }
 }

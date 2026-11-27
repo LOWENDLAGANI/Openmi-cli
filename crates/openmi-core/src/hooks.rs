@@ -44,7 +44,9 @@ impl HooksConfig {
 
     pub fn merge(&self, other: &HooksConfig) -> HooksConfig {
         let mut merged = self.clone();
-        merged.pre_tool_use.extend(other.pre_tool_use.iter().cloned());
+        merged
+            .pre_tool_use
+            .extend(other.pre_tool_use.iter().cloned());
         merged
             .post_tool_use
             .extend(other.post_tool_use.iter().cloned());
@@ -99,9 +101,15 @@ pub async fn run_pre_tool_hooks(
             Ok((0, _)) => {}
             Ok((code, feedback)) => {
                 let msg = if feedback.trim().is_empty() {
-                    format!("PreToolUse hook `{}` blocked `{tool_name}` (exit {code})", rule.command)
+                    format!(
+                        "PreToolUse hook `{}` blocked `{tool_name}` (exit {code})",
+                        rule.command
+                    )
                 } else {
-                    format!("PreToolUse hook blocked `{tool_name}` (exit {code}): {}", feedback.trim())
+                    format!(
+                        "PreToolUse hook blocked `{tool_name}` (exit {code}): {}",
+                        feedback.trim()
+                    )
                 };
                 return HookOutcome::Block(msg);
             }
@@ -144,7 +152,10 @@ pub async fn run_post_tool_hooks(
             Ok((code, feedback)) => {
                 let detail = feedback.trim();
                 if detail.is_empty() {
-                    notes.push(format!("[PostToolUse hook `{}` exited {code}]", rule.command));
+                    notes.push(format!(
+                        "[PostToolUse hook `{}` exited {code}]",
+                        rule.command
+                    ));
                 } else {
                     notes.push(format!(
                         "[PostToolUse hook `{}` exited {code}: {detail}]",
@@ -153,7 +164,10 @@ pub async fn run_post_tool_hooks(
                 }
             }
             Err(err) => {
-                notes.push(format!("[PostToolUse hook `{}` error: {err}]", rule.command));
+                notes.push(format!(
+                    "[PostToolUse hook `{}` error: {err}]",
+                    rule.command
+                ));
             }
         }
     }
@@ -222,17 +236,20 @@ async fn exec_single_hook(
         drop(stdin);
     }
 
-    let stderr_task = child.stderr.take().map(|mut s| {
+    const MAX_HOOK_OUTPUT_BYTES: u64 = 64 * 1024;
+    let stderr_task = child.stderr.take().map(|s| {
         tokio::spawn(async move {
             let mut buf = Vec::new();
-            let _ = tokio::io::AsyncReadExt::read_to_end(&mut s, &mut buf).await;
+            let mut limited = tokio::io::AsyncReadExt::take(s, MAX_HOOK_OUTPUT_BYTES);
+            let _ = tokio::io::AsyncReadExt::read_to_end(&mut limited, &mut buf).await;
             buf
         })
     });
-    let stdout_task = child.stdout.take().map(|mut s| {
+    let stdout_task = child.stdout.take().map(|s| {
         tokio::spawn(async move {
             let mut buf = Vec::new();
-            let _ = tokio::io::AsyncReadExt::read_to_end(&mut s, &mut buf).await;
+            let mut limited = tokio::io::AsyncReadExt::take(s, MAX_HOOK_OUTPUT_BYTES);
+            let _ = tokio::io::AsyncReadExt::read_to_end(&mut limited, &mut buf).await;
             buf
         })
     });

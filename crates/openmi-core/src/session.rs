@@ -379,9 +379,16 @@ impl AgentSession {
                 ),
             ];
             let (sink_tx, _sink_rx) = mpsc::channel(64);
-            let step =
-                stream_step(&proxy, &self.model, &req_messages, &[], None, &sink_tx, cancel)
-                    .await?;
+            let step = stream_step(
+                &proxy,
+                &self.model,
+                &req_messages,
+                &[],
+                None,
+                &sink_tx,
+                cancel,
+            )
+            .await?;
             let text = step.text.trim().to_string();
             if text.is_empty() {
                 build_local_compact_digest(&self.history, focus)
@@ -633,18 +640,17 @@ impl AgentSession {
                                 &call.arguments_json,
                             )
                         });
-                        let touches_sensitive = serde_json::from_str::<serde_json::Value>(
-                            &call.arguments_json,
-                        )
-                        .ok()
-                        .map(|v| {
-                            ["path", "from", "to"].iter().any(|k| {
-                                v.get(*k)
-                                    .and_then(|s| s.as_str())
-                                    .is_some_and(crate::permissions::is_sensitive_path)
-                            })
-                        })
-                        .unwrap_or(false);
+                        let touches_sensitive =
+                            serde_json::from_str::<serde_json::Value>(&call.arguments_json)
+                                .ok()
+                                .map(|v| {
+                                    ["path", "from", "to"].iter().any(|k| {
+                                        v.get(*k)
+                                            .and_then(|s| s.as_str())
+                                            .is_some_and(crate::permissions::is_sensitive_path)
+                                    })
+                                })
+                                .unwrap_or(false);
 
                         if is_explicit_ask || touches_sensitive {
                             true
@@ -928,8 +934,13 @@ impl AgentSession {
             .await;
 
         match answer {
-            Some(choice) if !choice.trim().is_empty() => Ok(format!("user selected: {}", choice.trim())),
-            _ => Ok("user dismissed prompt or non-interactive environment (no answer provided)".to_string()),
+            Some(choice) if !choice.trim().is_empty() => {
+                Ok(format!("user selected: {}", choice.trim()))
+            }
+            _ => Ok(
+                "user dismissed prompt or non-interactive environment (no answer provided)"
+                    .to_string(),
+            ),
         }
     }
 
@@ -1070,7 +1081,9 @@ impl AgentSession {
             .and_then(|v| v.as_str())
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| CoreError::Tool("spawn_agent requires non-empty `prompt`".to_string()))?;
+            .ok_or_else(|| {
+                CoreError::Tool("spawn_agent requires non-empty `prompt`".to_string())
+            })?;
         let subagent_type = args
             .get("subagent_type")
             .and_then(|v| v.as_str())
@@ -1164,10 +1177,7 @@ fn build_local_compact_digest(history: &[Message], focus: Option<&str>) -> Strin
     if let Some(f) = focus.map(str::trim).filter(|s| !s.is_empty()) {
         lines.push(format!("Focus: {f}"));
     }
-    lines.push(format!(
-        "Condensed {} previous messages:",
-        history.len()
-    ));
+    lines.push(format!("Condensed {} previous messages:", history.len()));
     for msg in history {
         if matches!(msg.role, Role::User | Role::Assistant) {
             let role = match msg.role {
@@ -1465,7 +1475,11 @@ mod tests {
         });
 
         session
-            .run_turn("track tasks and remember test command", tx, CancellationToken::new())
+            .run_turn(
+                "track tasks and remember test command",
+                tx,
+                CancellationToken::new(),
+            )
             .await
             .unwrap();
         let _ = collector.await;

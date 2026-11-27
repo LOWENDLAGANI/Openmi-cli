@@ -183,7 +183,9 @@ fn render_ask_user_modal(frame: &mut Frame<'_>, modal: &AskUserModalState) {
 
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
         popup,
     );
 }
@@ -738,9 +740,7 @@ fn render_input(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     for (idx, _path) in image_mentions.iter().enumerate() {
         title_spans.push(Span::styled(
             format!(" [Image #{}] ", idx + 1),
-            Style::default()
-                .fg(USER_COLOR)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(USER_COLOR).add_modifier(Modifier::BOLD),
         ));
     }
 

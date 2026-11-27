@@ -1,7 +1,8 @@
-import { readBody, sendJson, supabaseFetch } from "./_supabase.js";
+import { readBody, requireAdminAuth, sendJson, supabaseFetch } from "./_supabase.js";
 
 export default async function handler(req, res) {
   try {
+    if (!requireAdminAuth(req, res)) return;
     if (req.method === "GET") {
       const rows = await supabaseFetch(
         "/rest/v1/device_codes?select=user_code,status,user_email,poll_count,created_at,expires_at&order=created_at.desc&limit=50",

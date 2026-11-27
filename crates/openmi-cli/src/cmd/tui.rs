@@ -128,6 +128,10 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
     let (ask_user_tx, mut ask_user_rx) = mpsc::channel::<PendingAskUser>(8);
     let ask_user_handler = Arc::new(TuiAskUserHandler::new(ask_user_tx));
 
+    // Check workspace trust BEFORE entering TUI raw mode so the user can approve/deny
+    // any project-level `.openmi/settings.json` hooks/allow rules or `.openmi/mcp.json` servers.
+    let workspace_trusted = crate::trust::ensure_workspace_trust(&workdir, true);
+
     let mut raw_session = build_session_with_options(
         &workdir,
         &initial_model,
@@ -141,9 +145,10 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
         raw_session.set_history(saved.messages.clone());
     }
 
-    let mut mcp_manager = openmi_core::load_merged_mcp_config(None, &workdir)
-        .ok()
-        .map(|cfg| openmi_core::McpManager::from_config(&workdir, cfg));
+    let mut mcp_manager =
+        openmi_core::load_merged_mcp_config_with_trust(None, &workdir, workspace_trusted)
+            .ok()
+            .map(|cfg| openmi_core::McpManager::from_config(&workdir, cfg));
     if let Some(mgr) = mcp_manager.as_mut() {
         mgr.start_all(raw_session.tool_registry_mut()).await;
     }
@@ -829,14 +834,18 @@ async fn switch_project_folder(
             return;
         }
     };
-    new_session.set_ask_user_handler(Arc::clone(ask_user_handler) as Arc<dyn openmi_core::AskUserHandler>);
+    new_session
+        .set_ask_user_handler(Arc::clone(ask_user_handler) as Arc<dyn openmi_core::AskUserHandler>);
 
     if let Some(old_mgr) = mcp_manager.as_mut() {
         old_mgr.shutdown_all().await;
     }
-    let mut next_mgr = openmi_core::load_merged_mcp_config(None, &canonical)
-        .ok()
-        .map(|cfg| openmi_core::McpManager::from_config(&canonical, cfg));
+    let switched_trusted = crate::trust::is_workspace_trusted(&canonical);
+    let switched_risks = crate::trust::inspect_workspace_risks(&canonical);
+    let mut next_mgr =
+        openmi_core::load_merged_mcp_config_with_trust(None, &canonical, switched_trusted)
+            .ok()
+            .map(|cfg| openmi_core::McpManager::from_config(&canonical, cfg));
     if let Some(mgr) = next_mgr.as_mut() {
         mgr.start_all(new_session.tool_registry_mut()).await;
     }
@@ -852,7 +861,12 @@ async fn switch_project_folder(
     *workdir = canonical.clone();
     app.skills = crate::skills::load_merged_skills(&canonical);
     app.set_cwd(canonical);
-    if app.transcript.is_empty() {
+    if !switched_trusted && switched_risks.has_risks() {
+        app.push_system(format!(
+            "Untrusted workspace: skipped project .openmi/ config ({}). Re-open `openmi` in this folder to trust it.",
+            switched_risks.describe().join("; ")
+        ));
+    } else if app.transcript.is_empty() {
         app.status_hint = format!("Project folder: {}", app.friendly_cwd());
     } else {
         app.push_system(format!(

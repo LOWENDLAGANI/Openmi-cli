@@ -110,12 +110,7 @@ impl BackgroundTaskManager {
 
         let st_wait = Arc::clone(&state);
         tokio::spawn(async move {
-            let code = child
-                .wait()
-                .await
-                .ok()
-                .and_then(|s| s.code())
-                .unwrap_or(-1);
+            let code = child.wait().await.ok().and_then(|s| s.code()).unwrap_or(-1);
             if let Ok(mut guard) = st_wait.lock() {
                 guard.running = false;
                 guard.exit_code = Some(code);
@@ -137,7 +132,10 @@ impl BackgroundTaskManager {
             .map_err(|_| CoreError::Tool("background task state poisoned".to_string()))?;
 
         let status_line = if guard.running {
-            format!("task_id={task_id} status=running command=`{}`", guard.command)
+            format!(
+                "task_id={task_id} status=running command=`{}`",
+                guard.command
+            )
         } else {
             format!(
                 "task_id={task_id} status=exited exit={} command=`{}`",
@@ -146,11 +144,8 @@ impl BackgroundTaskManager {
             )
         };
         let raw_text = String::from_utf8_lossy(&guard.output);
-        let capped = truncate_head_tail(
-            &raw_text,
-            SHELL_OUTPUT_HEAD_BYTES,
-            SHELL_OUTPUT_TAIL_BYTES,
-        );
+        let capped =
+            truncate_head_tail(&raw_text, SHELL_OUTPUT_HEAD_BYTES, SHELL_OUTPUT_TAIL_BYTES);
         if capped.is_empty() {
             Ok(format!("{status_line}\n(no output yet)"))
         } else {
@@ -188,11 +183,7 @@ mod tests {
     async fn background_task_spawns_and_returns_captured_output() {
         let tmp = tempfile::tempdir().unwrap();
         let mut mgr = BackgroundTaskManager::new();
-        let cmd = if cfg!(windows) {
-            "echo bg-hello"
-        } else {
-            "echo bg-hello"
-        };
+        let cmd = "echo bg-hello";
         let id = mgr.spawn(cmd, tmp.path()).unwrap();
         assert!(id.starts_with("bg_"));
 

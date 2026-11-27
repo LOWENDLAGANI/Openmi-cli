@@ -1,4 +1,4 @@
-import { getSupabaseConfig, maskApiKey, readBody, sendJson, supabaseFetch } from "./_supabase.js";
+import { getSupabaseConfig, maskApiKey, readBody, requireAdminAuth, sendJson, supabaseFetch } from "./_supabase.js";
 
 const DEFAULT_PAYMENT_LINK = "https://sociabuzz.com/minetallestmc/tribe";
 
@@ -92,6 +92,7 @@ function formatSettings(row, supabaseUrl) {
 
 export default async function handler(req, res) {
   try {
+    if (!requireAdminAuth(req, res)) return;
     const { url: supabaseUrl } = getSupabaseConfig();
 
     if (req.method === "GET") {
@@ -104,17 +105,32 @@ export default async function handler(req, res) {
 
       if (body.action === "test_llm") {
         const row = await fetchRow();
-        const baseUrl = String(body.llm_base_url || row?.llm_base_url || "https://openrouter.ai/api/v1").replace(
+        const savedBaseUrl = String(row?.llm_base_url || "https://openrouter.ai/api/v1").replace(
           /\/+$/,
           "",
         );
-        const key = String(body.llm_api_key || row?.llm_api_key || "").trim();
+        const requestedBaseUrl = typeof body.llm_base_url === "string" && body.llm_base_url.trim()
+          ? body.llm_base_url.trim().replace(/\/+$/, "")
+          : savedBaseUrl;
+        if (!/^https:\/\//i.test(requestedBaseUrl)) {
+          return sendJson(res, 400, { ok: false, error: "llm_base_url must be an https:// URL." });
+        }
+        const suppliedKey = typeof body.llm_api_key === "string" ? body.llm_api_key.trim() : "";
+        // Never transmit the stored API key to a different (unsaved) host to prevent key exfiltration.
+        if (!suppliedKey && requestedBaseUrl !== savedBaseUrl) {
+          return sendJson(res, 400, {
+            ok: false,
+            error: "Provide an API key (or save the base URL first) when testing a different host.",
+          });
+        }
+        const key = suppliedKey || String(row?.llm_api_key || "").trim();
         if (!key) {
           return sendJson(res, 400, { ok: false, error: "No API key configured to test." });
         }
         const t0 = Date.now();
-        const probe = await fetch(`${baseUrl}/models`, {
+        const probe = await fetch(`${requestedBaseUrl}/models`, {
           headers: { Authorization: `Bearer ${key}` },
+          signal: AbortSignal.timeout(10000),
         });
         const latencyMs = Date.now() - t0;
         if (!probe.ok) {

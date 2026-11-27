@@ -28,12 +28,39 @@ function setGlobalError(msg) {
   }
 }
 
+function showAuthGate(message = "") {
+  $("app-topbar").classList.add("hidden");
+  $("app-main").classList.add("hidden");
+  $("auth-gate").classList.remove("hidden");
+  const errEl = $("auth-error");
+  if (message) {
+    errEl.textContent = message;
+    errEl.classList.remove("hidden");
+  } else {
+    errEl.textContent = "";
+    errEl.classList.add("hidden");
+  }
+  const input = $("auth-passphrase");
+  if (input) input.focus();
+}
+
+function showConsole() {
+  $("auth-gate").classList.add("hidden");
+  $("app-topbar").classList.remove("hidden");
+  $("app-main").classList.remove("hidden");
+}
+
 async function api(path, options = {}) {
   const resp = await fetch(path, {
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options,
   });
   const data = await resp.json().catch(() => ({}));
+  if (resp.status === 401 && path !== "/api/auth") {
+    showAuthGate("Session locked or expired. Enter passphrase to continue.");
+    throw new Error(data.error || "Unauthorized");
+  }
   if (!resp.ok) {
     throw new Error(data.error || `HTTP ${resp.status}`);
   }
@@ -692,4 +719,57 @@ $("purge-devices-btn").addEventListener("click", async () => {
 
 $("refresh-btn").addEventListener("click", loadAll);
 
-loadAll();
+$("lock-btn").addEventListener("click", async () => {
+  try {
+    await api("/api/auth", {
+      method: "POST",
+      body: JSON.stringify({ action: "logout" }),
+    });
+  } catch {
+    // ignore logout network error
+  }
+  showAuthGate("");
+});
+
+$("auth-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = $("auth-submit-btn");
+  const input = $("auth-passphrase");
+  const passphrase = input.value.trim();
+  if (!passphrase) return;
+  btn.disabled = true;
+  $("auth-error").classList.add("hidden");
+  try {
+    await api("/api/auth", {
+      method: "POST",
+      body: JSON.stringify({ passphrase }),
+    });
+    input.value = "";
+    showConsole();
+    await loadAll();
+  } catch (err) {
+    showAuthGate(err.message || "Invalid passphrase.");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function bootAuth() {
+  try {
+    const status = await api("/api/auth");
+    if (!status.configured) {
+      showAuthGate("ADMIN_PASSPHRASE is not configured in Vercel Project Settings.");
+      return;
+    }
+    if (status.authenticated) {
+      showConsole();
+      await loadAll();
+    } else {
+      showAuthGate("");
+    }
+  } catch (err) {
+    showAuthGate(err.message || "Unable to verify session.");
+  }
+}
+
+bootAuth();

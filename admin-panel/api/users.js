@@ -1,4 +1,4 @@
-import { readBody, sendJson, supabaseFetch } from "./_supabase.js";
+import { readBody, requireAdminAuth, sendJson, supabaseFetch } from "./_supabase.js";
 
 function isCurrentlyBanned(user) {
   if (!user?.banned_until) return false;
@@ -8,6 +8,7 @@ function isCurrentlyBanned(user) {
 
 export default async function handler(req, res) {
   try {
+    if (!requireAdminAuth(req, res)) return;
     if (req.method === "GET") {
       const [authData, creditRows] = await Promise.all([
         supabaseFetch("/auth/v1/admin/users?page=1&per_page=200"),

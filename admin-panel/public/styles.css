@@ -58,6 +58,38 @@ code, .mono {
   display: none !important;
 }
 
+/* Passphrase Gate */
+.auth-gate {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.auth-submit {
+  width: 100%;
+  justify-content: center;
+}
+
 /* Header */
 .topbar {
   position: sticky;

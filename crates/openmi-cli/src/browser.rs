@@ -9,6 +9,18 @@ pub fn open_url(url: &str) -> bool {
     if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
         return false;
     }
+    // Reject control characters, whitespace, and shell metacharacters (prevents cmd.exe injection on Windows).
+    if trimmed.chars().any(|c| {
+        c.is_control()
+            || c.is_whitespace()
+            || matches!(c, '"' | '\'' | '`' | '|' | '^' | '<' | '>' | ';')
+    }) {
+        return false;
+    }
+    #[cfg(target_os = "windows")]
+    if trimmed.contains('&') || trimmed.contains('%') {
+        return false;
+    }
 
     // Termux / Android: prefer `termux-open-url`, falling back to `am start`.
     if cfg!(target_os = "android") || env::var_os("TERMUX_VERSION").is_some() {
@@ -61,5 +73,7 @@ mod tests {
         assert!(!open_url("javascript:alert(1)"));
         assert!(!open_url("file:///etc/passwd"));
         assert!(!open_url(""));
+        assert!(!open_url("https://example.com/|calc.exe"));
+        assert!(!open_url("https://example.com/\nwhoami"));
     }
 }

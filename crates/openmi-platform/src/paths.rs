@@ -86,8 +86,8 @@ impl AppPaths {
     pub fn project_memory_file(&self, workspace_root: &Path) -> PathBuf {
         use sha2::{Digest, Sha256};
 
-        let canonical = std::fs::canonicalize(workspace_root)
-            .unwrap_or_else(|_| workspace_root.to_path_buf());
+        let canonical =
+            std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
         let normalized = canonical.to_string_lossy().replace('\\', "/");
         let digest = Sha256::digest(normalized.as_bytes());
         let mut hex = String::with_capacity(16);
@@ -95,10 +95,7 @@ impl AppPaths {
             use std::fmt::Write;
             let _ = write!(&mut hex, "{byte:02x}");
         }
-        self.config_dir
-            .join("projects")
-            .join(hex)
-            .join("memory.md")
+        self.config_dir.join("projects").join(hex).join("memory.md")
     }
 
     /// Ensure config, data, and cache directories exist on disk.

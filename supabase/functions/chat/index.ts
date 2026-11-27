@@ -558,6 +558,12 @@ Deno.serve(async (req: Request) => {
   if (messages.length === 0) {
     return jsonResponse({ error: "invalid_request", message: "messages array is required" }, 400);
   }
+  if (messages.length > 200) {
+    return jsonResponse(
+      { error: "invalid_request", message: "Too many messages in conversation (max 200). Run /compact." },
+      400,
+    );
+  }
 
   const requestedModel = String((body as Record<string, unknown>).model ?? "").trim() || "openmi-default";
   const upstreamModel = requestedModel === "openmi-default" ? defaultModel : requestedModel;
@@ -565,6 +571,17 @@ Deno.serve(async (req: Request) => {
   // falling back to the global provider settings when blank.
   const catalogEntry = dbModels.find((m) => m.id === requestedModel) ??
     dbModels.find((m) => m.id === upstreamModel);
+  // Prevent arbitrary model injection & paid_only/credit_cost bypass: when a catalog is configured,
+  // only models explicitly listed in `app_settings.models` (or `openmi-default`) may be invoked.
+  if (dbModels.length > 0 && requestedModel !== "openmi-default" && !catalogEntry) {
+    return jsonResponse(
+      {
+        error: "invalid_model",
+        message: `Model '${requestedModel}' is not in the configured model catalog.`,
+      },
+      400,
+    );
+  }
   const modelKey = typeof catalogEntry?.api_key === "string" ? catalogEntry.api_key.trim() : "";
   const modelBase = typeof catalogEntry?.base_url === "string"
     ? catalogEntry.base_url.trim().replace(/\/+$/, "")

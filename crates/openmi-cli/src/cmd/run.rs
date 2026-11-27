@@ -89,11 +89,13 @@ pub async fn execute(opts: RunOptions) -> Result<(), CliError> {
         (None, None) => {}
     }
 
-    // Start any configured stdio MCP servers and bind their tools into ToolRegistry.
-    let mut mcp_manager = openmi_core::load_merged_mcp_config(None, &workdir)
-        .ok()
-        .filter(|cfg| !cfg.mcp_servers.is_empty())
-        .map(|cfg| openmi_core::McpManager::from_config(&workdir, cfg));
+    // Verify workspace trust before spawning any project-level `.openmi/mcp.json` servers.
+    let workspace_trusted = crate::trust::ensure_workspace_trust(&workdir, false);
+    let mut mcp_manager =
+        openmi_core::load_merged_mcp_config_with_trust(None, &workdir, workspace_trusted)
+            .ok()
+            .filter(|cfg| !cfg.mcp_servers.is_empty())
+            .map(|cfg| openmi_core::McpManager::from_config(&workdir, cfg));
     if let Some(mgr) = mcp_manager.as_mut() {
         mgr.start_all(session.tool_registry_mut()).await;
     }
@@ -113,9 +115,14 @@ pub async fn execute(opts: RunOptions) -> Result<(), CliError> {
     });
 
     let attachments = load_image_attachments(&opts.prompt, &workdir);
-    let res =
-        run_with_renderer_and_attachments(&mut session, &opts.prompt, attachments, renderer, cancel)
-            .await;
+    let res = run_with_renderer_and_attachments(
+        &mut session,
+        &opts.prompt,
+        attachments,
+        renderer,
+        cancel,
+    )
+    .await;
     ctrl_c_task.abort();
     if let Some(mgr) = mcp_manager.as_mut() {
         mgr.shutdown_all().await;

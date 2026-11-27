@@ -100,10 +100,8 @@ mod tests {
                 text: "Hello ".into(),
             })
             .unwrap();
-            r.render_event(&AgentEvent::TextDelta {
-                text: "CI".into(),
-            })
-            .unwrap();
+            r.render_event(&AgentEvent::TextDelta { text: "CI".into() })
+                .unwrap();
             r.render_event(&AgentEvent::TurnCompleted {
                 finish_reason: "stop".into(),
             })

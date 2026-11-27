@@ -12,7 +12,26 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <header class="topbar">
+  <section id="auth-gate" class="auth-gate hidden" aria-label="Admin Passphrase Unlock">
+    <form id="auth-form" class="auth-card" autocomplete="off">
+      <div class="auth-brand">
+        <span class="brand-mark" aria-hidden="true">O</span>
+        <div>
+          <h1>Openmi Control</h1>
+          <p class="brand-sub">Passphrase required</p>
+        </div>
+      </div>
+      <p class="panel-desc" id="auth-desc">Enter the operator passphrase configured in <code>ADMIN_PASSPHRASE</code> to unlock this console.</p>
+      <div id="auth-error" class="alert alert-error hidden" role="alert"></div>
+      <div class="field">
+        <label for="auth-passphrase">Admin Passphrase</label>
+        <input id="auth-passphrase" type="password" class="input mono" placeholder="Enter passphrase" autocomplete="current-password" required />
+      </div>
+      <button type="submit" class="btn btn-primary auth-submit" id="auth-submit-btn">Unlock Console</button>
+    </form>
+  </section>
+
+  <header class="topbar hidden" id="app-topbar">
     <div class="topbar-inner">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">O</span>
@@ -32,11 +51,12 @@
           </label>
         </div>
         <button type="button" class="btn btn-secondary" id="refresh-btn">Refresh</button>
+        <button type="button" class="btn btn-secondary" id="lock-btn">Lock</button>
       </div>
     </div>
   </header>
 
-  <main class="container">
+  <main class="container hidden" id="app-main">
     <div id="global-error" class="alert alert-error hidden" role="alert"></div>
 
     <section class="summary-strip" aria-label="Overview metrics">
