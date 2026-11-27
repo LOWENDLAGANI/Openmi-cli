@@ -167,7 +167,7 @@ const BUILTIN_TOOLS = [
     function: {
       name: "run_command",
       description:
-        "Run a shell command in the user's workspace root. Output is capped at 16 KB (head+tail).",
+        "Run a shell command in the user's workspace root. Output is capped at 16 KB (head+tail). Pass `run_in_background: true` for long-running servers.",
       parameters: {
         type: "object",
         properties: {
@@ -177,8 +177,28 @@ const BUILTIN_TOOLS = [
             description:
               "Optional timeout in milliseconds (default 120000, max 600000). Kills process group on expiry.",
           },
+          run_in_background: {
+            type: "boolean",
+            description:
+              "If true, starts the command in the background and returns a `task_id` immediately.",
+          },
         },
         required: ["command"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "read_task_output",
+      description:
+        "Inspect status and captured stdout/stderr logs of a background shell job started with `run_command(..., run_in_background: true)`.",
+      parameters: {
+        type: "object",
+        properties: {
+          task_id: { type: "string", description: "Background task ID returned by run_command." },
+        },
+        required: ["task_id"],
       },
     },
   },
@@ -323,9 +343,15 @@ function sseLine(payload: unknown): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
+type MessageContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+type MessageContent = string | MessageContentPart[];
+
 interface IncomingMessage {
   role: string;
-  content: string;
+  content: unknown;
 }
 
 interface CatalogModel {
@@ -337,16 +363,41 @@ interface CatalogModel {
   api_key?: string;
 }
 
-function normalizeMessages(raw: unknown): Array<{ role: string; content: string }> {
+function normalizeContent(raw: unknown): MessageContent {
+  if (typeof raw === "string") return raw;
+  if (!Array.isArray(raw)) return "";
+  const parts: MessageContentPart[] = [];
+  for (const part of raw.slice(0, 16)) {
+    if (!part || typeof part !== "object") continue;
+    const p = part as Record<string, unknown>;
+    if (p.type === "text" && typeof p.text === "string") {
+      parts.push({ type: "text", text: p.text });
+    } else if (
+      p.type === "image_url" &&
+      p.image_url &&
+      typeof p.image_url === "object" &&
+      typeof (p.image_url as Record<string, unknown>).url === "string"
+    ) {
+      const url = (p.image_url as { url: string }).url;
+      if (url.startsWith("data:image/") || url.startsWith("https://")) {
+        parts.push({ type: "image_url", image_url: { url } });
+      }
+    }
+  }
+  return parts.length > 0 ? parts : "";
+}
+
+function normalizeMessages(raw: unknown): Array<{ role: string; content: MessageContent }> {
   if (!Array.isArray(raw)) return [];
-  const out: Array<{ role: string; content: string }> = [];
+  const out: Array<{ role: string; content: MessageContent }> = [];
   for (const item of raw) {
     if (!item || typeof item !== "object") continue;
     const msg = item as Partial<IncomingMessage>;
     const role = typeof msg.role === "string" ? msg.role.toLowerCase() : "user";
-    const content = typeof msg.content === "string" ? msg.content : "";
+    const content = normalizeContent(msg.content);
     if (role === "tool") {
-      out.push({ role: "user", content: `[Tool Result]\n${content}` });
+      const text = typeof content === "string" ? content : JSON.stringify(content);
+      out.push({ role: "user", content: `[Tool Result]\n${text}` });
     } else if (role === "system" || role === "user" || role === "assistant") {
       out.push({ role, content });
     } else {
@@ -647,8 +698,16 @@ Deno.serve(async (req: Request) => {
 
   // Estimate input characters for fallback token counting when upstream omits `usage`.
   const inputChars =
-    messages.reduce((sum, m) => sum + m.role.length + m.content.length + 12, 0) +
-    JSON.stringify(allTools).length;
+    messages.reduce((sum, m) => {
+      const contentLen =
+        typeof m.content === "string"
+          ? m.content.length
+          : m.content.reduce(
+              (acc, part) => acc + (part.type === "text" ? part.text.length : 1024),
+              0,
+            );
+      return sum + m.role.length + contentLen + 12;
+    }, 0) + JSON.stringify(allTools).length;
 
   // 5. Call upstream OpenAI-compatible chat completions API with streaming + usage reporting
   const fetchUpstream = (includeStreamOptions: boolean) =>

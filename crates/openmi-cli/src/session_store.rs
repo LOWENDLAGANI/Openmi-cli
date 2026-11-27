@@ -151,20 +151,14 @@ mod tests {
             model: "openmi-default".into(),
             cwd: ws.clone(),
             updated_at: 100,
-            messages: vec![Message {
-                role: Role::User,
-                content: "first".into(),
-            }],
+            messages: vec![Message::text(Role::User, "first")],
         };
         let s2 = SavedSession {
             id: "sess-2".into(),
             model: "gpt-4.1".into(),
             cwd: ws.clone(),
             updated_at: 200,
-            messages: vec![Message {
-                role: Role::User,
-                content: "second".into(),
-            }],
+            messages: vec![Message::text(Role::User, "second")],
         };
 
         store.save(&s1).unwrap();

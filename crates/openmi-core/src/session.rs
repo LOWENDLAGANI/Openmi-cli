@@ -7,6 +7,7 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use crate::background::BackgroundTaskManager;
 use crate::events::{AgentEvent, ControlState, TodoItem, TodoStatus};
 use crate::hooks::{
     run_post_tool_hooks, run_pre_tool_hooks, run_stop_hooks, HookOutcome, HooksConfig,
@@ -37,6 +38,7 @@ const WORKER_SUBAGENT_TOOLS: &[&str] = &[
     "delete_file",
     "move_file",
     "run_command",
+    "read_task_output",
 ];
 
 #[derive(Debug, Error)]
@@ -75,10 +77,56 @@ pub enum Role {
     Tool,
 }
 
+/// Base64-encoded image attachment sent alongside a user prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageAttachment {
+    pub mime_type: String,
+    pub data_base64: String,
+    #[serde(default)]
+    pub label: String,
+}
+
+/// Standard RFC 4648 base64 encoder (no external dependency required).
+pub fn encode_base64(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[((triple >> 18) & 0x3F) as usize] as char);
+        out.push(TABLE[((triple >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[((triple >> 6) & 0x3F) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(triple & 0x3F) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<ImageAttachment>,
+}
+
+impl Message {
+    pub fn text(role: Role, content: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: content.into(),
+            attachments: Vec::new(),
+        }
+    }
 }
 
 /// Callback invoked right before any workspace file write (used for checkpoints).
@@ -121,6 +169,7 @@ pub struct AgentSession {
     memory_file: Option<PathBuf>,
     allowed_tools: Option<Vec<String>>,
     subagent_depth: u8,
+    bg_tasks: BackgroundTaskManager,
 }
 
 impl AgentSession {
@@ -147,6 +196,7 @@ impl AgentSession {
             memory_file: None,
             allowed_tools: None,
             subagent_depth: 0,
+            bg_tasks: BackgroundTaskManager::new(),
         })
     }
 
@@ -317,16 +367,16 @@ impl AgentSession {
                 .unwrap_or_default();
 
             let req_messages = vec![
-                Message {
-                    role: Role::System,
-                    content: "You are a concise technical summarizer. Do not call any tools. Produce a structured handoff summary in markdown with: Goal, Key Files & Edits, Decisions, and Next Steps.".to_string(),
-                },
-                Message {
-                    role: Role::User,
-                    content: format!(
+                Message::text(
+                    Role::System,
+                    "You are a concise technical summarizer. Do not call any tools. Produce a structured handoff summary in markdown with: Goal, Key Files & Edits, Decisions, and Next Steps.",
+                ),
+                Message::text(
+                    Role::User,
+                    format!(
                         "Summarize this coding session so we can continue seamlessly with minimal tokens.{focus_clause}\n---\n{transcript}"
                     ),
-                },
+                ),
             ];
             let (sink_tx, _sink_rx) = mpsc::channel(64);
             let step =
@@ -343,15 +393,14 @@ impl AgentSession {
         };
 
         self.history = vec![
-            Message {
-                role: Role::User,
-                content: format!("[Compacted conversation context]\n\n{summary}"),
-            },
-            Message {
-                role: Role::Assistant,
-                content: "Understood. I have the compacted context and am ready to continue."
-                    .to_string(),
-            },
+            Message::text(
+                Role::User,
+                format!("[Compacted conversation context]\n\n{summary}"),
+            ),
+            Message::text(
+                Role::Assistant,
+                "Understood. I have the compacted context and am ready to continue.",
+            ),
         ];
 
         let messages_after = self.history.len();
@@ -389,16 +438,10 @@ impl AgentSession {
     fn build_request_messages(&self) -> Vec<Message> {
         let mut msgs = Vec::with_capacity(self.history.len() + 3);
         if let Some(sys) = &self.system_prompt {
-            msgs.push(Message {
-                role: Role::System,
-                content: sys.clone(),
-            });
+            msgs.push(Message::text(Role::System, sys.clone()));
         }
         if self.plan_mode {
-            msgs.push(Message {
-                role: Role::System,
-                content: PLAN_MODE_SYSTEM_PROMPT.to_string(),
-            });
+            msgs.push(Message::text(Role::System, PLAN_MODE_SYSTEM_PROMPT));
         }
         if !self.todos.is_empty() {
             let mut list = String::from("Current structured task list (`todo_write`):\n");
@@ -410,10 +453,7 @@ impl AgentSession {
                 };
                 list.push_str(&format!("- {box_str} ({}) {}\n", item.id, item.content));
             }
-            msgs.push(Message {
-                role: Role::System,
-                content: list,
-            });
+            msgs.push(Message::text(Role::System, list));
         }
         msgs.extend(self.history.iter().cloned());
         msgs
@@ -430,9 +470,22 @@ impl AgentSession {
         event_tx: mpsc::Sender<AgentEvent>,
         cancel: CancellationToken,
     ) -> Result<(), CoreError> {
+        self.run_turn_with_attachments(prompt, Vec::new(), event_tx, cancel)
+            .await
+    }
+
+    /// Run a single turn with optional multimodal image attachments.
+    pub async fn run_turn_with_attachments(
+        &mut self,
+        prompt: &str,
+        attachments: Vec<ImageAttachment>,
+        event_tx: mpsc::Sender<AgentEvent>,
+        cancel: CancellationToken,
+    ) -> Result<(), CoreError> {
         self.history.push(Message {
             role: Role::User,
             content: prompt.to_string(),
+            attachments,
         });
 
         let _ = event_tx
@@ -479,10 +532,7 @@ impl AgentSession {
             })
             .await;
 
-        self.history.push(Message {
-            role: Role::Assistant,
-            content: reply,
-        });
+        self.history.push(Message::text(Role::Assistant, reply));
 
         let _ = event_tx
             .send(AgentEvent::TurnCompleted {
@@ -523,10 +573,8 @@ impl AgentSession {
             .await?;
 
             if !resp.text.is_empty() {
-                self.history.push(Message {
-                    role: Role::Assistant,
-                    content: resp.text.clone(),
-                });
+                self.history
+                    .push(Message::text(Role::Assistant, resp.text.clone()));
             }
 
             if resp.tool_calls.is_empty() {
@@ -565,10 +613,10 @@ impl AgentSession {
                                 output: denied_msg.clone(),
                             })
                             .await;
-                        self.history.push(Message {
-                            role: Role::Tool,
-                            content: format!("tool `{}` denied: {denied_msg}", call.tool_name),
-                        });
+                        self.history.push(Message::text(
+                            Role::Tool,
+                            format!("tool `{}` denied: {denied_msg}", call.tool_name),
+                        ));
                         continue;
                     }
                 }
@@ -613,10 +661,10 @@ impl AgentSession {
                                 output: denied_msg.clone(),
                             })
                             .await;
-                        self.history.push(Message {
-                            role: Role::Tool,
-                            content: format!("tool `{}` denied: {denied_msg}", call.tool_name),
-                        });
+                        self.history.push(Message::text(
+                            Role::Tool,
+                            format!("tool `{}` denied: {denied_msg}", call.tool_name),
+                        ));
                         continue;
                     }
                 };
@@ -666,10 +714,7 @@ impl AgentSession {
                                     output: msg.clone(),
                                 })
                                 .await;
-                            self.history.push(Message {
-                                role: Role::Tool,
-                                content: msg,
-                            });
+                            self.history.push(Message::text(Role::Tool, msg));
                             continue;
                         }
                     }
@@ -694,10 +739,8 @@ impl AgentSession {
                                 output: block_msg.clone(),
                             })
                             .await;
-                        self.history.push(Message {
-                            role: Role::Tool,
-                            content: format!("error: {block_msg}"),
-                        });
+                        self.history
+                            .push(Message::text(Role::Tool, format!("error: {block_msg}")));
                         continue;
                     }
                 }
@@ -709,6 +752,12 @@ impl AgentSession {
                     })
                     .await;
 
+                let is_bg_command = call.tool_name == "run_command"
+                    && serde_json::from_str::<serde_json::Value>(&call.arguments_json)
+                        .ok()
+                        .and_then(|v| v.get("run_in_background").and_then(|b| b.as_bool()))
+                        .unwrap_or(false);
+
                 let exec = if call.tool_name == "todo_write" {
                     self.exec_todo_write(&call.arguments_json, event_tx).await
                 } else if call.tool_name == "memory_write" {
@@ -719,6 +768,10 @@ impl AgentSession {
                 } else if call.tool_name == "spawn_agent" {
                     self.exec_spawn_agent(&call.arguments_json, proxy, cancel)
                         .await
+                } else if is_bg_command {
+                    self.exec_run_background(&call.arguments_json)
+                } else if call.tool_name == "read_task_output" {
+                    self.exec_read_task_output(&call.arguments_json)
                 } else if let Some(registered) = self.tool_registry.get(&call.tool_name) {
                     let handler = Arc::clone(&registered.handler);
                     handler.call(&call.arguments_json, cancel).await
@@ -758,10 +811,7 @@ impl AgentSession {
                                 output: output.clone(),
                             })
                             .await;
-                        self.history.push(Message {
-                            role: Role::Tool,
-                            content: output,
-                        });
+                        self.history.push(Message::text(Role::Tool, output));
                     }
                     Err(CoreError::Cancelled) => return Err(CoreError::Cancelled),
                     Err(err) => {
@@ -774,10 +824,8 @@ impl AgentSession {
                                 output: msg.clone(),
                             })
                             .await;
-                        self.history.push(Message {
-                            role: Role::Tool,
-                            content: format!("error: {msg}"),
-                        });
+                        self.history
+                            .push(Message::text(Role::Tool, format!("error: {msg}")));
                     }
                 }
             }
@@ -790,6 +838,32 @@ impl AgentSession {
             })
             .await;
         Err(CoreError::LoopCapExceeded(self.max_steps))
+    }
+
+    fn exec_run_background(&mut self, arguments_json: &str) -> Result<String, CoreError> {
+        let args: serde_json::Value = serde_json::from_str(arguments_json)
+            .map_err(|e| CoreError::Tool(format!("run_command invalid arguments: {e}")))?;
+        let command = args
+            .get("command")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| CoreError::Tool("run_command requires `command`".to_string()))?;
+        let task_id = self.bg_tasks.spawn(command, self.path_guard.root())?;
+        Ok(serde_json::json!({
+            "task_id": task_id,
+            "status": "running",
+            "message": "Background command started. Call read_task_output with this task_id to inspect logs."
+        })
+        .to_string())
+    }
+
+    fn exec_read_task_output(&self, arguments_json: &str) -> Result<String, CoreError> {
+        let args: serde_json::Value = serde_json::from_str(arguments_json)
+            .map_err(|e| CoreError::Tool(format!("read_task_output invalid arguments: {e}")))?;
+        let task_id = args
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| CoreError::Tool("read_task_output requires `task_id`".to_string()))?;
+        self.bg_tasks.read_output(task_id)
     }
 
     async fn exec_ask_user(

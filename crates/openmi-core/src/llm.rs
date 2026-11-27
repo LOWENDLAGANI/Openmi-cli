@@ -74,10 +74,39 @@ pub async fn stream_step(
         .build()
         .map_err(|e| CoreError::Llm(e.to_string()))?;
 
+    let wire_messages: Vec<serde_json::Value> = messages
+        .iter()
+        .map(|m| {
+            if m.attachments.is_empty() {
+                serde_json::json!({
+                    "role": m.role,
+                    "content": m.content,
+                })
+            } else {
+                let mut parts = vec![serde_json::json!({
+                    "type": "text",
+                    "text": m.content,
+                })];
+                for att in &m.attachments {
+                    parts.push(serde_json::json!({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": format!("data:{};base64,{}", att.mime_type, att.data_base64),
+                        }
+                    }));
+                }
+                serde_json::json!({
+                    "role": m.role,
+                    "content": parts,
+                })
+            }
+        })
+        .collect();
+
     let mut payload = serde_json::json!({
         "model": model,
         "stream": true,
-        "messages": messages,
+        "messages": wire_messages,
     });
     if let Some(allowed) = allowed_tools {
         payload["allowed_tools"] = serde_json::json!(allowed);

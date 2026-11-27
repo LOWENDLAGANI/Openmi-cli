@@ -11,11 +11,13 @@ use tokio_util::sync::CancellationToken;
 use crate::auth::device_flow::{resolve_api_base_url, DeviceAuthClient};
 use crate::auth::{default_token_store, TokenStore};
 use crate::exit_codes::CliError;
+use crate::output::json::SingleJsonRenderer;
 use crate::output::jsonl::JsonlRenderer;
 use crate::output::text::TextRenderer;
-use crate::output::EventRenderer;
+use crate::output::{EventRenderer, OutputFormat};
 use crate::session::{build_session_with_options, select_headless_approval_handler};
 use crate::settings::UserSettings;
+use crate::tui::mention::load_image_attachments;
 
 #[derive(Debug, Clone)]
 pub struct RunOptions {
@@ -23,7 +25,7 @@ pub struct RunOptions {
     pub model: String,
     pub permission: Option<String>,
     pub cwd: Option<PathBuf>,
-    pub json: bool,
+    pub output_format: OutputFormat,
     pub yes: bool,
     pub api_url: Option<String>,
     pub max_steps: Option<u32>,
@@ -96,10 +98,10 @@ pub async fn execute(opts: RunOptions) -> Result<(), CliError> {
         mgr.start_all(session.tool_registry_mut()).await;
     }
 
-    let renderer: Box<dyn EventRenderer> = if opts.json {
-        Box::new(JsonlRenderer::new(io::stdout()))
-    } else {
-        Box::new(TextRenderer::new(io::stdout()))
+    let renderer: Box<dyn EventRenderer> = match opts.output_format {
+        OutputFormat::Text => Box::new(TextRenderer::new(io::stdout())),
+        OutputFormat::Json => Box::new(SingleJsonRenderer::new(io::stdout())),
+        OutputFormat::StreamJson => Box::new(JsonlRenderer::new(io::stdout())),
     };
 
     let cancel = CancellationToken::new();
@@ -110,7 +112,10 @@ pub async fn execute(opts: RunOptions) -> Result<(), CliError> {
         }
     });
 
-    let res = run_with_renderer(&mut session, &opts.prompt, renderer, cancel).await;
+    let attachments = load_image_attachments(&opts.prompt, &workdir);
+    let res =
+        run_with_renderer_and_attachments(&mut session, &opts.prompt, attachments, renderer, cancel)
+            .await;
     ctrl_c_task.abort();
     if let Some(mgr) = mcp_manager.as_mut() {
         mgr.shutdown_all().await;
@@ -118,9 +123,20 @@ pub async fn execute(opts: RunOptions) -> Result<(), CliError> {
     res
 }
 
+#[allow(dead_code)]
 pub async fn run_with_renderer(
     session: &mut openmi_core::AgentSession,
     prompt: &str,
+    renderer: Box<dyn EventRenderer>,
+    cancel: CancellationToken,
+) -> Result<(), CliError> {
+    run_with_renderer_and_attachments(session, prompt, Vec::new(), renderer, cancel).await
+}
+
+pub async fn run_with_renderer_and_attachments(
+    session: &mut openmi_core::AgentSession,
+    prompt: &str,
+    attachments: Vec<openmi_core::ImageAttachment>,
     mut renderer: Box<dyn EventRenderer>,
     cancel: CancellationToken,
 ) -> Result<(), CliError> {
@@ -132,7 +148,9 @@ pub async fn run_with_renderer(
         let _ = renderer.finish();
     });
 
-    let turn_res = session.run_turn(prompt, tx, cancel).await;
+    let turn_res = session
+        .run_turn_with_attachments(prompt, attachments, tx, cancel)
+        .await;
     let _ = render_task.await;
     turn_res.map_err(CliError::from)
 }

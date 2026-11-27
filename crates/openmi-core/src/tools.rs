@@ -31,9 +31,8 @@ pub enum ToolRisk {
 
 pub fn classify_tool_risk(tool_name: &str) -> ToolRisk {
     match tool_name {
-        "read_file" | "list_dir" | "grep" | "glob" | "todo_write" | "web_fetch" | "ask_user" => {
-            ToolRisk::ReadOnly
-        }
+        "read_file" | "list_dir" | "grep" | "glob" | "todo_write" | "web_fetch" | "ask_user"
+        | "read_task_output" => ToolRisk::ReadOnly,
         _ => ToolRisk::Mutating,
     }
 }

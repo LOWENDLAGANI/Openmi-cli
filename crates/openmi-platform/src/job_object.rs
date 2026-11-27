@@ -30,6 +30,21 @@ pub async fn kill_process_tree(child: &mut Child) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Best-effort termination of a Unix process group by leader PID (no-op on non-Unix).
+pub fn kill_process_group_pid(pid: u32) {
+    #[cfg(unix)]
+    {
+        // SAFETY: sending SIGKILL to the process group (-pgid) created via process_group(0).
+        unsafe {
+            libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

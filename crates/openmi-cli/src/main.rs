@@ -61,7 +61,23 @@ EXAMPLES:
     after_help = AFTER_HELP
 )]
 struct Cli {
-    /// Model identifier override (when launching the default TUI).
+    /// Execute a single non-interactive prompt turn (headless mode, equivalent to `openmi exec`).
+    #[arg(short = 'p', long = "prompt")]
+    prompt: Option<String>,
+
+    /// Headless output format when using `-p/--prompt`: text, json, or stream-json.
+    #[arg(long = "output-format")]
+    output_format: Option<String>,
+
+    /// Maximum turns/steps in headless `-p/--prompt` mode.
+    #[arg(long = "max-turns", alias = "max-steps")]
+    max_turns: Option<u32>,
+
+    /// Auto-approve tool prompts in headless `-p/--prompt` mode.
+    #[arg(long = "auto-approve", short = 'y', alias = "yes")]
+    auto_approve: bool,
+
+    /// Model identifier override (when launching the default TUI or `-p` headless mode).
     #[arg(long, default_value = "openmi-default")]
     model: String,
 
@@ -69,7 +85,7 @@ struct Cli {
     #[arg(long)]
     permission: Option<String>,
 
-    /// Working directory for the workspace root (when launching the default TUI).
+    /// Working directory for the workspace root.
     #[arg(long)]
     cwd: Option<PathBuf>,
 
@@ -192,7 +208,8 @@ enum Commands {
     /// Run a built-in portability and core-wiring smoke test.
     SmokeTest,
 
-    /// Execute a single non-interactive prompt turn.
+    /// Execute a single non-interactive prompt turn (also aliased as `openmi exec`).
+    #[command(visible_alias = "exec")]
     Run {
         /// Prompt to send to the agent.
         prompt: String,
@@ -209,20 +226,24 @@ enum Commands {
         #[arg(long)]
         cwd: Option<PathBuf>,
 
-        /// Stream versioned JSONL events (one AgentEvent per line).
+        /// Stream versioned JSONL events (shorthand for `--output-format stream-json`).
         #[arg(long)]
         json: bool,
 
+        /// Output format: text, json, or stream-json.
+        #[arg(long = "output-format")]
+        output_format: Option<String>,
+
         /// Auto-approve tool prompts in Ask mode (useful in non-interactive pipelines).
-        #[arg(long, short = 'y')]
+        #[arg(long, short = 'y', alias = "auto-approve")]
         yes: bool,
 
         /// Override the managed Openmi API base URL.
         #[arg(long)]
         api_url: Option<String>,
 
-        /// Maximum tool-calling steps before returning loop-cap exit code 5.
-        #[arg(long)]
+        /// Maximum tool-calling steps/turns before returning loop-cap exit code 5.
+        #[arg(long, alias = "max-turns")]
         max_steps: Option<u32>,
     },
 }
@@ -267,14 +288,33 @@ async fn main() -> ExitCode {
 
     let result: Result<(), CliError> = match cli.command {
         None => {
-            cmd::tui::execute(TuiOptions {
-                model: cli.model,
-                permission: cli.permission,
-                cwd: cli.cwd,
-                api_url: cli.api_url,
-                resume: cli.resume,
-            })
-            .await
+            if let Some(prompt) = cli.prompt {
+                match parse_output_format(cli.output_format.as_deref(), false) {
+                    Ok(output_format) => {
+                        cmd::run::execute(RunOptions {
+                            prompt,
+                            model: cli.model,
+                            permission: cli.permission,
+                            cwd: cli.cwd,
+                            output_format,
+                            yes: cli.auto_approve,
+                            api_url: cli.api_url,
+                            max_steps: cli.max_turns,
+                        })
+                        .await
+                    }
+                    Err(e) => Err(e),
+                }
+            } else {
+                cmd::tui::execute(TuiOptions {
+                    model: cli.model,
+                    permission: cli.permission,
+                    cwd: cli.cwd,
+                    api_url: cli.api_url,
+                    resume: cli.resume,
+                })
+                .await
+            }
         }
         Some(Commands::Tui {
             model,
@@ -323,22 +363,26 @@ async fn main() -> ExitCode {
             permission,
             cwd,
             json,
+            output_format,
             yes,
             api_url,
             max_steps,
-        }) => {
-            cmd::run::execute(RunOptions {
-                prompt,
-                model,
-                permission,
-                cwd,
-                json,
-                yes,
-                api_url,
-                max_steps,
-            })
-            .await
-        }
+        }) => match parse_output_format(output_format.as_deref(), json) {
+            Ok(fmt) => {
+                cmd::run::execute(RunOptions {
+                    prompt,
+                    model,
+                    permission,
+                    cwd,
+                    output_format: fmt,
+                    yes,
+                    api_url,
+                    max_steps,
+                })
+                .await
+            }
+            Err(e) => Err(e),
+        },
     };
 
     match result {
@@ -347,6 +391,19 @@ async fn main() -> ExitCode {
             eprintln!("error: {err}");
             err.exit_code()
         }
+    }
+}
+
+fn parse_output_format(
+    explicit: Option<&str>,
+    legacy_json: bool,
+) -> Result<output::OutputFormat, CliError> {
+    if let Some(raw) = explicit {
+        raw.parse().map_err(CliError::Usage)
+    } else if legacy_json {
+        Ok(output::OutputFormat::StreamJson)
+    } else {
+        Ok(output::OutputFormat::Text)
     }
 }
 

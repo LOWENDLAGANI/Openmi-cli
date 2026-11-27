@@ -600,6 +600,10 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                         }
                                     }
                                 } else {
+                                    let attachments = crate::tui::mention::load_image_attachments(
+                                        &input_text,
+                                        &workdir,
+                                    );
                                     checkpoints.lock().expect("checkpoint mutex").begin_run();
                                     app.push_user(input_text.clone());
                                     let cancel = CancellationToken::new();
@@ -608,7 +612,15 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                     let tx = agent_tx.clone();
                                     tokio::spawn(async move {
                                         let mut s = sess.lock().await;
-                                        if let Err(err) = s.run_turn(&input_text, tx.clone(), cancel).await {
+                                        if let Err(err) = s
+                                            .run_turn_with_attachments(
+                                                &input_text,
+                                                attachments,
+                                                tx.clone(),
+                                                cancel,
+                                            )
+                                            .await
+                                        {
                                             let _ = tx.send(AgentEvent::Error {
                                                 code: "turn_error".to_string(),
                                                 message: err.to_string(),

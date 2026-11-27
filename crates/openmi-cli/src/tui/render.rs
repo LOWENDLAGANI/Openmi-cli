@@ -730,6 +730,20 @@ fn render_input(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         Paragraph::new(app.input.text())
     };
 
+    let image_mentions = crate::tui::mention::detect_image_mentions(app.input.text(), &app.cwd);
+    let mut title_spans = vec![Span::styled(
+        title_text,
+        Style::default().fg(if app.is_busy() { MUTED } else { ACCENT }),
+    )];
+    for (idx, _path) in image_mentions.iter().enumerate() {
+        title_spans.push(Span::styled(
+            format!(" [Image #{}] ", idx + 1),
+            Style::default()
+                .fg(USER_COLOR)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
     let widget = content
         .block(
             Block::default()
@@ -737,16 +751,14 @@ fn render_input(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(border_color))
                 .padding(Padding::horizontal(1))
-                .title(Span::styled(
-                    title_text,
-                    Style::default().fg(if app.is_busy() { MUTED } else { ACCENT }),
-                )),
+                .title(Line::from(title_spans)),
         )
         .wrap(Wrap { trim: false })
         .scroll((input_scroll_y, 0));
     frame.render_widget(widget, area);
 
     if app.pending_approval.is_none()
+        && app.ask_user_modal.is_none()
         && app.full_access_modal.is_none()
         && app.model_selector.is_none()
         && app.folder_picker.is_none()

@@ -95,6 +95,80 @@ fn fuzzy_score(candidate: &str, query_lower: &str) -> Option<i64> {
     Some(score)
 }
 
+const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024; // 5 MiB per image
+
+fn image_mime_for_path(path: &Path) -> Option<&'static str> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+/// Extract `@path/to/image.{png,jpg,jpeg,webp}` tokens that resolve to existing files inside `cwd`.
+pub fn detect_image_mentions(input: &str, cwd: &Path) -> Vec<String> {
+    let Ok(guard) = openmi_platform::PathGuard::new(cwd) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for token in input.split_whitespace() {
+        let Some(raw) = token.strip_prefix('@') else {
+            continue;
+        };
+        let cleaned = raw.trim_end_matches(|c: char| matches!(c, ',' | '.' | ';' | ':' | ')' | ']'));
+        if cleaned.is_empty() {
+            continue;
+        }
+        let candidate = Path::new(cleaned);
+        if image_mime_for_path(candidate).is_none() {
+            continue;
+        }
+        if let Ok(resolved) = guard.resolve_existing(candidate) {
+            if resolved.is_file() && !found.iter().any(|p| p == cleaned) {
+                found.push(cleaned.to_string());
+            }
+        }
+    }
+    found
+}
+
+/// Load and base64-encode all valid `@image.{png,jpg,jpeg,webp}` mentions inside `cwd` (max 5 MB each).
+pub fn load_image_attachments(input: &str, cwd: &Path) -> Vec<openmi_core::ImageAttachment> {
+    let Ok(guard) = openmi_platform::PathGuard::new(cwd) else {
+        return Vec::new();
+    };
+    let mut attachments = Vec::new();
+    for rel in detect_image_mentions(input, cwd) {
+        let candidate = Path::new(&rel);
+        let Some(mime) = image_mime_for_path(candidate) else {
+            continue;
+        };
+        let Ok(resolved) = guard.resolve_existing(candidate) else {
+            continue;
+        };
+        let Ok(meta) = std::fs::metadata(&resolved) else {
+            continue;
+        };
+        if meta.len() == 0 || meta.len() > MAX_IMAGE_BYTES {
+            continue;
+        }
+        if let Ok(bytes) = std::fs::read(&resolved) {
+            let label = candidate
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| rel.clone());
+            attachments.push(openmi_core::ImageAttachment {
+                mime_type: mime.to_string(),
+                data_base64: openmi_core::encode_base64(&bytes),
+                label,
+            });
+        }
+    }
+    attachments
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,5 +200,22 @@ mod tests {
             matches.first().map(String::as_str),
             Some("src/tui/render.rs")
         );
+    }
+
+    #[test]
+    fn detects_and_base64_encodes_image_mentions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let img = tmp.path().join("screen.png");
+        fs::write(&img, b"\x89PNG\r\n\x1a\nfake").unwrap();
+
+        let prompt = "check @screen.png and @missing.jpg";
+        let detected = detect_image_mentions(prompt, tmp.path());
+        assert_eq!(detected, vec!["screen.png"]);
+
+        let atts = load_image_attachments(prompt, tmp.path());
+        assert_eq!(atts.len(), 1);
+        assert_eq!(atts[0].mime_type, "image/png");
+        assert_eq!(atts[0].label, "screen.png");
+        assert!(!atts[0].data_base64.is_empty());
     }
 }

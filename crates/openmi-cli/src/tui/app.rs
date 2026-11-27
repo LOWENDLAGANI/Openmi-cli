@@ -1005,6 +1005,7 @@ pub fn friendly_tool_progress(tool_name: &str) -> String {
         "spawn_agent" => "Running sub-agent...".to_string(),
         "todo_write" => "Updating task list...".to_string(),
         "memory_write" => "Saving project memory...".to_string(),
+        "read_task_output" => "Reading background task output...".to_string(),
         "run_command" => "Running a command...".to_string(),
         other => format!("Using {other}..."),
     }
@@ -1026,6 +1027,7 @@ pub fn friendly_tool_title(tool_name: &str) -> String {
         "spawn_agent" => "Spawn a sub-agent".to_string(),
         "todo_write" => "Update task list".to_string(),
         "memory_write" => "Update project memory".to_string(),
+        "read_task_output" => "Read background task output".to_string(),
         "run_command" => "Run a command".to_string(),
         other => format!("Use `{other}`"),
     }
@@ -1055,6 +1057,7 @@ pub fn extract_tool_target(tool_name: &str, arguments_json: &str) -> String {
         }
         "web_fetch" => val.get("url").and_then(|v| v.as_str()),
         "ask_user" => val.get("question").and_then(|v| v.as_str()),
+        "read_task_output" => val.get("task_id").and_then(|v| v.as_str()),
         "spawn_agent" => val.get("subagent_type").and_then(|v| v.as_str()),
         "grep" | "glob" => val.get("pattern").and_then(|v| v.as_str()),
         "run_command" => val
@@ -1090,6 +1093,7 @@ pub fn format_inline_tool_summary(tool_name: &str, target: &str, ok: bool) -> St
         "spawn_agent" => "Sub-agent",
         "todo_write" => "Updated tasks",
         "memory_write" => "Saved memory",
+        "read_task_output" => "Task output",
         "run_command" => "Ran",
         other => other,
     };
