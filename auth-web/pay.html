@@ -421,6 +421,59 @@
         padding: 20px 18px;
       }
     }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: rgba(20, 20, 23, 0.55);
+      backdrop-filter: blur(4px);
+      display: grid;
+      place-items: center;
+      padding: 16px;
+    }
+
+    .modal-dialog {
+      width: 100%;
+      max-width: 460px;
+      background: var(--surface);
+      border: 1.5px solid var(--pink-border);
+      border-radius: 18px;
+      padding: 24px;
+      box-shadow: 0 20px 50px rgba(20, 20, 23, 0.25);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .modal-dialog h2 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+      color: var(--ink);
+    }
+
+    .modal-body {
+      margin: 0;
+      font-size: 13.5px;
+      line-height: 1.6;
+      color: var(--ink-secondary);
+    }
+
+    .modal-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 4px;
+      flex-wrap: wrap;
+    }
+
+    .modal-actions .btn {
+      width: auto;
+      padding: 0 18px;
+    }
   </style>
 </head>
 <body>
@@ -543,6 +596,20 @@
       </div>
     </section>
   </main>
+
+  <!-- Sociabuzz payment instructions modal -->
+  <div id="pay-confirm-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="pay-modal-title">
+    <div class="modal-dialog">
+      <h2 id="pay-modal-title">Before You Pay on Sociabuzz</h2>
+      <p class="modal-body">
+        Please enter the exact amount in your local currency. Once the transaction is complete, submit your receipt or proof of payment on the website. We will be notified and will manually verify your payment. This process typically takes between 10 minutes and 24 hours.
+      </p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" id="pay-modal-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="pay-modal-continue" disabled>Continue (3s)</button>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="/pay.js"></script>
 </body>

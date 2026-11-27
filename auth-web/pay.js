@@ -160,18 +160,89 @@ function renderPlans(plans, paymentLink, paused) {
   const grid = $("plans-grid");
   grid.innerHTML = paidCards + freeCard;
 
-  // Clicking a pass button also pre-selects that plan in the receipt form below
+  // Clicking a pass button pre-selects that plan and opens the 3-second Sociabuzz confirmation modal
   grid.querySelectorAll("[data-select-plan]").forEach((el) => {
-    el.addEventListener("click", () => {
+    el.addEventListener("click", (e) => {
+      e.preventDefault();
       const planId = el.getAttribute("data-select-plan");
       const select = $("plan-select");
       if (select && planId) {
         select.value = planId;
         syncAmountWithPlan(true);
       }
+      const href = el.getAttribute("href");
+      if (href) {
+        openPayConfirmModal(href);
+      }
     });
   });
 }
+
+let pendingCheckoutUrl = "";
+let payCountdownTimer = null;
+
+function closePayConfirmModal() {
+  if (payCountdownTimer) {
+    clearInterval(payCountdownTimer);
+    payCountdownTimer = null;
+  }
+  pendingCheckoutUrl = "";
+  $("pay-confirm-modal")?.classList.add("hidden");
+}
+
+function openPayConfirmModal(url) {
+  const modal = $("pay-confirm-modal");
+  const continueBtn = $("pay-modal-continue");
+  if (!modal || !continueBtn) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
+
+  if (payCountdownTimer) {
+    clearInterval(payCountdownTimer);
+    payCountdownTimer = null;
+  }
+
+  pendingCheckoutUrl = url;
+  let remaining = 3;
+  continueBtn.disabled = true;
+  continueBtn.textContent = `Continue (${remaining}s)`;
+  modal.classList.remove("hidden");
+
+  payCountdownTimer = setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      clearInterval(payCountdownTimer);
+      payCountdownTimer = null;
+      continueBtn.disabled = false;
+      continueBtn.textContent = "Continue";
+    } else {
+      continueBtn.textContent = `Continue (${remaining}s)`;
+    }
+  }, 1000);
+}
+
+$("pay-modal-cancel")?.addEventListener("click", closePayConfirmModal);
+
+$("pay-confirm-modal")?.addEventListener("click", (e) => {
+  if (e.target === $("pay-confirm-modal")) {
+    closePayConfirmModal();
+  }
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("pay-confirm-modal")?.classList.contains("hidden")) {
+    closePayConfirmModal();
+  }
+});
+
+$("pay-modal-continue")?.addEventListener("click", () => {
+  const url = pendingCheckoutUrl;
+  closePayConfirmModal();
+  if (url) {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+});
 
 function renderRequests(requests) {
   const list = $("requests-list");
