@@ -4,6 +4,14 @@ const SUPABASE_URL = "https://umjlmqeghfrfpduhkits.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_5VfWWlMRio4X-dCfq8IZnw_oYPbh6db";
 const APPROVE_ENDPOINT = `${SUPABASE_URL}/functions/v1/cli-auth/approve`;
 const CODE_STORAGE_KEY = "openmi_pending_device_code";
+const REF_STORAGE_KEY = "openmi_pending_ref_code";
+
+const initialRef = (new URLSearchParams(window.location.search).get("ref") || "").trim().toUpperCase();
+if (initialRef) {
+  try {
+    localStorage.setItem(REF_STORAGE_KEY, initialRef);
+  } catch (_) {}
+}
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {

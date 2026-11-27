@@ -131,6 +131,9 @@ function renderSettings(s) {
   $("global-daily-token-limit").value = s.global_daily_token_limit ?? 150000000;
   $("payment-link").value = s.payment_link || "https://sociabuzz.com/minetallestmc/tribe";
   $("topup-paused").checked = Boolean(s.topup_paused);
+  $("referral-enabled").checked = s.referral_enabled !== false;
+  $("referral-inviter-coins").value = s.referral_inviter_coins ?? 3;
+  $("referral-invitee-coins").value = s.referral_invitee_coins ?? 3;
   $("llm-api-key").value = "";
   $("current-key-hint").textContent = s.has_api_key
     ? `Stored: ${s.llm_api_key_masked}`
@@ -641,6 +644,9 @@ $("save-provider-btn").addEventListener("click", async () => {
       global_daily_token_limit: Number($("global-daily-token-limit").value),
       payment_link: $("payment-link").value.trim(),
       topup_paused: $("topup-paused").checked,
+      referral_enabled: $("referral-enabled").checked,
+      referral_inviter_coins: Number($("referral-inviter-coins").value) || 0,
+      referral_invitee_coins: Number($("referral-invitee-coins").value) || 0,
     };
     const typedKey = $("llm-api-key").value.trim();
     if (typedKey) payload.llm_api_key = typedKey;

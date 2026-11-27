@@ -159,6 +159,52 @@
             <button type="submit" class="btn btn-primary btn-sm" id="btn-redeem-code">Redeem</button>
           </div>
         </form>
+
+        <!-- Invite & Earn Coins (Referral Commission) -->
+        <section class="panel" id="referral-panel" aria-labelledby="referral-heading">
+          <div class="panel-head">
+            <div>
+              <h2 id="referral-heading">Invite Friends &amp; Earn Coins</h2>
+              <p class="panel-desc" id="referral-rule-desc">Share your link or code. Both you and your friend earn +3 Coins once they upgrade to a Paid pass for the first time.</p>
+            </div>
+            <span class="badge badge-paid" id="referral-earned-badge">0 Coins earned</span>
+          </div>
+          <div style="padding:16px 20px;display:flex;flex-direction:column;gap:14px;">
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between;">
+              <div style="display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 260px;">
+                <span class="metric-label">Your Personal Invite Link &amp; Code</span>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                  <span class="cli-code" id="referral-code-text">—</span>
+                  <button type="button" class="btn btn-secondary btn-sm" id="btn-copy-ref-code">Copy Code</button>
+                  <button type="button" class="btn btn-primary btn-sm" id="btn-copy-ref-link">Copy Invite Link</button>
+                </div>
+              </div>
+              <div style="display:flex;gap:16px;flex-wrap:wrap;">
+                <div>
+                  <div class="metric-label">Invited</div>
+                  <div class="mono" style="font-size:16px;font-weight:700;" id="ref-stat-total">0</div>
+                </div>
+                <div>
+                  <div class="metric-label">Pending Paid</div>
+                  <div class="mono" style="font-size:16px;font-weight:700;" id="ref-stat-pending">0</div>
+                </div>
+                <div>
+                  <div class="metric-label">Rewarded</div>
+                  <div class="mono" style="font-size:16px;font-weight:700;color:var(--ok);" id="ref-stat-rewarded">0</div>
+                </div>
+              </div>
+            </div>
+
+            <div id="referral-referred-status" class="metric-sub hidden"></div>
+
+            <form id="apply-ref-form" class="hidden" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border);" autocomplete="off">
+              <span class="metric-label" style="margin-right:4px;">Invited by someone?</span>
+              <input type="text" id="apply-ref-input" class="search-input mono" style="min-width:170px;height:32px;text-transform:uppercase;" maxlength="32" placeholder="INV-XXXXXXXX" required />
+              <button type="submit" class="btn btn-secondary btn-sm" id="btn-apply-ref">Apply Invite Code</button>
+              <span class="metric-sub" id="apply-ref-msg"></span>
+            </form>
+          </div>
+        </section>
       </section>
 
       <!-- Live Model Availability -->

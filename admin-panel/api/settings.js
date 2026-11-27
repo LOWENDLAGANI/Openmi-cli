@@ -101,6 +101,9 @@ function formatSettings(row, supabaseUrl) {
       typeof row?.global_daily_token_limit === "number" ? row.global_daily_token_limit : 150000000,
     payment_link: row?.payment_link || DEFAULT_PAYMENT_LINK,
     topup_paused: Boolean(row?.topup_paused),
+    referral_enabled: row?.referral_enabled !== false,
+    referral_inviter_coins: Number(row?.referral_inviter_coins ?? 3),
+    referral_invitee_coins: Number(row?.referral_invitee_coins ?? 3),
     models: normalizeModels(row?.models, row?.models).map(publicModel),
     updated_at: row?.updated_at || null,
   };
@@ -164,6 +167,13 @@ export default async function handler(req, res) {
       const patch = { updated_at: new Date().toISOString() };
       if (typeof body.ai_enabled === "boolean") patch.ai_enabled = body.ai_enabled;
       if (typeof body.topup_paused === "boolean") patch.topup_paused = body.topup_paused;
+      if (typeof body.referral_enabled === "boolean") patch.referral_enabled = body.referral_enabled;
+      if (body.referral_inviter_coins !== undefined) {
+        patch.referral_inviter_coins = Math.max(0, Math.floor(Number(body.referral_inviter_coins) || 0));
+      }
+      if (body.referral_invitee_coins !== undefined) {
+        patch.referral_invitee_coins = Math.max(0, Math.floor(Number(body.referral_invitee_coins) || 0));
+      }
       if (typeof body.llm_base_url === "string" && body.llm_base_url.trim()) {
         patch.llm_base_url = body.llm_base_url.trim().replace(/\/+$/, "");
       }

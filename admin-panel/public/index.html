@@ -293,6 +293,21 @@
             Pause checkout &amp; receipt uploads on <code>/pay</code>
           </label>
         </div>
+
+        <div class="field">
+          <label for="referral-inviter-coins">Invite Commission — Inviter (Coins)</label>
+          <input id="referral-inviter-coins" type="number" min="0" step="1" class="input mono" value="3" />
+          <label style="display:inline-flex;align-items:center;gap:8px;margin-top:8px;font-weight:500;">
+            <input id="referral-enabled" type="checkbox" checked />
+            Enable Referral / Invite Commission program
+          </label>
+        </div>
+
+        <div class="field">
+          <label for="referral-invitee-coins">Invite Welcome Bonus — Friend (Coins)</label>
+          <input id="referral-invitee-coins" type="number" min="0" step="1" class="input mono" value="3" />
+          <span class="hint">Granted automatically on the invited user's first Paid pass.</span>
+        </div>
       </div>
 
       <div id="test-result" class="inline-status hidden"></div>

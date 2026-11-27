@@ -5,11 +5,19 @@ const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_5VfWWlMRio4X-dCfq8IZnw_oYPbh6db
 const CREDITS_ENDPOINT = `${SUPABASE_URL}/functions/v1/credits`;
 const MODELS_ENDPOINT = `${SUPABASE_URL}/functions/v1/models`;
 const REDEEM_ENDPOINT = `${SUPABASE_URL}/functions/v1/redeem`;
+const REFERRALS_ENDPOINT = `${SUPABASE_URL}/functions/v1/referrals`;
+const REF_STORAGE_KEY = "openmi_pending_ref_code";
 
 // Preserve legacy `/?code=XXXX-XXXX` links by forwarding directly to `/verify`.
 const initialParams = new URLSearchParams(window.location.search);
 if (initialParams.get("code")) {
   window.location.replace(`/verify${window.location.search}`);
+}
+const initialRef = (initialParams.get("ref") || "").trim().toUpperCase();
+if (initialRef) {
+  try {
+    localStorage.setItem(REF_STORAGE_KEY, initialRef);
+  } catch (_) {}
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
@@ -254,6 +262,7 @@ function renderLedger(rows) {
     admin_grant: { label: "Credit Grant", cls: "badge-paid" },
     admin_pass: { label: "Pass Update", cls: "badge-paid" },
     redeem_code: { label: "Coin Code", cls: "badge-paid" },
+    referral_bonus: { label: "Invite Bonus", cls: "badge-paid" },
   };
 
   const fmtDelta = (n) => {
@@ -319,8 +328,78 @@ async function loadDashboard() {
 
     renderCredits(creditsData);
     renderLedger(ledgerRes.error ? [] : ledgerRes.data || []);
+    await loadReferrals();
   } catch (err) {
     setError(`Failed to load account status: ${err.message}`);
+  }
+}
+
+let currentReferralCode = "";
+
+function renderReferrals(r) {
+  currentReferralCode = r.code || "";
+  const inviterCoins = Number(r.inviter_coins ?? 3);
+  const inviteeCoins = Number(r.invitee_coins ?? 3);
+  const stats = r.stats || {};
+
+  $("referral-code-text").textContent = currentReferralCode || "—";
+  $("referral-earned-badge").textContent = `${stats.coins_earned ?? 0} Coins earned`;
+  $("referral-rule-desc").textContent = r.referral_enabled === false
+    ? "The referral program is currently paused."
+    : `Share your link or code. You earn +${inviterCoins} Coins and your friend earns +${inviteeCoins} Coins once they upgrade to a Paid pass for the first time.`;
+  $("ref-stat-total").textContent = String(stats.total_invited ?? 0);
+  $("ref-stat-pending").textContent = String(stats.pending_count ?? 0);
+  $("ref-stat-rewarded").textContent = String(stats.rewarded_count ?? 0);
+
+  const statusEl = $("referral-referred-status");
+  const applyForm = $("apply-ref-form");
+  if (r.referred_by) {
+    applyForm.classList.add("hidden");
+    statusEl.classList.remove("hidden");
+    if (r.referred_by.status === "rewarded") {
+      statusEl.textContent = `Referred via ${r.referred_by.code} · +${r.referred_by.invitee_coins_granted} Coins welcome bonus granted!`;
+    } else {
+      statusEl.textContent = `Referred via ${r.referred_by.code} · Pending: upgrade to a Paid pass once to unlock +${inviteeCoins} Coins for you and +${inviterCoins} Coins for your inviter.`;
+    }
+  } else if (r.referral_enabled !== false && !currentCredits?.is_paid) {
+    statusEl.classList.add("hidden");
+    applyForm.classList.remove("hidden");
+  } else {
+    statusEl.classList.add("hidden");
+    applyForm.classList.add("hidden");
+  }
+}
+
+async function loadReferrals() {
+  if (!currentSession?.access_token) return;
+  try {
+    // Auto-apply any pending ?ref=CODE captured before sign-in
+    let pendingRef = "";
+    try {
+      pendingRef = (localStorage.getItem(REF_STORAGE_KEY) || "").trim().toUpperCase();
+    } catch (_) {}
+    if (pendingRef) {
+      try {
+        localStorage.removeItem(REF_STORAGE_KEY);
+      } catch (_) {}
+      await fetch(REFERRALS_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${currentSession.access_token}`,
+        },
+        body: JSON.stringify({ code: pendingRef }),
+      }).catch(() => {});
+    }
+
+    const resp = await fetch(REFERRALS_ENDPOINT, {
+      headers: { Authorization: `Bearer ${currentSession.access_token}` },
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    renderReferrals(data);
+  } catch (_) {
+    // non-fatal
   }
 }
 
@@ -403,6 +482,60 @@ $("redeem-form")?.addEventListener("submit", async (e) => {
   } finally {
     btn.disabled = false;
     btn.textContent = "Redeem";
+  }
+});
+
+$("btn-copy-ref-code")?.addEventListener("click", async (e) => {
+  if (!currentReferralCode) return;
+  try {
+    await navigator.clipboard.writeText(currentReferralCode);
+    e.currentTarget.textContent = "Copied";
+    setTimeout(() => { e.currentTarget.textContent = "Copy Code"; }, 1400);
+  } catch (_) {}
+});
+
+$("btn-copy-ref-link")?.addEventListener("click", async (e) => {
+  if (!currentReferralCode) return;
+  const link = `${window.location.origin}/login?ref=${encodeURIComponent(currentReferralCode)}`;
+  try {
+    await navigator.clipboard.writeText(link);
+    e.currentTarget.textContent = "Copied Link";
+    setTimeout(() => { e.currentTarget.textContent = "Copy Invite Link"; }, 1400);
+  } catch (_) {}
+});
+
+$("apply-ref-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!currentSession?.access_token) return;
+  const input = $("apply-ref-input");
+  const btn = $("btn-apply-ref");
+  const msgEl = $("apply-ref-msg");
+  const code = (input.value || "").trim().toUpperCase();
+  if (!code) return;
+
+  btn.disabled = true;
+  msgEl.style.color = "var(--ink-muted)";
+  msgEl.textContent = "Applying…";
+  try {
+    const resp = await fetch(REFERRALS_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${currentSession.access_token}`,
+      },
+      body: JSON.stringify({ code }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.message || data.error || `HTTP ${resp.status}`);
+    msgEl.style.color = "var(--ok)";
+    msgEl.textContent = data.message || "Invite code applied!";
+    input.value = "";
+    await loadReferrals();
+  } catch (err) {
+    msgEl.style.color = "var(--danger)";
+    msgEl.textContent = err.message || "Could not apply invite code.";
+  } finally {
+    btn.disabled = false;
   }
 });
 
