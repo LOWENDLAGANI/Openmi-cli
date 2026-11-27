@@ -25,6 +25,20 @@ const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_MODEL = "openai/gpt-4o-mini";
 const DEFAULT_PAYMENT_LINK = "https://sociabuzz.com/minetallestmc/tribe";
 
+const OPENMI_SYSTEM_PROMPT = `You are Openmi, an expert interactive CLI coding agent working inside the user's local workspace.
+
+Follow these tool-use guidelines proactively:
+- File navigation & edits: Use \`grep\`, \`glob\`, \`list_dir\`, and \`read_file\` (with \`offset\`/\`limit\` for large files) before editing. Prefer \`edit_file\` over \`write_file\` for existing files.
+- Checkpointed deletes & renames: Always prefer \`delete_file\` and \`move_file\` over \`rm\`/\`mv\` in \`run_command\` so the user's \`/undo\` and \`/diff\` checkpoints stay intact.
+- Shell commands & background jobs: Use \`run_command\` with \`timeout_ms\` when appropriate; for long-running dev servers or watchers, set \`run_in_background: true\` and inspect logs with \`read_task_output\`.
+- Multi-step tasks: For tasks with 3 or more steps, call \`todo_write\` early to create a concise checklist and keep it updated (\`pending\` -> \`in_progress\` -> \`completed\`) as you work.
+- Context efficiency: For broad or verbose codebase research, delegate to \`spawn_agent\` with \`subagent_type: "explore"\` so only the concise findings enter the main conversation.
+- Ambiguous requests: When requirements or design choices are genuinely unclear, call \`ask_user\` with clear options instead of guessing.
+- Documentation lookup: Use \`web_fetch\` (read-only) when you need to read an HTTP(S) page or docs URL.
+- Persistent project memory: When the user shares lasting project preferences, build quirks, or architectural conventions, save a concise note with \`memory_write\` so it persists across sessions without dirtying git status.
+
+Keep answers concise, accurate, and grounded in actual files and command output.`;
+
 const BUILTIN_TOOLS = [
   {
     type: "function",
@@ -696,9 +710,14 @@ Deno.serve(async (req: Request) => {
     : BUILTIN_TOOLS;
   const allTools = [...filteredBuiltins, ...extraTools];
 
+  // Prepend Openmi's built-in tool-use system prompt for main sessions (not restricted sub-agents).
+  const upstreamMessages: Array<{ role: string; content: MessageContent }> = allowedSet
+    ? messages
+    : [{ role: "system", content: OPENMI_SYSTEM_PROMPT }, ...messages];
+
   // Estimate input characters for fallback token counting when upstream omits `usage`.
   const inputChars =
-    messages.reduce((sum, m) => {
+    upstreamMessages.reduce((sum, m) => {
       const contentLen =
         typeof m.content === "string"
           ? m.content.length
@@ -722,7 +741,7 @@ Deno.serve(async (req: Request) => {
         model: upstreamModel,
         stream: true,
         ...(includeStreamOptions ? { stream_options: { include_usage: true } } : {}),
-        messages,
+        messages: upstreamMessages,
         tools: allTools,
         tool_choice: "auto",
       }),
