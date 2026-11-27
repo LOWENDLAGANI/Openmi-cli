@@ -25,6 +25,8 @@ Set secrets in Supabase Dashboard → Edge Functions → Secrets (or `supabase s
 | `LLM_DEFAULT_MODEL` | `chat` | `openai/gpt-4o-mini` | Upstream model used for `openmi-default` |
 | `OPENMI_MODELS_JSON` | `models` | built-in list | JSON array of models served by `models` |
 | `OPENMI_PAY_URL` | `chat`, `credits` | `app_settings.payment_link` | Top-up link shown when credits run out |
+| `OPENMI_PROVIDER_URL` | `credits` | `<console-origin>/provider` | Web console BYOK `/provider` URL opened from `/model` |
+| `BYOK_ENCRYPTION_KEY` | `providers`, `chat` | — | High-entropy secret used to AES-256-GCM encrypt user BYOK API keys at rest (required for BYOK) |
 | `OPENMI_CLI_VERIFY_URL` | `cli-auth` | `<origin>/functions/v1/cli-auth/verify` | Custom web approval URL shown during `openmi login` |
 | `PAYMENT_LINK` | `payments` | built-in link | Payment page link |
 | `TOPUP_PAUSED` | `payments` | off | Pause new top-up submissions |
@@ -38,14 +40,15 @@ Credit costs and daily allowances are configured in `app_settings` (`credit_cost
 
 ## 3. Deploy Edge Functions
 
-Deploy all five functions with `verify_jwt = false` (matching `supabase/config.toml`; protected endpoints validate the user's bearer token via `admin.auth.getUser`):
+Deploy all six functions with `verify_jwt = false` (matching `supabase/config.toml`; protected endpoints validate the user's bearer token via `admin.auth.getUser`):
 
 ```sh
-supabase functions deploy cli-auth --no-verify-jwt
-supabase functions deploy models   --no-verify-jwt
-supabase functions deploy credits  --no-verify-jwt
-supabase functions deploy chat     --no-verify-jwt
-supabase functions deploy payments --no-verify-jwt
+supabase functions deploy cli-auth  --no-verify-jwt
+supabase functions deploy models    --no-verify-jwt
+supabase functions deploy credits   --no-verify-jwt
+supabase functions deploy chat      --no-verify-jwt
+supabase functions deploy payments  --no-verify-jwt
+supabase functions deploy providers --no-verify-jwt
 ```
 
 ## 4. Smoke test

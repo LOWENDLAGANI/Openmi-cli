@@ -25,6 +25,12 @@ import {
   getClientIp,
   releaseChatSlotAndRecordTokens,
 } from "../_shared/upstash.ts";
+import {
+  decryptApiKey,
+  normalizeByokModels,
+  parseByokModelId,
+  validateProviderBaseUrl,
+} from "../_shared/byok.ts";
 
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 const MAX_HARD_BODY_BYTES = 8 * 1024 * 1024; // 8 MB hard ceiling before JSON parse
@@ -639,15 +645,6 @@ Deno.serve(async (req: Request) => {
   }
 
   const globalApiKey = dbApiKey || (Deno.env.get("LLM_API_KEY") ?? "").trim();
-  if (!globalApiKey && !dbModels.some((m) => typeof m.api_key === "string" && m.api_key.trim())) {
-    return jsonResponse(
-      {
-        error: "llm_not_configured",
-        message: "Server missing LLM API key. Set it in the Admin Panel or Supabase Secrets.",
-      },
-      503,
-    );
-  }
   const globalBaseUrl = (dbBaseUrl || Deno.env.get("LLM_BASE_URL") || DEFAULT_BASE_URL).replace(
     /\/+$/,
     "",
@@ -702,113 +699,189 @@ Deno.serve(async (req: Request) => {
   }
 
   const requestedModel = String((body as Record<string, unknown>).model ?? "").trim() || "openmi-default";
-  const upstreamModel = requestedModel === "openmi-default" ? defaultModel : requestedModel;
-  // Per-model provider override: each catalog model may carry its own base_url + api_key,
-  // falling back to the global provider settings when blank.
-  const catalogEntry = dbModels.find((m) => m.id === requestedModel) ??
-    dbModels.find((m) => m.id === upstreamModel);
-  // Prevent arbitrary model injection & paid_only/credit_cost bypass: when a catalog is configured,
-  // only models explicitly listed in `app_settings.models` (or `openmi-default`) may be invoked.
-  if (dbModels.length > 0 && requestedModel !== "openmi-default" && !catalogEntry) {
-    return jsonResponse(
-      {
-        error: "invalid_model",
-        message: `Model '${requestedModel}' is not in the configured model catalog.`,
-      },
-      400,
-    );
-  }
-  const modelKey = typeof catalogEntry?.api_key === "string" ? catalogEntry.api_key.trim() : "";
-  const modelBase = typeof catalogEntry?.base_url === "string"
-    ? catalogEntry.base_url.trim().replace(/\/+$/, "")
-    : "";
-  const llmApiKey = modelKey || globalApiKey;
-  const llmBaseUrl = /^https?:\/\//i.test(modelBase) ? modelBase : globalBaseUrl;
-  if (!llmApiKey) {
-    return jsonResponse(
-      {
-        error: "llm_not_configured",
-        message: `No API key configured for model '${requestedModel}'. Set it in the Admin Panel.`,
-      },
-      503,
-    );
-  }
-  const { passModelId, creditCost, paidOnly } = resolveModelPricing(
-    dbModels,
-    requestedModel,
-    upstreamModel,
-    dbCreditCost,
-  );
+  const byokParsed = parseByokModelId(requestedModel);
 
-  // 4. Acquire or reuse 1-hour model pass atomically in Postgres
+  let isByok = false;
+  let byokProviderName = "";
+  let upstreamModel = requestedModel === "openmi-default" ? defaultModel : requestedModel;
+  let llmApiKey = "";
+  let llmBaseUrl = globalBaseUrl;
   let purchasedSessionId: string | null = null;
   let passMeta: Record<string, unknown> = {};
 
-  const { data: passResult, error: passErr } = await admin.rpc("acquire_model_pass", {
-    p_user_id: userId,
-    p_model_id: passModelId,
-    p_credit_cost: creditCost,
-    p_paid_only: paidOnly,
-    p_duration_minutes: dbPassDurationMinutes,
-  });
+  if (byokParsed) {
+    // 3b. BYOK path: resolve user-owned provider, verify model, decrypt key, bypass credits & daily caps.
+    const { data: providerRow, error: provErr } = await admin
+      .from("user_providers")
+      .select("id, name, base_url, api_key_enc, models")
+      .eq("id", byokParsed.providerId)
+      .eq("user_id", userId)
+      .maybeSingle();
 
-  if (passErr) {
-    return jsonResponse({ error: "credit_check_failed", message: passErr.message }, 500);
-  }
-
-  if (passResult && typeof passResult === "object") {
-    const res = passResult as Record<string, unknown>;
-    passMeta = res;
-    const status = String(res.status ?? "");
-
-    if (status === "plan_required") {
+    if (provErr) {
+      return jsonResponse({ error: "byok_lookup_failed", message: provErr.message }, 500);
+    }
+    if (!providerRow) {
       return jsonResponse(
         {
-          error: "plan_required",
-          message: `Model '${passModelId}' requires an active Paid pass. Upgrade at ${upgradeLink}`,
-          upgrade_url: upgradeLink,
+          error: "byok_provider_not_found",
+          message: "This BYOK provider was not found on your account. Re-select a model with /model.",
         },
-        403,
+        404,
       );
     }
 
-    if (status === "daily_token_limit_exceeded") {
-      const used = Number(res.daily_tokens_used ?? 0);
-      const limit = Number(res.daily_token_limit ?? 0);
-      const isPaid = Boolean(res.is_paid);
-      const upgradeHint = isPaid ? "" : ` or upgrade at ${upgradeLink}`;
+    const configuredModels = normalizeByokModels(providerRow.models);
+    if (
+      configuredModels.length > 0 &&
+      !configuredModels.some((m) => m.id === byokParsed.upstreamModel)
+    ) {
       return jsonResponse(
         {
-          error: "daily_token_limit_exceeded",
-          message: `Daily token limit reached (${used.toLocaleString("en-US")} / ${limit.toLocaleString("en-US")} input+output tokens used today). Resets at 00:00 UTC${upgradeHint}`,
-          daily_tokens_used: used,
-          daily_token_limit: limit,
-          next_reset_at: res.next_reset_at ?? null,
-          upgrade_url: upgradeLink,
+          error: "invalid_model",
+          message: `Model '${byokParsed.upstreamModel}' is not configured under provider '${providerRow.name}'.`,
         },
-        429,
+        400,
       );
     }
 
-    if (status === "insufficient_credits") {
-      const bal = Number(res.balance ?? 0);
-      const wallet = Number(res.wallet_credit ?? 0);
+    const urlCheck = validateProviderBaseUrl(providerRow.base_url);
+    if (!urlCheck.ok) {
+      return jsonResponse({ error: "invalid_base_url", message: urlCheck.error }, 400);
+    }
+
+    try {
+      llmApiKey = await decryptApiKey(String(providerRow.api_key_enc ?? ""));
+    } catch (err) {
       return jsonResponse(
         {
-          error: "out_of_credits",
-          message: `Insufficient credits for '${passModelId}' (needs ${creditCost} cr/hr; you have ${bal} daily + ${wallet} wallet). Resets at 00:00 UTC or upgrade at ${upgradeLink}`,
-          balance: bal,
-          wallet_credit: wallet,
-          required: creditCost,
-          next_reset_at: res.next_reset_at ?? null,
-          upgrade_url: upgradeLink,
+          error: "byok_decrypt_failed",
+          message: err instanceof Error ? err.message : "Failed to decrypt BYOK API key.",
         },
-        402,
+        503,
       );
     }
 
-    if (status === "purchased" && typeof res.session_id === "string") {
-      purchasedSessionId = res.session_id;
+    isByok = true;
+    byokProviderName = String(providerRow.name ?? "BYOK").trim() || "BYOK";
+    llmBaseUrl = urlCheck.url;
+    upstreamModel = byokParsed.upstreamModel;
+  } else {
+    // 3a. Managed catalog path
+    if (!globalApiKey && !dbModels.some((m) => typeof m.api_key === "string" && m.api_key.trim())) {
+      return jsonResponse(
+        {
+          error: "llm_not_configured",
+          message: "Server missing LLM API key. Set it in the Admin Panel or Supabase Secrets.",
+        },
+        503,
+      );
+    }
+
+    // Per-model provider override: each catalog model may carry its own base_url + api_key,
+    // falling back to the global provider settings when blank.
+    const catalogEntry = dbModels.find((m) => m.id === requestedModel) ??
+      dbModels.find((m) => m.id === upstreamModel);
+    // Prevent arbitrary model injection & paid_only/credit_cost bypass: when a catalog is configured,
+    // only models explicitly listed in `app_settings.models` (or `openmi-default`) may be invoked.
+    if (dbModels.length > 0 && requestedModel !== "openmi-default" && !catalogEntry) {
+      return jsonResponse(
+        {
+          error: "invalid_model",
+          message: `Model '${requestedModel}' is not in the configured model catalog.`,
+        },
+        400,
+      );
+    }
+    const modelKey = typeof catalogEntry?.api_key === "string" ? catalogEntry.api_key.trim() : "";
+    const modelBase = typeof catalogEntry?.base_url === "string"
+      ? catalogEntry.base_url.trim().replace(/\/+$/, "")
+      : "";
+    llmApiKey = modelKey || globalApiKey;
+    llmBaseUrl = /^https?:\/\//i.test(modelBase) ? modelBase : globalBaseUrl;
+    if (!llmApiKey) {
+      return jsonResponse(
+        {
+          error: "llm_not_configured",
+          message: `No API key configured for model '${requestedModel}'. Set it in the Admin Panel.`,
+        },
+        503,
+      );
+    }
+    const { passModelId, creditCost, paidOnly } = resolveModelPricing(
+      dbModels,
+      requestedModel,
+      upstreamModel,
+      dbCreditCost,
+    );
+
+    // 4. Acquire or reuse 1-hour model pass atomically in Postgres
+    const { data: passResult, error: passErr } = await admin.rpc("acquire_model_pass", {
+      p_user_id: userId,
+      p_model_id: passModelId,
+      p_credit_cost: creditCost,
+      p_paid_only: paidOnly,
+      p_duration_minutes: dbPassDurationMinutes,
+    });
+
+    if (passErr) {
+      return jsonResponse({ error: "credit_check_failed", message: passErr.message }, 500);
+    }
+
+    if (passResult && typeof passResult === "object") {
+      const res = passResult as Record<string, unknown>;
+      passMeta = res;
+      const status = String(res.status ?? "");
+
+      if (status === "plan_required") {
+        return jsonResponse(
+          {
+            error: "plan_required",
+            message: `Model '${passModelId}' requires an active Paid pass. Upgrade at ${upgradeLink}`,
+            upgrade_url: upgradeLink,
+          },
+          403,
+        );
+      }
+
+      if (status === "daily_token_limit_exceeded") {
+        const used = Number(res.daily_tokens_used ?? 0);
+        const limit = Number(res.daily_token_limit ?? 0);
+        const isPaid = Boolean(res.is_paid);
+        const upgradeHint = isPaid ? "" : ` or upgrade at ${upgradeLink}`;
+        return jsonResponse(
+          {
+            error: "daily_token_limit_exceeded",
+            message: `Daily token limit reached (${used.toLocaleString("en-US")} / ${limit.toLocaleString("en-US")} input+output tokens used today). Resets at 00:00 UTC${upgradeHint}`,
+            daily_tokens_used: used,
+            daily_token_limit: limit,
+            next_reset_at: res.next_reset_at ?? null,
+            upgrade_url: upgradeLink,
+          },
+          429,
+        );
+      }
+
+      if (status === "insufficient_credits") {
+        const bal = Number(res.balance ?? 0);
+        const wallet = Number(res.wallet_credit ?? 0);
+        return jsonResponse(
+          {
+            error: "out_of_credits",
+            message: `Insufficient credits for '${passModelId}' (needs ${creditCost} cr/hr; you have ${bal} daily + ${wallet} wallet). Resets at 00:00 UTC or upgrade at ${upgradeLink}`,
+            balance: bal,
+            wallet_credit: wallet,
+            required: creditCost,
+            next_reset_at: res.next_reset_at ?? null,
+            upgrade_url: upgradeLink,
+          },
+          402,
+        );
+      }
+
+      if (status === "purchased" && typeof res.session_id === "string") {
+        purchasedSessionId = res.session_id;
+      }
     }
   }
 
@@ -894,12 +967,12 @@ Deno.serve(async (req: Request) => {
   const estimatedInputTokens = Math.max(1, Math.ceil(inputChars / 4));
 
   // 4b. Tier-based payload, image, input-token, and Upstash Redis rate-limit enforcement
-  const isPaid = Boolean(passMeta.is_paid);
+  const isPaid = isByok || Boolean(passMeta.is_paid);
   const maxBodyBytes = isPaid ? MAX_PAID_BODY_BYTES : MAX_FREE_BODY_BYTES;
   const maxImages = isPaid ? 12 : 6;
   // Base64 overhead is ~4/3 of raw bytes.
   const maxSingleImageChars = isPaid ? 5_600_000 : 2_800_000;
-  const maxInputTokens = isPaid ? paidMaxInputTokens : freeMaxInputTokens;
+  const maxInputTokens = isByok ? 0 : (isPaid ? paidMaxInputTokens : freeMaxInputTokens);
   const maxOutputTokens = isPaid ? paidMaxOutputTokens : freeMaxOutputTokens;
 
   if (bodyBytes > maxBodyBytes) {
@@ -934,21 +1007,24 @@ Deno.serve(async (req: Request) => {
   }
 
   const streamId = crypto.randomUUID();
-  const dailyTokensUsed = Number(passMeta.daily_tokens_used ?? 0);
-  const dailyTokenLimit = Number(passMeta.daily_token_limit ?? 0);
+  const dailyTokensUsed = isByok ? 0 : Number(passMeta.daily_tokens_used ?? 0);
+  const dailyTokenLimit = isByok ? 0 : Number(passMeta.daily_token_limit ?? 0);
+  const effectiveRpm = isByok ? Math.max(paidRpm, 60) : (isPaid ? paidRpm : freeRpm);
+  const effectiveBurst10s = isByok ? Math.max(paidBurst10s, 15) : (isPaid ? paidBurst10s : freeBurst10s);
+  const effectiveConcurrency = isByok ? Math.max(paidMaxConcurrency, 4) : (isPaid ? paidMaxConcurrency : freeMaxConcurrency);
 
   const rl = await checkAndAcquireChatLimits({
     userId,
     clientIp,
     streamId,
-    rpmLimit: isPaid ? paidRpm : freeRpm,
-    burst10sLimit: isPaid ? paidBurst10s : freeBurst10s,
-    tpmLimit: isPaid ? paidTpm : freeTpm,
-    maxConcurrency: isPaid ? paidMaxConcurrency : freeMaxConcurrency,
+    rpmLimit: effectiveRpm,
+    burst10sLimit: effectiveBurst10s,
+    tpmLimit: isByok ? 0 : (isPaid ? paidTpm : freeTpm),
+    maxConcurrency: effectiveConcurrency,
     ipRpmLimit: ipChatRpm,
     globalRpmLimit: globalChatRpm,
-    globalDailyTokenLimit,
-    estimatedInputTokens,
+    globalDailyTokenLimit: isByok ? 0 : globalDailyTokenLimit,
+    estimatedInputTokens: isByok ? 0 : estimatedInputTokens,
     dailyTokensUsed,
     dailyTokenLimit,
   });
@@ -957,16 +1033,16 @@ Deno.serve(async (req: Request) => {
     await refundIfNewlyPurchased();
     const rateHeaders: Record<string, string> = {
       "Retry-After": String(Math.max(1, rl.retryAfterSecs)),
-      "X-RateLimit-Limit-RPM": String(isPaid ? paidRpm : freeRpm),
+      "X-RateLimit-Limit-RPM": String(effectiveRpm),
       "X-RateLimit-Remaining-RPM": String(rl.remaining),
       "X-RateLimit-Reset": String(rl.resetSecs),
     };
     const reasonMessages: Record<string, string> = {
       account_cooldown: `Temporarily paused due to repeated rate-limit violations. Try again in ${rl.retryAfterSecs}s.`,
-      concurrency_limit: `Too many concurrent requests active (max ${isPaid ? paidMaxConcurrency : freeMaxConcurrency} on your plan). Retrying in ${rl.retryAfterSecs}s.`,
+      concurrency_limit: `Too many concurrent requests active (max ${effectiveConcurrency}). Retrying in ${rl.retryAfterSecs}s.`,
       daily_token_limit_exceeded: `Daily token limit reached (${dailyTokensUsed.toLocaleString("en-US")} / ${dailyTokenLimit.toLocaleString("en-US")} tokens). Resets at 00:00 UTC.`,
       rate_limited_burst: `Sending requests too quickly. Please wait ${rl.retryAfterSecs}s.`,
-      rate_limited_rpm: `Rate limit reached (${isPaid ? paidRpm : freeRpm} requests/min). Retrying in ${rl.retryAfterSecs}s.`,
+      rate_limited_rpm: `Rate limit reached (${effectiveRpm} requests/min). Retrying in ${rl.retryAfterSecs}s.`,
       rate_limited_tpm: `Token throughput limit reached (${(isPaid ? paidTpm : freeTpm).toLocaleString("en-US")} tokens/min). Please wait ${rl.retryAfterSecs}s.`,
       rate_limited_ip: `Too many requests from this network. Please wait ${rl.retryAfterSecs}s.`,
       global_rate_limited: `Service is experiencing high traffic. Please retry in ${rl.retryAfterSecs}s.`,
@@ -1003,8 +1079,8 @@ Deno.serve(async (req: Request) => {
       body: JSON.stringify({
         model: upstreamModel,
         stream: true,
-        max_tokens: maxOutputTokens,
-        ...(includeStreamOptions ? { stream_options: { include_usage: true } } : {}),
+        ...(isByok ? {} : { max_tokens: maxOutputTokens }),
+        ...(includeStreamOptions && !isByok ? { stream_options: { include_usage: true } } : {}),
         messages: upstreamMessages,
         tools: allTools,
         tool_choice: "auto",
@@ -1015,7 +1091,7 @@ Deno.serve(async (req: Request) => {
   let upstreamResp: Response;
   try {
     upstreamResp = await fetchUpstream(true);
-    if (upstreamResp.status === 400) {
+    if (upstreamResp.status === 400 && !isByok) {
       const probeText = await upstreamResp.clone().text().catch(() => "");
       if (/stream_options/i.test(probeText)) {
         upstreamResp = await fetchUpstream(false);
@@ -1032,6 +1108,17 @@ Deno.serve(async (req: Request) => {
   if (!upstreamResp.ok || !upstreamResp.body) {
     await Promise.all([refundIfNewlyPurchased(), releaseSlot(0)]);
     const errText = await upstreamResp.text().catch(() => "");
+    if (isByok) {
+      const snippet = errText.slice(0, 400) || upstreamResp.statusText;
+      return jsonResponse(
+        {
+          error: "byok_upstream_error",
+          status: upstreamResp.status,
+          message: `BYOK provider '${byokProviderName}' returned HTTP ${upstreamResp.status}: ${snippet}`,
+        },
+        502,
+      );
+    }
     return jsonResponse(
       {
         error: "upstream_error",
@@ -1053,6 +1140,10 @@ Deno.serve(async (req: Request) => {
   const commitTokenUsage = async () => {
     if (usageRecorded) return;
     usageRecorded = true;
+    if (isByok) {
+      await releaseSlot(0);
+      return;
+    }
     const tokensToRecord =
       reportedTokens > 0
         ? reportedTokens

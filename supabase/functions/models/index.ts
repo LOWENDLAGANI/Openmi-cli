@@ -7,6 +7,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { checkSimpleRateLimit, getClientIp } from "../_shared/upstash.ts";
+import { formatByokModelId, normalizeByokModels } from "../_shared/byok.ts";
 
 interface ModelInfo {
   id: string;
@@ -16,6 +17,8 @@ interface ModelInfo {
   paid_only: boolean;
   display_name?: string;
   description?: string;
+  is_byok?: boolean;
+  provider_name?: string;
 }
 
 const DEFAULT_MODELS: ModelInfo[] = [
@@ -109,11 +112,15 @@ Deno.serve(async (req: Request) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  let catalog: ModelInfo[] = loadEnvModels();
+  let hasUserByok = false;
+
   if (supabaseUrl && serviceRoleKey) {
+    const admin = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
     try {
-      const admin = createClient(supabaseUrl, serviceRoleKey, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
       const { data } = await admin
         .from("app_settings")
         .select("models")
@@ -121,12 +128,63 @@ Deno.serve(async (req: Request) => {
         .maybeSingle();
       const normalized = normalizeModelList(data?.models);
       if (normalized) {
-        return jsonResponse(normalized, 200);
+        catalog = normalized;
       }
     } catch (_) {
       // Fall back to env/default if app_settings is not migrated yet.
     }
+
+    // If the caller supplied a valid user JWT, append their personal BYOK models.
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+    if (bearer) {
+      try {
+        const { data: userData } = await admin.auth.getUser(bearer);
+        const userId = userData?.user?.id;
+        if (userId) {
+          hasUserByok = true;
+          const { data: providers } = await admin
+            .from("user_providers")
+            .select("id, name, models")
+            .eq("user_id", userId)
+            .order("created_at", { ascending: true });
+
+          if (Array.isArray(providers)) {
+            const byokModels: ModelInfo[] = [];
+            for (const p of providers) {
+              const providerId = typeof p.id === "string" ? p.id : "";
+              const providerName = typeof p.name === "string" && p.name.trim() ? p.name.trim() : "BYOK";
+              if (!providerId) continue;
+              const entries = normalizeByokModels(p.models);
+              for (const m of entries) {
+                const label = m.display_name || m.id;
+                byokModels.push({
+                  id: formatByokModelId(providerId, m.id),
+                  label,
+                  display_name: label,
+                  description: `BYOK · ${providerName} (${m.id})`,
+                  context_window: m.context_window ?? 128000,
+                  credit_cost: 0,
+                  paid_only: false,
+                  is_byok: true,
+                  provider_name: providerName,
+                });
+              }
+            }
+            if (byokModels.length > 0) {
+              catalog = [...catalog, ...byokModels];
+            }
+          }
+        }
+      } catch (_) {
+        // Ignore if user_providers table is not migrated yet or token is invalid.
+      }
+    }
   }
 
-  return jsonResponse(loadEnvModels(), 200);
+  return jsonResponse(
+    catalog,
+    200,
+    hasUserByok ? { "Cache-Control": "private, no-store" } : undefined,
+  );
 });

@@ -33,15 +33,26 @@ pub async fn execute(json: bool, api_url: Option<String>) -> Result<(), CliError
         );
     } else {
         for m in models {
-            let tier = if m.paid_only { "[Paid]" } else { "Free" };
-            println!(
-                "{:<28} {:<24} {:>3} cr/hr  {:<6}  {}k ctx",
-                m.id,
-                m.name(),
-                m.credit_cost,
-                tier,
-                m.context_window / 1000
-            );
+            if m.is_byok {
+                let prov = m.provider_name.as_deref().unwrap_or("BYOK");
+                println!(
+                    "{:<28} {:<24}  [BYOK · {}]  {}k ctx",
+                    m.id,
+                    m.name(),
+                    prov,
+                    m.context_window / 1000
+                );
+            } else {
+                let tier = if m.paid_only { "[Paid]" } else { "Free" };
+                println!(
+                    "{:<28} {:<24} {:>3} cr/hr  {:<6}  {}k ctx",
+                    m.id,
+                    m.name(),
+                    m.credit_cost,
+                    tier,
+                    m.context_window / 1000
+                );
+            }
         }
     }
 

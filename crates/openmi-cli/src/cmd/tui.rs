@@ -265,6 +265,40 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                 session.lock().await.set_model(chosen.id.clone());
                                 app.push_system(format_model_switch_message(&app, &chosen));
                             }
+                            KeyAction::OpenByokProvider => {
+                                let mut url = app
+                                    .credit_status
+                                    .as_ref()
+                                    .and_then(|cs| cs.effective_provider_url());
+                                if url.is_none() {
+                                    if let (Some(base), Some(tok)) = (
+                                        base_url_for_credits.as_deref(),
+                                        bearer_for_credits.as_deref(),
+                                    ) {
+                                        let ep = format!("{base}/functions/v1/credits");
+                                        if let Ok(status) = fetch_credit_status(&ep, tok).await {
+                                            url = status.effective_provider_url();
+                                            app.credit_status = Some(status);
+                                        }
+                                    }
+                                }
+                                let provider_url = url
+                                    .or_else(|| {
+                                        std::env::var("OPENMI_PROVIDER_URL")
+                                            .ok()
+                                            .filter(|s| !s.trim().is_empty())
+                                    })
+                                    .unwrap_or_else(|| "https://openmi.app/provider".to_string());
+                                if crate::browser::open_url(&provider_url) {
+                                    app.push_system(format!(
+                                        "Opened your BYOK provider settings in the browser:\n  {provider_url}\nAdd your API key & models there, then run `/model` to see them here."
+                                    ));
+                                } else {
+                                    app.push_system(format!(
+                                        "Open this URL in your browser to add your own API key:\n  {provider_url}\nOnce saved, run `/model` to see your custom models here."
+                                    ));
+                                }
+                            }
                             KeyAction::SelectedFolder(chosen) => {
                                 switch_project_folder(
                                     chosen,
@@ -761,6 +795,13 @@ fn format_credit_summary(status: &CreditStatus) -> String {
 }
 
 fn format_model_switch_message(app: &TuiApp, chosen: &ModelInfo) -> String {
+    if chosen.is_byok {
+        let prov = chosen.provider_name.as_deref().unwrap_or("BYOK");
+        return format!(
+            "Switched to {} (BYOK · {prov} — 0 credits, no daily token cap).",
+            chosen.name()
+        );
+    }
     let is_paid = app
         .credit_status
         .as_ref()
@@ -881,6 +922,7 @@ enum KeyAction {
     Submit(String),
     ConfirmedFullAccess,
     SelectedModel(ModelInfo),
+    OpenByokProvider,
     SelectedFolder(PathBuf),
     SettingsChanged(Option<PermissionMode>),
     CycleMode(PermissionMode),
@@ -1006,6 +1048,10 @@ fn handle_key_event(
             KeyCode::Up | KeyCode::Char('k') => selector.move_up(),
             KeyCode::Down | KeyCode::Char('j') => selector.move_down(),
             KeyCode::Enter => {
+                if selector.is_add_byok_selected() {
+                    app.model_selector = None;
+                    return KeyAction::OpenByokProvider;
+                }
                 if let Some(chosen) = selector.current().cloned() {
                     app.model_selector = None;
                     return KeyAction::SelectedModel(chosen);

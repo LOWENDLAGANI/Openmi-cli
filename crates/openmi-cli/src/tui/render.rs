@@ -974,38 +974,51 @@ fn render_model_selector_modal(frame: &mut Frame<'_>, app: &TuiApp, selector: &M
         for (idx, m) in selector.models.iter().enumerate() {
             let is_sel = idx == selector.selected;
             let prefix = if is_sel { "▸ " } else { "  " };
-            let credit_label = if m.credit_cost == 1 {
-                "1 credit/hr".to_string()
+            let mut spans = vec![Span::styled(
+                format!("{prefix}{}", m.name()),
+                if is_sel {
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Reset)
+                },
+            )];
+            if m.is_byok {
+                let prov = m.provider_name.as_deref().unwrap_or("Custom");
+                spans.push(Span::styled(
+                    format!("  ·  0 credits ({prov})"),
+                    Style::default().fg(MUTED),
+                ));
+                spans.push(Span::styled(
+                    "  [BYOK]",
+                    Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD),
+                ));
             } else {
-                format!("{} credits/hr", m.credit_cost)
-            };
-            let mut spans = vec![
-                Span::styled(
-                    format!("{prefix}{}", m.name()),
-                    if is_sel {
-                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(Color::Reset)
-                    },
-                ),
-                Span::styled(format!("  ·  {credit_label}"), Style::default().fg(MUTED)),
-            ];
-            if let Some((active_id, mins)) = active_pass {
-                if active_id == m.id {
+                let credit_label = if m.credit_cost == 1 {
+                    "1 credit/hr".to_string()
+                } else {
+                    format!("{} credits/hr", m.credit_cost)
+                };
+                spans.push(Span::styled(
+                    format!("  ·  {credit_label}"),
+                    Style::default().fg(MUTED),
+                ));
+                if let Some((active_id, mins)) = active_pass {
+                    if active_id == m.id {
+                        spans.push(Span::styled(
+                            format!("  Active ({mins}m left)"),
+                            Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD),
+                        ));
+                    }
+                }
+                if m.paid_only {
+                    let badge_color = if is_paid_user { PRO_BADGE } else { WARNING };
                     spans.push(Span::styled(
-                        format!("  Active ({mins}m left)"),
-                        Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD),
+                        "  [Pro]",
+                        Style::default()
+                            .fg(badge_color)
+                            .add_modifier(Modifier::BOLD),
                     ));
                 }
-            }
-            if m.paid_only {
-                let badge_color = if is_paid_user { PRO_BADGE } else { WARNING };
-                spans.push(Span::styled(
-                    "  [Pro]",
-                    Style::default()
-                        .fg(badge_color)
-                        .add_modifier(Modifier::BOLD),
-                ));
             }
             lines.push(Line::from(spans));
             if is_sel {
@@ -1018,6 +1031,24 @@ fn render_model_selector_modal(frame: &mut Frame<'_>, app: &TuiApp, selector: &M
             }
         }
     }
+
+    lines.push(Line::from(Span::styled(
+        "  ────────────────────────────────────────",
+        Style::default().fg(BORDER_SUBTLE),
+    )));
+    let add_sel = selector.is_add_byok_selected();
+    let add_prefix = if add_sel { "▸ " } else { "  " };
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("{add_prefix}+ Add your own API key"),
+            if add_sel {
+                Style::default().fg(USER_COLOR).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(ACCENT)
+            },
+        ),
+        Span::styled("  ·  opens /provider in browser", Style::default().fg(MUTED)),
+    ]));
 
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
@@ -1444,6 +1475,8 @@ mod tests {
                     paid_only: false,
                     display_name: Some("Openmi".into()),
                     description: Some("Balanced everyday model".into()),
+                    is_byok: false,
+                    provider_name: None,
                 },
                 ModelInfo {
                     id: "anthropic/claude-3.5-sonnet".into(),
@@ -1453,6 +1486,19 @@ mod tests {
                     paid_only: true,
                     display_name: None,
                     description: None,
+                    is_byok: false,
+                    provider_name: None,
+                },
+                ModelInfo {
+                    id: "byok:11111111-1111-1111-1111-111111111111:gpt-4o".into(),
+                    label: "GPT-4o".into(),
+                    context_window: 128_000,
+                    credit_cost: 0,
+                    paid_only: false,
+                    display_name: Some("My GPT-4o".into()),
+                    description: Some("BYOK · OpenAI (gpt-4o)".into()),
+                    is_byok: true,
+                    provider_name: Some("OpenAI".into()),
                 },
             ],
             "openmi-default",

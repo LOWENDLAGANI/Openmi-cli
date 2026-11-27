@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#FFB5D8" />
+  <meta name="description" content="Openmi BYOK Providers — connect your own OpenAI-compatible API keys and custom models for Openmi CLI." />
+  <title>Providers (BYOK) — Openmi</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/dashboard.css" />
+  <style>
+    .byok-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+    @media (max-width: 960px) {
+      .byok-grid { grid-template-columns: 1fr; }
+    }
+    .form-card, .list-card {
+      background: var(--surface, #fff);
+      border: 1px solid var(--border, #e5e7eb);
+      border-radius: 14px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .form-card h2, .list-card h2 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .field label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink-muted, #52525b);
+    }
+    .field input, .field select {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 9px 11px;
+      border-radius: 9px;
+      border: 1px solid var(--border-strong, #d4d4d8);
+      background: var(--surface, #fff);
+      color: var(--ink, #111827);
+      font-size: 13px;
+      font-family: inherit;
+    }
+    .field input.mono {
+      font-family: "JetBrains Mono", monospace;
+    }
+    .field-hint {
+      font-size: 12px;
+      color: var(--ink-muted, #6b7280);
+      margin: 0;
+    }
+    .field-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    @media (max-width: 600px) {
+      .field-row { grid-template-columns: 1fr; }
+    }
+    .models-list-editor {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .model-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 88px auto;
+      gap: 6px;
+      align-items: center;
+    }
+    @media (max-width: 640px) {
+      .model-row { grid-template-columns: 1fr; }
+    }
+    .model-row input {
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border-strong, #d4d4d8);
+      font-size: 12.5px;
+      min-width: 0;
+    }
+    .provider-item {
+      border: 1px solid var(--border, #e5e7eb);
+      border-radius: 12px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .provider-item-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .provider-title {
+      font-weight: 600;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .provider-meta {
+      font-size: 12px;
+      color: var(--ink-muted, #6b7280);
+      word-break: break-all;
+    }
+    .model-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .model-pill {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11.5px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(255, 181, 216, 0.2);
+      border: 1px solid rgba(255, 181, 216, 0.55);
+      color: var(--ink, #111827);
+    }
+    .provider-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .btn-danger {
+      background: #fee2e2;
+      color: #b91c1c;
+      border: 1px solid #fecaca;
+    }
+    .btn-danger:hover {
+      background: #fecaca;
+    }
+    .alert-success {
+      background: #ecfdf5;
+      border: 1px solid #a7f3d0;
+      color: #065f46;
+    }
+    .empty-state {
+      padding: 20px;
+      text-align: center;
+      color: var(--ink-muted, #6b7280);
+      font-size: 13px;
+      border: 1px dashed var(--border-strong, #d4d4d8);
+      border-radius: 10px;
+    }
+  </style>
+</head>
+<body>
+  <header class="mobile-bar">
+    <a href="/" class="brand-link" style="padding:0;">
+      <span class="brand-mark" aria-hidden="true">O</span>
+      <span class="brand-title">Openmi</span>
+    </a>
+    <nav class="mobile-nav" aria-label="Mobile navigation">
+      <a href="/" class="btn btn-sm btn-secondary">Dashboard</a>
+      <a href="/provider" class="btn btn-sm btn-primary">BYOK</a>
+      <a href="/pay" class="btn btn-sm btn-secondary">Passes</a>
+    </nav>
+  </header>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Console navigation">
+      <div class="sidebar-top">
+        <a href="/" class="brand-link">
+          <span class="brand-mark" aria-hidden="true">O</span>
+          <div>
+            <div class="brand-title">Openmi</div>
+            <div class="brand-sub">Developer Console</div>
+          </div>
+        </a>
+
+        <nav class="side-nav">
+          <div class="side-nav-label">Console</div>
+          <a href="/" class="side-link">Overview</a>
+          <a href="/#models" class="side-link">Model Availability</a>
+          <a href="/#activity" class="side-link">Usage &amp; Ledger</a>
+
+          <div class="side-nav-label" style="margin-top:8px;">Account</div>
+          <a href="/provider" class="side-link is-active">Providers (BYOK)</a>
+          <a href="/pay" class="side-link">Passes &amp; Billing</a>
+        </nav>
+      </div>
+
+      <div class="sidebar-footer">
+        <div id="sidebar-account" class="account-card hidden">
+          <div class="account-row">
+            <span class="account-email" id="sidebar-email">—</span>
+            <span class="badge badge-free" id="sidebar-tier">BYOK</span>
+          </div>
+          <div class="account-row">
+            <span class="brand-sub">0 credits · encrypted keys</span>
+            <button type="button" class="link-btn" id="btn-signout">Sign out</button>
+          </div>
+        </div>
+        <a id="sidebar-signin-btn" href="/login?next=/provider" class="btn btn-primary hidden">Sign in</a>
+      </div>
+    </aside>
+
+    <main class="main-area">
+      <div class="page-header">
+        <div>
+          <h1>Providers (BYOK)</h1>
+          <p class="page-desc">Connect your own OpenAI-compatible API keys. Saved models appear immediately in <code>/model</code> inside Openmi CLI with 0 credit cost and no daily token cap.</p>
+        </div>
+        <div class="header-actions">
+          <button type="button" class="btn btn-secondary" id="btn-refresh">Refresh</button>
+        </div>
+      </div>
+
+      <div id="status-banner" class="alert hidden" role="status"></div>
+
+      <section id="signed-out-section" class="signed-out-card hidden">
+        <div>
+          <h2>Sign in to add your own API keys</h2>
+          <p>Your API keys are encrypted with AES-256-GCM on our server and synced automatically to your Openmi CLI <code>/model</code> picker.</p>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <a href="/login?next=/provider" class="btn btn-primary">Sign in to Console</a>
+        </div>
+      </section>
+
+      <section id="byok-section" class="byok-grid hidden">
+        <form id="provider-form" class="form-card" autocomplete="off">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <h2 id="form-heading">Add Provider</h2>
+            <button type="button" class="btn btn-sm btn-secondary hidden" id="btn-cancel-edit">Cancel edit</button>
+          </div>
+
+          <input type="hidden" id="edit-provider-id" value="" />
+
+          <div class="field-row">
+            <div class="field">
+              <label for="preset-select">Provider Preset</label>
+              <select id="preset-select">
+                <option value="openrouter">OpenRouter</option>
+                <option value="openai">OpenAI</option>
+                <option value="deepseek">DeepSeek</option>
+                <option value="groq">Groq</option>
+                <option value="custom">Custom OpenAI-Compatible</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="provider-name">Display Name</label>
+              <input id="provider-name" type="text" maxlength="60" placeholder="e.g. OpenRouter" required />
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="base-url">Base URL (OpenAI-compatible <code>/v1</code>)</label>
+            <input id="base-url" class="mono" type="url" placeholder="https://openrouter.ai/api/v1" required />
+            <p class="field-hint">Must be an HTTPS URL supporting <code>/chat/completions</code>.</p>
+          </div>
+
+          <div class="field">
+            <label for="api-key">API Key</label>
+            <input id="api-key" class="mono" type="password" placeholder="sk-..." autocomplete="new-password" />
+            <p class="field-hint" id="api-key-hint-text">Encrypted with AES-256-GCM at rest. Never shown again after saving.</p>
+          </div>
+
+          <div class="field">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+              <label>Models to show in <code>/model</code></label>
+              <button type="button" class="btn btn-sm btn-secondary" id="btn-add-model-row">+ Add model</button>
+            </div>
+            <div id="models-editor" class="models-list-editor"></div>
+            <p class="field-hint">Enter the exact upstream model ID (e.g. <code>anthropic/claude-sonnet-4</code> or <code>gpt-4o</code>) and an optional display name.</p>
+          </div>
+
+          <div style="display:flex;gap:10px;align-items:center;">
+            <button type="submit" class="btn btn-primary" id="btn-save-provider">Save Provider</button>
+          </div>
+        </form>
+
+        <div class="list-card">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <h2>Your Saved Providers</h2>
+            <span class="badge badge-free" id="provider-count">0</span>
+          </div>
+          <div id="providers-list" style="display:flex;flex-direction:column;gap:12px;"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/provider.js"></script>
+</body>
+</html>

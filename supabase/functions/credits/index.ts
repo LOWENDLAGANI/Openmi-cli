@@ -45,6 +45,28 @@ function derivePayUrl(): string {
   return "";
 }
 
+function deriveProviderUrl(): string {
+  const explicit = safeHttpUrl(Deno.env.get("OPENMI_PROVIDER_URL"), "");
+  if (explicit) return explicit;
+  const verifyUrl = safeHttpUrl(Deno.env.get("OPENMI_CLI_VERIFY_URL"), "");
+  if (verifyUrl) {
+    try {
+      return new URL("/provider", verifyUrl).toString();
+    } catch (_) {
+      // ignore invalid URL
+    }
+  }
+  const payUrl = safeHttpUrl(Deno.env.get("OPENMI_PAY_URL"), "");
+  if (payUrl) {
+    try {
+      return new URL("/provider", payUrl).toString();
+    } catch (_) {
+      // ignore invalid URL
+    }
+  }
+  return "";
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return jsonResponse({ ok: true }, 200);
@@ -80,6 +102,7 @@ Deno.serve(async (req: Request) => {
     );
   }
   const envPayUrl = derivePayUrl();
+  const envProviderUrl = deriveProviderUrl();
 
   // Preferred path: atomic UTC daily-reset + active pass sync RPC, plus live service status.
   const [{ data: synced, error: rpcErr }, { data: settingsRow }] = await Promise.all([
@@ -116,6 +139,7 @@ Deno.serve(async (req: Request) => {
       pass_expires_at: s.pass_expires_at ?? null,
       payment_link: paymentLink,
       pay_url: envPayUrl || paymentLink,
+      provider_url: envProviderUrl || null,
       topup_paused: Boolean(s.topup_paused),
     });
   }
@@ -144,6 +168,7 @@ Deno.serve(async (req: Request) => {
       is_paid: isPaid,
       payment_link: DEFAULT_PAYMENT_LINK,
       pay_url: envPayUrl || DEFAULT_PAYMENT_LINK,
+      provider_url: envProviderUrl || null,
     });
   }
 
@@ -158,5 +183,6 @@ Deno.serve(async (req: Request) => {
     is_paid: false,
     payment_link: DEFAULT_PAYMENT_LINK,
     pay_url: envPayUrl || DEFAULT_PAYMENT_LINK,
+    provider_url: envProviderUrl || null,
   });
 });

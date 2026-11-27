@@ -21,3 +21,6 @@ verify_jwt = false
 
 [functions.payments]
 verify_jwt = false
+
+[functions.providers]
+verify_jwt = false

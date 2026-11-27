@@ -59,6 +59,9 @@ pub struct FullAccessModalState {
 }
 
 /// Interactive `/model` selector modal state.
+///
+/// Row indices `0..models.len()` select a model; index `models.len()` selects the
+/// bottom `+ Add your own API key` action that opens `/provider` in the browser.
 #[derive(Debug, Clone)]
 pub struct ModelSelectorState {
     pub models: Vec<ModelInfo>,
@@ -74,22 +77,26 @@ impl ModelSelectorState {
         Self { models, selected }
     }
 
+    pub fn total_rows(&self) -> usize {
+        self.models.len() + 1
+    }
+
+    pub fn is_add_byok_selected(&self) -> bool {
+        self.selected == self.models.len()
+    }
+
     pub fn move_up(&mut self) {
-        if self.models.is_empty() {
-            return;
-        }
+        let total = self.total_rows();
         if self.selected == 0 {
-            self.selected = self.models.len() - 1;
+            self.selected = total - 1;
         } else {
             self.selected -= 1;
         }
     }
 
     pub fn move_down(&mut self) {
-        if self.models.is_empty() {
-            return;
-        }
-        self.selected = (self.selected + 1) % self.models.len();
+        let total = self.total_rows();
+        self.selected = (self.selected + 1) % total;
     }
 
     pub fn current(&self) -> Option<&ModelInfo> {

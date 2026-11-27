@@ -41,6 +41,12 @@ pub struct ModelInfo {
     /// Optional short description shown in the `/model` selector.
     #[serde(default)]
     pub description: Option<String>,
+    /// True when this model comes from the user's own BYOK provider configured at `/provider`.
+    #[serde(default)]
+    pub is_byok: bool,
+    /// Optional provider display name for BYOK models (e.g. `OpenRouter`, `OpenAI`).
+    #[serde(default)]
+    pub provider_name: Option<String>,
 }
 
 impl ModelInfo {
@@ -84,6 +90,8 @@ pub struct CreditStatus {
     #[serde(default)]
     pub pay_url: Option<String>,
     #[serde(default)]
+    pub provider_url: Option<String>,
+    #[serde(default)]
     pub topup_paused: bool,
 }
 
@@ -114,6 +122,25 @@ impl CreditStatus {
             .as_deref()
             .or(self.payment_link.as_deref())
             .unwrap_or("https://sociabuzz.com/minetallestmc/tribe")
+    }
+
+    /// Resolve the web console `/provider` URL for managing BYOK API keys.
+    pub fn effective_provider_url(&self) -> Option<String> {
+        if let Some(u) = self
+            .provider_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| s.starts_with("http://") || s.starts_with("https://"))
+        {
+            return Some(u.to_string());
+        }
+        // Derive `/provider` from `pay_url` when it points to the Openmi web console (`/pay`).
+        if let Some(pay) = self.pay_url.as_deref().map(str::trim) {
+            if let Some(prefix) = pay.strip_suffix("/pay") {
+                return Some(format!("{prefix}/provider"));
+            }
+        }
+        None
     }
 }
 
@@ -176,6 +203,8 @@ pub fn fallback_models() -> Vec<ModelInfo> {
         paid_only: false,
         display_name: None,
         description: None,
+        is_byok: false,
+        provider_name: None,
     }]
 }
 
@@ -265,6 +294,8 @@ mod tests {
             paid_only: true,
             display_name: None,
             description: None,
+            is_byok: false,
+            provider_name: None,
         }];
         fs::write(&cache, serde_json::to_vec(&cached).unwrap()).unwrap();
 
@@ -282,6 +313,8 @@ mod tests {
             paid_only: false,
             display_name: Some("  DeepSeek Fast ".into()),
             description: None,
+            is_byok: false,
+            provider_name: None,
         };
         assert_eq!(m.name(), "DeepSeek Fast");
         m.display_name = None;
@@ -302,21 +335,40 @@ mod tests {
             serde_json::from_str(r#"{"id":"m1","label":"M1","context_window":128000}"#).unwrap();
         assert_eq!(legacy_model.credit_cost, 3);
         assert!(!legacy_model.paid_only);
+        assert!(!legacy_model.is_byok);
+        assert_eq!(legacy_model.provider_name, None);
+
+        let byok_model: ModelInfo = serde_json::from_str(
+            r#"{"id":"byok:11111111-1111-1111-1111-111111111111:gpt-4o","label":"GPT-4o","context_window":128000,"credit_cost":0,"paid_only":false,"is_byok":true,"provider_name":"OpenAI"}"#,
+        )
+        .unwrap();
+        assert!(byok_model.is_byok);
+        assert_eq!(byok_model.credit_cost, 0);
+        assert_eq!(byok_model.provider_name.as_deref(), Some("OpenAI"));
 
         let legacy_credit: CreditStatus =
-            serde_json::from_str(r#"{"balance":6,"plan":"free"}"#).unwrap();
+            serde_json::from_str(r#"{"balance":6,"plan":"free","pay_url":"https://openmi.app/pay"}"#)
+                .unwrap();
         assert_eq!(legacy_credit.wallet_credit, 0);
         assert!(!legacy_credit.is_paid);
         assert_eq!(legacy_credit.effective_max_steps(), 40);
         assert_eq!(legacy_credit.effective_daily_token_limit(), 2_000_000);
+        assert_eq!(
+            legacy_credit.effective_provider_url().as_deref(),
+            Some("https://openmi.app/provider")
+        );
 
         let paid_credit: CreditStatus = serde_json::from_str(
-            r#"{"balance":15,"plan":"paid","is_paid":true,"daily_tokens_used":1250000,"daily_token_limit":7000000,"max_steps":70}"#,
+            r#"{"balance":15,"plan":"paid","is_paid":true,"daily_tokens_used":1250000,"daily_token_limit":7000000,"max_steps":70,"provider_url":"https://console.openmi.dev/provider"}"#,
         )
         .unwrap();
         assert_eq!(paid_credit.daily_tokens_used, 1_250_000);
         assert_eq!(paid_credit.effective_daily_token_limit(), 7_000_000);
         assert_eq!(paid_credit.effective_max_steps(), 70);
+        assert_eq!(
+            paid_credit.effective_provider_url().as_deref(),
+            Some("https://console.openmi.dev/provider")
+        );
 
         assert_eq!(format_token_count(500), "500");
         assert_eq!(format_token_count(12_500), "12.5k");
