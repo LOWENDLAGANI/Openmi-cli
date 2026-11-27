@@ -89,7 +89,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Expose-Headers":
-    "X-Openmi-Plan, X-Openmi-Credits-Remaining, X-Openmi-Wallet-Credit, X-Openmi-Active-Model, X-Openmi-Pass-Expires-At",
+    "X-Openmi-Plan, X-Openmi-Credits-Remaining, X-Openmi-Wallet-Credit, X-Openmi-Active-Model, X-Openmi-Pass-Expires-At, X-Openmi-Daily-Tokens-Used, X-Openmi-Daily-Token-Limit, X-Openmi-Max-Steps",
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -327,6 +327,24 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    if (status === "daily_token_limit_exceeded") {
+      const used = Number(res.daily_tokens_used ?? 0);
+      const limit = Number(res.daily_token_limit ?? 0);
+      const isPaid = Boolean(res.is_paid);
+      const upgradeHint = isPaid ? "" : ` or upgrade at ${upgradeLink}`;
+      return jsonResponse(
+        {
+          error: "daily_token_limit_exceeded",
+          message: `Daily token limit reached (${used.toLocaleString("en-US")} / ${limit.toLocaleString("en-US")} input+output tokens used today). Resets at 00:00 UTC${upgradeHint}`,
+          daily_tokens_used: used,
+          daily_token_limit: limit,
+          next_reset_at: res.next_reset_at ?? null,
+          upgrade_url: upgradeLink,
+        },
+        429,
+      );
+    }
+
     if (status === "insufficient_credits") {
       const bal = Number(res.balance ?? 0);
       const wallet = Number(res.wallet_credit ?? 0);
@@ -361,10 +379,14 @@ Deno.serve(async (req: Request) => {
     }
   };
 
-  // 5. Call upstream OpenAI-compatible chat completions API with streaming
-  let upstreamResp: Response;
-  try {
-    upstreamResp = await fetch(`${llmBaseUrl}/chat/completions`, {
+  // Estimate input characters for fallback token counting when upstream omits `usage`.
+  const inputChars =
+    messages.reduce((sum, m) => sum + m.role.length + m.content.length + 12, 0) +
+    JSON.stringify(BUILTIN_TOOLS).length;
+
+  // 5. Call upstream OpenAI-compatible chat completions API with streaming + usage reporting
+  const fetchUpstream = (includeStreamOptions: boolean) =>
+    fetch(`${llmBaseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -374,11 +396,22 @@ Deno.serve(async (req: Request) => {
       body: JSON.stringify({
         model: upstreamModel,
         stream: true,
+        ...(includeStreamOptions ? { stream_options: { include_usage: true } } : {}),
         messages,
         tools: BUILTIN_TOOLS,
         tool_choice: "auto",
       }),
     });
+
+  let upstreamResp: Response;
+  try {
+    upstreamResp = await fetchUpstream(true);
+    if (upstreamResp.status === 400) {
+      const probeText = await upstreamResp.clone().text().catch(() => "");
+      if (/stream_options/i.test(probeText)) {
+        upstreamResp = await fetchUpstream(false);
+      }
+    }
   } catch (err) {
     await refundIfNewlyPurchased();
     return jsonResponse(
@@ -400,9 +433,30 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  // 6. Translate upstream OpenAI SSE stream into Openmi SSE chunks
+  // 6. Translate upstream OpenAI SSE stream into Openmi SSE chunks and record input+output tokens
   const upstreamReader = upstreamResp.body.getReader();
   const decoder = new TextDecoder();
+
+  let reportedTokens = 0;
+  let outputChars = 0;
+  let usageRecorded = false;
+
+  const commitTokenUsage = async () => {
+    if (usageRecorded) return;
+    usageRecorded = true;
+    const tokensToRecord =
+      reportedTokens > 0
+        ? reportedTokens
+        : Math.max(1, Math.ceil((inputChars + outputChars) / 4));
+    try {
+      await admin.rpc("record_token_usage", {
+        p_user_id: userId,
+        p_tokens: tokensToRecord,
+      });
+    } catch (_) {
+      // Best-effort recording; never break an already-streaming response.
+    }
+  };
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -453,6 +507,31 @@ Deno.serve(async (req: Request) => {
               continue;
             }
 
+            // Capture OpenAI-compatible usage chunk (prompt_tokens + completion_tokens).
+            if (parsed.usage && typeof parsed.usage === "object") {
+              const u = parsed.usage as Record<string, unknown>;
+              const promptTok =
+                typeof u.prompt_tokens === "number" && Number.isFinite(u.prompt_tokens)
+                  ? Math.max(0, Math.floor(u.prompt_tokens))
+                  : typeof u.input_tokens === "number" && Number.isFinite(u.input_tokens)
+                    ? Math.max(0, Math.floor(u.input_tokens))
+                    : 0;
+              const completionTok =
+                typeof u.completion_tokens === "number" && Number.isFinite(u.completion_tokens)
+                  ? Math.max(0, Math.floor(u.completion_tokens))
+                  : typeof u.output_tokens === "number" && Number.isFinite(u.output_tokens)
+                    ? Math.max(0, Math.floor(u.output_tokens))
+                    : 0;
+              const totalTok =
+                typeof u.total_tokens === "number" && Number.isFinite(u.total_tokens)
+                  ? Math.max(0, Math.floor(u.total_tokens))
+                  : 0;
+              const combined = promptTok + completionTok;
+              if (combined > 0 || totalTok > 0) {
+                reportedTokens = Math.max(combined, totalTok);
+              }
+            }
+
             if (parsed.error && typeof parsed.error === "object") {
               const e = parsed.error as Record<string, unknown>;
               controller.enqueue(
@@ -462,6 +541,7 @@ Deno.serve(async (req: Request) => {
                   message: String(e.message ?? "Upstream stream error"),
                 }),
               );
+              await commitTokenUsage();
               controller.close();
               return;
             }
@@ -473,6 +553,7 @@ Deno.serve(async (req: Request) => {
             const delta = choice.delta as Record<string, unknown> | undefined;
             if (delta) {
               if (typeof delta.content === "string" && delta.content.length > 0) {
+                outputChars += delta.content.length;
                 controller.enqueue(sseLine({ type: "text_delta", text: delta.content }));
               }
               const tcDeltas = delta.tool_calls as Array<Record<string, unknown>> | undefined;
@@ -483,8 +564,12 @@ Deno.serve(async (req: Request) => {
                   if (typeof tcd.id === "string" && tcd.id) entry.id = tcd.id;
                   const fn = tcd.function as Record<string, unknown> | undefined;
                   if (fn) {
-                    if (typeof fn.name === "string" && fn.name) entry.name += fn.name;
+                    if (typeof fn.name === "string" && fn.name) {
+                      outputChars += fn.name.length;
+                      entry.name += fn.name;
+                    }
                     if (typeof fn.arguments === "string" && fn.arguments) {
+                      outputChars += fn.arguments.length;
                       entry.arguments += fn.arguments;
                     }
                   }
@@ -500,8 +585,10 @@ Deno.serve(async (req: Request) => {
         }
 
         flushToolCalls();
+        await commitTokenUsage();
         controller.enqueue(sseLine({ type: "done", finish_reason: finishReason }));
       } catch (err) {
+        await commitTokenUsage();
         controller.enqueue(
           sseLine({
             type: "error",
@@ -510,11 +597,13 @@ Deno.serve(async (req: Request) => {
           }),
         );
       } finally {
+        await commitTokenUsage();
         controller.close();
       }
     },
     cancel() {
       upstreamReader.cancel().catch(() => {});
+      void commitTokenUsage();
     },
   });
 
@@ -531,6 +620,15 @@ Deno.serve(async (req: Request) => {
   }
   if (typeof passMeta.pass_expires_at === "string") {
     extraHeaders["X-Openmi-Pass-Expires-At"] = passMeta.pass_expires_at;
+  }
+  if (typeof passMeta.daily_tokens_used === "number") {
+    extraHeaders["X-Openmi-Daily-Tokens-Used"] = String(passMeta.daily_tokens_used);
+  }
+  if (typeof passMeta.daily_token_limit === "number") {
+    extraHeaders["X-Openmi-Daily-Token-Limit"] = String(passMeta.daily_token_limit);
+  }
+  if (typeof passMeta.max_steps === "number") {
+    extraHeaders["X-Openmi-Max-Steps"] = String(passMeta.max_steps);
   }
 
   return new Response(stream, {

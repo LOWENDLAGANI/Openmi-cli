@@ -64,6 +64,12 @@ pub struct CreditStatus {
     #[serde(default)]
     pub daily_limit: Option<i64>,
     #[serde(default)]
+    pub daily_tokens_used: i64,
+    #[serde(default)]
+    pub daily_token_limit: Option<i64>,
+    #[serde(default)]
+    pub max_steps: Option<u32>,
+    #[serde(default)]
     pub is_paid: bool,
     #[serde(default)]
     pub paid_until: Option<String>,
@@ -90,11 +96,35 @@ impl CreditStatus {
         Some((model, mins))
     }
 
+    /// Effective per-prompt agent loop step/turn limit (defaults: 40 Free, 70 Paid).
+    pub fn effective_max_steps(&self) -> u32 {
+        self.max_steps
+            .filter(|&v| v >= 1)
+            .unwrap_or(if self.is_paid { 70 } else { 40 })
+    }
+
+    /// Effective daily input+output token hard cap (defaults: 2,000,000 Free, 7,000,000 Paid).
+    pub fn effective_daily_token_limit(&self) -> i64 {
+        self.daily_token_limit
+            .unwrap_or(if self.is_paid { 7_000_000 } else { 2_000_000 })
+    }
+
     pub fn effective_upgrade_url(&self) -> &str {
         self.pay_url
             .as_deref()
             .or(self.payment_link.as_deref())
             .unwrap_or("https://sociabuzz.com/minetallestmc/tribe")
+    }
+}
+
+/// Format a token count concisely (e.g. `2.00M`, `450.0k`, `850`).
+pub fn format_token_count(tokens: i64) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.2}M", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{:.1}k", tokens as f64 / 1_000.0)
+    } else {
+        tokens.to_string()
     }
 }
 
@@ -277,6 +307,21 @@ mod tests {
             serde_json::from_str(r#"{"balance":6,"plan":"free"}"#).unwrap();
         assert_eq!(legacy_credit.wallet_credit, 0);
         assert!(!legacy_credit.is_paid);
+        assert_eq!(legacy_credit.effective_max_steps(), 40);
+        assert_eq!(legacy_credit.effective_daily_token_limit(), 2_000_000);
+
+        let paid_credit: CreditStatus = serde_json::from_str(
+            r#"{"balance":15,"plan":"paid","is_paid":true,"daily_tokens_used":1250000,"daily_token_limit":7000000,"max_steps":70}"#,
+        )
+        .unwrap();
+        assert_eq!(paid_credit.daily_tokens_used, 1_250_000);
+        assert_eq!(paid_credit.effective_daily_token_limit(), 7_000_000);
+        assert_eq!(paid_credit.effective_max_steps(), 70);
+
+        assert_eq!(format_token_count(500), "500");
+        assert_eq!(format_token_count(12_500), "12.5k");
+        assert_eq!(format_token_count(2_000_000), "2.00M");
+        assert_eq!(format_token_count(7_000_000), "7.00M");
 
         assert_eq!(parse_rfc3339_utc_secs("1970-01-01T00:00:00Z"), Some(0));
         assert_eq!(

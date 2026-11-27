@@ -7,7 +7,9 @@ pub mod registry;
 pub mod session;
 pub mod tools;
 
-pub use catalog::{fetch_credit_status, fetch_models_with_fallback, CreditStatus, ModelInfo};
+pub use catalog::{
+    fetch_credit_status, fetch_models_with_fallback, format_token_count, CreditStatus, ModelInfo,
+};
 pub use events::{AgentEvent, ControlState};
 pub use llm::ProxyConfig;
 pub use mcp::{

@@ -78,6 +78,10 @@ function formatSettings(row, supabaseUrl) {
     starter_credits: typeof row?.starter_credits === "number" ? row.starter_credits : 6,
     free_daily_credits: typeof row?.free_daily_credits === "number" ? row.free_daily_credits : 6,
     paid_daily_credits: typeof row?.paid_daily_credits === "number" ? row.paid_daily_credits : 15,
+    free_daily_token_limit: typeof row?.free_daily_token_limit === "number" ? row.free_daily_token_limit : 2000000,
+    paid_daily_token_limit: typeof row?.paid_daily_token_limit === "number" ? row.paid_daily_token_limit : 7000000,
+    free_max_steps: typeof row?.free_max_steps === "number" ? row.free_max_steps : 40,
+    paid_max_steps: typeof row?.paid_max_steps === "number" ? row.paid_max_steps : 70,
     pass_duration_minutes: typeof row?.pass_duration_minutes === "number" ? row.pass_duration_minutes : 60,
     payment_link: row?.payment_link || DEFAULT_PAYMENT_LINK,
     topup_paused: Boolean(row?.topup_paused),
@@ -163,6 +167,34 @@ export default async function handler(req, res) {
           return sendJson(res, 400, { error: "paid_daily_credits must be >= 0" });
         }
         patch.paid_daily_credits = Math.floor(v);
+      }
+      if (body.free_daily_token_limit !== undefined) {
+        const v = Number(body.free_daily_token_limit);
+        if (!Number.isFinite(v) || v < 0) {
+          return sendJson(res, 400, { error: "free_daily_token_limit must be >= 0" });
+        }
+        patch.free_daily_token_limit = Math.floor(v);
+      }
+      if (body.paid_daily_token_limit !== undefined) {
+        const v = Number(body.paid_daily_token_limit);
+        if (!Number.isFinite(v) || v < 0) {
+          return sendJson(res, 400, { error: "paid_daily_token_limit must be >= 0" });
+        }
+        patch.paid_daily_token_limit = Math.floor(v);
+      }
+      if (body.free_max_steps !== undefined) {
+        const v = Number(body.free_max_steps);
+        if (!Number.isFinite(v) || v < 1) {
+          return sendJson(res, 400, { error: "free_max_steps must be >= 1" });
+        }
+        patch.free_max_steps = Math.floor(v);
+      }
+      if (body.paid_max_steps !== undefined) {
+        const v = Number(body.paid_max_steps);
+        if (!Number.isFinite(v) || v < 1) {
+          return sendJson(res, 400, { error: "paid_max_steps must be >= 1" });
+        }
+        patch.paid_max_steps = Math.floor(v);
       }
       if (body.pass_duration_minutes !== undefined) {
         const v = Number(body.pass_duration_minutes);

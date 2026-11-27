@@ -557,6 +557,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                 dirty = true;
             }
             Some(status) = credit_rx.recv() => {
+                session.lock().await.set_max_steps(status.effective_max_steps());
                 app.apply_credit_status(status);
                 dirty = true;
             }
@@ -595,6 +596,19 @@ fn format_credit_summary(status: &CreditStatus) -> String {
     let cap = status
         .daily_limit
         .unwrap_or(if status.is_paid { 15 } else { 6 });
+    let token_cap = status.effective_daily_token_limit();
+    let token_line = if token_cap > 0 {
+        format!(
+            "{}/{} tok",
+            openmi_core::format_token_count(status.daily_tokens_used),
+            openmi_core::format_token_count(token_cap)
+        )
+    } else {
+        format!(
+            "{} tok",
+            openmi_core::format_token_count(status.daily_tokens_used)
+        )
+    };
     let plan_line = if status.is_paid {
         match status.paid_until.as_deref() {
             Some(u) => format!("PAID (until {})", u.get(..10).unwrap_or(u)),
@@ -608,12 +622,14 @@ fn format_credit_summary(status: &CreditStatus) -> String {
         None => "none (starts on first prompt)".to_string(),
     };
     let mut out = format!(
-        "Plan: {plan_line} | Daily: {}/{cap} cr (00:00 UTC reset) | Wallet: {} cr | Active pass: {pass_line}",
-        status.balance, status.wallet_credit
+        "Plan: {plan_line} | Daily: {}/{cap} cr | Tokens: {token_line} | Max turns: {} | Wallet: {} cr | Active pass: {pass_line}",
+        status.balance,
+        status.effective_max_steps(),
+        status.wallet_credit
     );
     if !status.is_paid {
         out.push_str(&format!(
-            "\nUpgrade to Paid (15 cr/day + Paid models): {}",
+            "\nUpgrade to Paid (15 cr/day, 7M tok/day, 70 turns + Paid models): {}",
             status.effective_upgrade_url()
         ));
     }

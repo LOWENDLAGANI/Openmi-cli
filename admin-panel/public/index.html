@@ -140,6 +140,30 @@
         </div>
 
         <div class="field">
+          <label for="free-daily-tokens">Free Daily Token Cap (in + out)</label>
+          <input id="free-daily-tokens" type="number" min="0" step="100000" class="input mono" />
+          <span class="field-help">Default: <code>2000000</code> tokens/day (hard cap, 0 = unlimited).</span>
+        </div>
+
+        <div class="field">
+          <label for="paid-daily-tokens">Paid Daily Token Cap (in + out)</label>
+          <input id="paid-daily-tokens" type="number" min="0" step="100000" class="input mono" />
+          <span class="field-help">Default: <code>7000000</code> tokens/day (hard cap, 0 = unlimited).</span>
+        </div>
+
+        <div class="field">
+          <label for="free-max-steps">Free Max Turns / Steps per Prompt</label>
+          <input id="free-max-steps" type="number" min="1" step="1" class="input mono" />
+          <span class="field-help">Default: <code>40</code> agent loop turns per prompt.</span>
+        </div>
+
+        <div class="field">
+          <label for="paid-max-steps">Paid Max Turns / Steps per Prompt</label>
+          <input id="paid-max-steps" type="number" min="1" step="1" class="input mono" />
+          <span class="field-help">Default: <code>70</code> agent loop turns per prompt.</span>
+        </div>
+
+        <div class="field">
           <label for="pass-duration-minutes">Hourly Pass Duration (minutes)</label>
           <input id="pass-duration-minutes" type="number" min="1" step="1" class="input mono" />
           <span class="field-help">Default: <code>60</code> minutes per model purchase.</span>

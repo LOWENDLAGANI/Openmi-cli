@@ -42,19 +42,30 @@ pub async fn execute(opts: RunOptions) -> Result<(), CliError> {
     // Resolve optional managed proxy config if logged in or explicit API URL is provided.
     let store = default_token_store()?;
     let stored = store.load()?;
-    let proxy_config = if let Some(ref tok) = stored {
+    let (proxy_config, tier_max_steps) = if let Some(ref tok) = stored {
         let base_url = resolve_api_base_url(opts.api_url.as_deref(), Some(tok));
         let client = DeviceAuthClient::new(&base_url)?;
         let valid = client.ensure_valid_tokens(&store).await?;
-        Some(ProxyConfig {
-            endpoint: format!("{base_url}/functions/v1/chat"),
-            bearer_token: valid.access_token,
-        })
+        let credits_ep = format!("{base_url}/functions/v1/credits");
+        let tier_steps = openmi_core::fetch_credit_status(&credits_ep, &valid.access_token)
+            .await
+            .ok()
+            .map(|s| s.effective_max_steps());
+        (
+            Some(ProxyConfig {
+                endpoint: format!("{base_url}/functions/v1/chat"),
+                bearer_token: valid.access_token,
+            }),
+            tier_steps,
+        )
     } else {
-        opts.api_url.as_deref().map(|explicit| ProxyConfig {
-            endpoint: format!("{}/functions/v1/chat", explicit.trim_end_matches('/')),
-            bearer_token: String::new(),
-        })
+        (
+            opts.api_url.as_deref().map(|explicit| ProxyConfig {
+                endpoint: format!("{}/functions/v1/chat", explicit.trim_end_matches('/')),
+                bearer_token: String::new(),
+            }),
+            None,
+        )
     };
 
     let checkpoints = Arc::new(Mutex::new(CheckpointStore::new()));
@@ -69,8 +80,11 @@ pub async fn execute(opts: RunOptions) -> Result<(), CliError> {
         approval_handler,
         proxy_config,
     )?;
-    if let Some(steps) = opts.max_steps {
-        session.set_max_steps(steps);
+    match (tier_max_steps, opts.max_steps) {
+        (Some(tier_cap), Some(requested)) => session.set_max_steps(requested.min(tier_cap)),
+        (Some(tier_cap), None) => session.set_max_steps(tier_cap),
+        (None, Some(requested)) => session.set_max_steps(requested),
+        (None, None) => {}
     }
 
     // Start any configured stdio MCP servers and bind their tools into ToolRegistry.

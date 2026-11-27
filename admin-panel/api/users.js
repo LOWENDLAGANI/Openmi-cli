@@ -12,7 +12,7 @@ export default async function handler(req, res) {
       const [authData, creditRows] = await Promise.all([
         supabaseFetch("/auth/v1/admin/users?page=1&per_page=200"),
         supabaseFetch(
-          "/rest/v1/user_credits?select=user_id,plan,balance,wallet_credit,paid_until,has_paid,active_model,pass_expires_at,updated_at",
+          "/rest/v1/user_credits?select=user_id,plan,balance,wallet_credit,daily_tokens_used,paid_until,has_paid,active_model,pass_expires_at,updated_at",
         ),
       ]);
 
@@ -42,6 +42,7 @@ export default async function handler(req, res) {
           paid_until: paidUntil,
           balance: c ? Number(c.balance) : null,
           wallet_credit: c ? Number(c.wallet_credit || 0) : 0,
+          daily_tokens_used: c ? Number(c.daily_tokens_used || 0) : 0,
           active_model: passActive ? c.active_model : null,
           pass_expires_at: passActive ? c.pass_expires_at : null,
           credits_updated_at: c ? c.updated_at : null,

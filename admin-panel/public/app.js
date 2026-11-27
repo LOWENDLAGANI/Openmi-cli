@@ -81,6 +81,10 @@ function renderSettings(s) {
   $("llm-default-model").value = s.llm_default_model || "";
   $("free-daily-credits").value = s.free_daily_credits ?? 6;
   $("paid-daily-credits").value = s.paid_daily_credits ?? 15;
+  $("free-daily-tokens").value = s.free_daily_token_limit ?? 2000000;
+  $("paid-daily-tokens").value = s.paid_daily_token_limit ?? 7000000;
+  $("free-max-steps").value = s.free_max_steps ?? 40;
+  $("paid-max-steps").value = s.paid_max_steps ?? 70;
   $("pass-duration-minutes").value = s.pass_duration_minutes ?? 60;
   $("credit-cost").value = s.credit_cost ?? 3;
   $("payment-link").value = s.payment_link || "https://sociabuzz.com/minetallestmc/tribe";
@@ -280,6 +284,12 @@ function renderUsers() {
     const activeModelInfo = u.active_model
       ? `<div class="mono">${escapeHtml(u.active_model)}</div><div class="hint">${fmtMinsLeft(u.pass_expires_at)}</div>`
       : `<span class="hint">—</span>`;
+    const tokenCap = u.is_paid
+      ? (state.settings?.paid_daily_token_limit ?? 7000000)
+      : (state.settings?.free_daily_token_limit ?? 2000000);
+    const tokensUsed = Number(u.daily_tokens_used || 0);
+    const fmtTok = (n) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(2)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n));
+    const tokenInfo = tokenCap > 0 ? `${fmtTok(tokensUsed)} / ${fmtTok(tokenCap)} tok` : `${fmtTok(tokensUsed)} tok`;
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -305,6 +315,7 @@ function renderUsers() {
           <span class="hint" style="width:42px;">Wallet</span>
           <input type="number" min="0" step="1" class="input mono credits-input" data-wallet value="${walletVal}" />
         </div>
+        <div class="hint mono" style="margin-top:4px;">Today: ${escapeHtml(tokenInfo)}</div>
       </td>
       <td>${activeModelInfo}</td>
       <td class="col-actions">
@@ -518,6 +529,10 @@ $("save-provider-btn").addEventListener("click", async () => {
       llm_default_model: $("llm-default-model").value.trim(),
       free_daily_credits: Number($("free-daily-credits").value),
       paid_daily_credits: Number($("paid-daily-credits").value),
+      free_daily_token_limit: Number($("free-daily-tokens").value),
+      paid_daily_token_limit: Number($("paid-daily-tokens").value),
+      free_max_steps: Number($("free-max-steps").value),
+      paid_max_steps: Number($("paid-max-steps").value),
       pass_duration_minutes: Number($("pass-duration-minutes").value),
       credit_cost: Number($("credit-cost").value),
       payment_link: $("payment-link").value.trim(),

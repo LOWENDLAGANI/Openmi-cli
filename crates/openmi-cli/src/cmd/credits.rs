@@ -44,6 +44,23 @@ pub async fn execute(json: bool, api_url: Option<String>) -> Result<(), CliError
             "Daily Credits: {} / {} (resets 00:00 UTC)",
             status.balance, daily_cap
         );
+        let token_cap = status.effective_daily_token_limit();
+        if token_cap > 0 {
+            println!(
+                "Daily Tokens:  {} / {} (in + out, resets 00:00 UTC)",
+                openmi_core::format_token_count(status.daily_tokens_used),
+                openmi_core::format_token_count(token_cap)
+            );
+        } else {
+            println!(
+                "Daily Tokens:  {} (unlimited)",
+                openmi_core::format_token_count(status.daily_tokens_used)
+            );
+        }
+        println!(
+            "Max Turns:     {} steps/prompt",
+            status.effective_max_steps()
+        );
         println!("Wallet Credit: {} (never expires)", status.wallet_credit);
         if let Some((model, mins)) = status.active_pass_remaining() {
             println!("Active Pass:   {} ({}m remaining)", model, mins);

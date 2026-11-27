@@ -16,7 +16,9 @@ use crate::registry::ToolRegistry;
 use crate::tools::{execute_tool, needs_approval};
 use openmi_platform::{PathGuard, PathGuardError};
 
-pub const DEFAULT_MAX_STEPS: u32 = 16;
+pub const FREE_DEFAULT_MAX_STEPS: u32 = 40;
+pub const PAID_DEFAULT_MAX_STEPS: u32 = 70;
+pub const DEFAULT_MAX_STEPS: u32 = FREE_DEFAULT_MAX_STEPS;
 
 #[derive(Debug, Error)]
 pub enum CoreError {

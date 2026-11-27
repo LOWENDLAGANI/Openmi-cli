@@ -64,15 +64,19 @@ Deno.serve(async (req: Request) => {
 
   if (!rpcErr && synced && typeof synced === "object") {
     const s = synced as Record<string, unknown>;
+    const isPaid = Boolean(s.is_paid);
     const paymentLink = safeHttpUrl(s.payment_link, DEFAULT_PAYMENT_LINK);
     return jsonResponse({
       plan: String(s.plan ?? "free"),
-      is_paid: Boolean(s.is_paid),
+      is_paid: isPaid,
       has_paid: Boolean(s.has_paid),
       paid_until: s.paid_until ?? null,
       balance: Number(s.balance ?? 0),
       wallet_credit: Number(s.wallet_credit ?? 0),
-      daily_limit: Number(s.daily_limit ?? 6),
+      daily_limit: Number(s.daily_limit ?? (isPaid ? 15 : 6)),
+      daily_tokens_used: Number(s.daily_tokens_used ?? 0),
+      daily_token_limit: Number(s.daily_token_limit ?? (isPaid ? 7_000_000 : 2_000_000)),
+      max_steps: Number(s.max_steps ?? (isPaid ? 70 : 40)),
       next_reset_at: s.next_reset_at ?? null,
       active_model: s.active_model ?? null,
       pass_expires_at: s.pass_expires_at ?? null,
@@ -94,12 +98,16 @@ Deno.serve(async (req: Request) => {
   }
 
   if (existing) {
+    const isPaid = existing.plan === "paid";
     return jsonResponse({
       balance: Number(existing.balance),
       plan: String(existing.plan),
       wallet_credit: 0,
-      daily_limit: existing.plan === "paid" ? 15 : 6,
-      is_paid: existing.plan === "paid",
+      daily_limit: isPaid ? 15 : 6,
+      daily_tokens_used: 0,
+      daily_token_limit: isPaid ? 7_000_000 : 2_000_000,
+      max_steps: isPaid ? 70 : 40,
+      is_paid: isPaid,
       payment_link: DEFAULT_PAYMENT_LINK,
       pay_url: envPayUrl || DEFAULT_PAYMENT_LINK,
     });
@@ -109,6 +117,9 @@ Deno.serve(async (req: Request) => {
     balance: 6,
     wallet_credit: 0,
     daily_limit: 6,
+    daily_tokens_used: 0,
+    daily_token_limit: 2_000_000,
+    max_steps: 40,
     plan: "free",
     is_paid: false,
     payment_link: DEFAULT_PAYMENT_LINK,
