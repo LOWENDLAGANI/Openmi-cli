@@ -93,7 +93,7 @@ function renderPlans(plans, paymentLink, paused) {
             <h2 class="plan-title">${escapeHtml(p.name)}</h2>
             <span class="plan-tag">${tag}</span>
           </div>
-          <p class="plan-submeta">${p.daily_credits} Credit/day · +${p.upfront_credit} wallet Credit</p>
+          <p class="plan-submeta">${p.daily_credits} Credit/day · +${p.upfront_credit} Wallet Coins</p>
           <div class="plan-price-row">
             <span class="plan-price">${priceText}</span>
             <span class="plan-period">/ ${p.days} days</span>
@@ -114,7 +114,7 @@ function renderPlans(plans, paymentLink, paused) {
               <div class="plan-feature-desc">Full access to frontier coding models alongside Free-tier models in Openmi CLI.</div>
             </li>
             <li>
-              <div class="plan-feature-title">+${p.upfront_credit} upfront wallet Credit</div>
+              <div class="plan-feature-title">+${p.upfront_credit} upfront Wallet Coins</div>
               <div class="plan-feature-desc">Added to your append-only ledger immediately on top of your daily allowance.</div>
             </li>
             <li>
@@ -197,7 +197,7 @@ function renderRequests(requests) {
         <div class="req-row">
           <div>
             <div><strong>${escapeHtml(r.plan_id)}</strong> · <span class="mono">MYR ${Number(r.amount_myr).toFixed(2)}</span> · <span class="mono">${escapeHtml(r.reference)}</span></div>
-            <div class="muted">Submitted ${escapeHtml(fmtDate(r.created_at))}${r.credit_granted ? ` · +${r.credit_granted} wallet cr` : ""}</div>
+            <div class="muted">Submitted ${escapeHtml(fmtDate(r.created_at))}${r.credit_granted ? ` · +${r.credit_granted} Coins` : ""}</div>
             ${noteLine}
           </div>
           <div style="display:flex;align-items:center;gap:10px;">
@@ -240,7 +240,8 @@ async function loadPayments() {
     }
 
     $("stat-daily").textContent = `${c.balance ?? 0} / ${c.daily_limit ?? 6}`;
-    $("stat-wallet").textContent = `${c.wallet_credit ?? 0}`;
+    const coins = Number(c.wallet_credit ?? 0);
+    $("stat-wallet").textContent = `${coins} ${coins === 1 ? "Coin" : "Coins"}`;
 
     const paused = Boolean(data.topup_paused);
     $("paused-banner").classList.toggle("hidden", !paused);

@@ -702,6 +702,7 @@ Deno.serve(async (req: Request) => {
   const rawEffort = String((body as Record<string, unknown>).reasoning_effort ?? "").trim().toLowerCase();
   const reasoningEffort: "low" | "medium" | "high" | null =
     rawEffort === "low" || rawEffort === "medium" || rawEffort === "high" ? rawEffort : null;
+  const allowCoins = Boolean((body as Record<string, unknown>).allow_coins);
   const byokParsed = parseByokModelId(requestedModel);
 
   let isByok = false;
@@ -818,6 +819,37 @@ Deno.serve(async (req: Request) => {
       dbCreditCost,
     );
 
+    // 3c. If daily credits are insufficient and wallet Coins would be used, ask for confirmation first.
+    if (!allowCoins && creditCost > 0) {
+      const { data: synced } = await admin.rpc("sync_user_credits", { p_user_id: userId });
+      if (synced && typeof synced === "object") {
+        const s = synced as Record<string, unknown>;
+        const activeModel = typeof s.active_model === "string" ? s.active_model : null;
+        const passExpiresAt = typeof s.pass_expires_at === "string" ? Date.parse(s.pass_expires_at) : 0;
+        const hasActivePass = activeModel === passModelId && Number.isFinite(passExpiresAt) && passExpiresAt > Date.now();
+        const isPaid = Boolean(s.is_paid);
+        const dailyBal = Math.max(0, Number(s.balance ?? 0));
+        const coinsBal = Math.max(0, Number(s.wallet_credit ?? 0));
+
+        if (!hasActivePass && (!paidOnly || isPaid) && dailyBal < creditCost && dailyBal + coinsBal >= creditCost) {
+          const coinsNeeded = creditCost - dailyBal;
+          return jsonResponse(
+            {
+              error: "coins_confirmation_required",
+              model: passModelId,
+              cost: creditCost,
+              daily_balance: dailyBal,
+              coins_needed: coinsNeeded,
+              coins_balance: coinsBal,
+              duration_minutes: dbPassDurationMinutes,
+              message: `Daily credits (${dailyBal}) are insufficient for '${passModelId}' (${creditCost} cr/hr). Spend ${coinsNeeded} Coin${coinsNeeded === 1 ? "" : "s"} from your wallet (${coinsBal} Coins available) to start a ${dbPassDurationMinutes}m pass?`,
+            },
+            402,
+          );
+        }
+      }
+    }
+
     // 4. Acquire or reuse 1-hour model pass atomically in Postgres
     const { data: passResult, error: passErr } = await admin.rpc("acquire_model_pass", {
       p_user_id: userId,
@@ -871,7 +903,7 @@ Deno.serve(async (req: Request) => {
         return jsonResponse(
           {
             error: "out_of_credits",
-            message: `Insufficient credits for '${passModelId}' (needs ${creditCost} cr/hr; you have ${bal} daily + ${wallet} wallet). Resets at 00:00 UTC or upgrade at ${upgradeLink}`,
+            message: `Insufficient credits for '${passModelId}' (needs ${creditCost} cr/hr; you have ${bal} daily credits + ${wallet} Coins). Resets at 00:00 UTC or upgrade at ${upgradeLink}`,
             balance: bal,
             wallet_credit: wallet,
             required: creditCost,

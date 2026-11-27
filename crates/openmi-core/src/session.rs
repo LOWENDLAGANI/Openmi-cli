@@ -52,6 +52,9 @@ pub enum CoreError {
     #[error("insufficient credits (HTTP 402)")]
     OutOfCredits,
 
+    #[error("coins confirmation required: {0}")]
+    CoinsConfirmationRequired(String),
+
     #[error("loop cap exceeded after {0} steps")]
     LoopCapExceeded(u32),
 
@@ -151,6 +154,7 @@ pub struct CompactReport {
 pub struct AgentSession {
     model: String,
     reasoning_effort: ReasoningEffort,
+    auto_allow_coins: bool,
     permission_mode: PermissionMode,
     permission_rules: PermissionRules,
     hooks: HooksConfig,
@@ -179,6 +183,7 @@ impl AgentSession {
         Ok(Self {
             model: model.into(),
             reasoning_effort: ReasoningEffort::default(),
+            auto_allow_coins: false,
             permission_mode: PermissionMode::Ask,
             permission_rules: PermissionRules::default(),
             hooks: HooksConfig::default(),
@@ -224,6 +229,10 @@ impl AgentSession {
 
     pub fn set_reasoning_effort(&mut self, effort: ReasoningEffort) {
         self.reasoning_effort = effort;
+    }
+
+    pub fn set_auto_allow_coins(&mut self, allow: bool) {
+        self.auto_allow_coins = allow;
     }
 
     pub fn permission_mode(&self) -> PermissionMode {
@@ -393,6 +402,7 @@ impl AgentSession {
                 &proxy,
                 &self.model,
                 ReasoningEffort::Off,
+                false,
                 &req_messages,
                 &[],
                 None,
@@ -579,17 +589,67 @@ impl AgentSession {
             } else {
                 self.tool_registry.specs()
             };
-            let resp = stream_step(
+            let resp = match stream_step(
                 proxy,
                 &self.model,
                 self.reasoning_effort,
+                self.auto_allow_coins,
                 &req_messages,
                 &extra_tools,
                 self.allowed_tools.as_deref(),
                 event_tx,
                 cancel,
             )
-            .await?;
+            .await
+            {
+                Ok(r) => r,
+                Err(CoreError::CoinsConfirmationRequired(summary)) => {
+                    let req = ApprovalRequest {
+                        call_id: format!("coins-step-{step}"),
+                        tool_name: "spend_coins".to_string(),
+                        summary,
+                    };
+                    let decision = tokio::select! {
+                        _ = cancel.cancelled() => return Err(CoreError::Cancelled),
+                        d = self.approval_handler.request_approval(req) => d,
+                    };
+                    match decision {
+                        ApprovalDecision::Approve => {
+                            stream_step(
+                                proxy,
+                                &self.model,
+                                self.reasoning_effort,
+                                true,
+                                &req_messages,
+                                &extra_tools,
+                                self.allowed_tools.as_deref(),
+                                event_tx,
+                                cancel,
+                            )
+                            .await?
+                        }
+                        ApprovalDecision::ApproveAlways => {
+                            self.auto_allow_coins = true;
+                            stream_step(
+                                proxy,
+                                &self.model,
+                                self.reasoning_effort,
+                                true,
+                                &req_messages,
+                                &extra_tools,
+                                self.allowed_tools.as_deref(),
+                                event_tx,
+                                cancel,
+                            )
+                            .await?
+                        }
+                        ApprovalDecision::Deny => {
+                            return Err(CoreError::Cancelled);
+                        }
+                    }
+                }
+                Err(e) => return Err(e),
+            };
 
             if !resp.text.is_empty() {
                 self.history

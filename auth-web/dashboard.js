@@ -165,7 +165,7 @@ function renderCredits(c) {
   // Wallet & turns
   $("metric-max-steps").textContent = `${maxSteps} turns`;
   $("metric-pass-duration").textContent = `${passMins}m pass`;
-  $("metric-wallet-line").textContent = `Wallet: ${wallet} cr (no expiry) · ${paidNote}`;
+  $("metric-wallet-line").textContent = `Wallet: ${wallet} ${wallet === 1 ? "Coin" : "Coins"} (no expiry · 1:1) · ${paidNote}`;
 
   // Active hourly pass
   const activeMs = c.pass_expires_at ? Date.parse(c.pass_expires_at) - Date.now() : 0;

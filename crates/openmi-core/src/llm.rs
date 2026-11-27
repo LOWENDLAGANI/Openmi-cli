@@ -134,6 +134,7 @@ pub async fn stream_step(
     config: &ProxyConfig,
     model: &str,
     reasoning_effort: ReasoningEffort,
+    allow_coins: bool,
     messages: &[Message],
     extra_tools: &[DynamicToolSpec],
     allowed_tools: Option<&[String]>,
@@ -181,6 +182,9 @@ pub async fn stream_step(
     if let Some(effort) = reasoning_effort.api_value() {
         payload["reasoning_effort"] = serde_json::json!(effort);
     }
+    if allow_coins {
+        payload["allow_coins"] = serde_json::json!(true);
+    }
     if let Some(allowed) = allowed_tools {
         payload["allowed_tools"] = serde_json::json!(allowed);
     }
@@ -227,6 +231,17 @@ pub async fn stream_step(
             return Err(CoreError::Unauthorized);
         }
         if status == 402 {
+            let body_text = resp.text().await.unwrap_or_default();
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body_text) {
+                if v.get("error").and_then(|e| e.as_str()) == Some("coins_confirmation_required") {
+                    let summary = v
+                        .get("message")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("Daily credits are insufficient. Spend Coins from your wallet to continue?")
+                        .to_string();
+                    return Err(CoreError::CoinsConfirmationRequired(summary));
+                }
+            }
             return Err(CoreError::OutOfCredits);
         }
         if status == 429 {

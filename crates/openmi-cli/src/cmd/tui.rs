@@ -808,7 +808,7 @@ fn format_credit_summary(status: &CreditStatus) -> String {
         None => "none (starts on first prompt)".to_string(),
     };
     let mut out = format!(
-        "Plan: {plan_line} | Daily: {}/{cap} cr | Tokens: {token_line} | Max turns: {} | Wallet: {} cr | Active pass: {pass_line}",
+        "Plan: {plan_line} | Daily: {}/{cap} cr | Tokens: {token_line} | Max turns: {} | Wallet: {} Coins | Active pass: {pass_line}",
         status.balance,
         status.effective_max_steps(),
         status.wallet_credit

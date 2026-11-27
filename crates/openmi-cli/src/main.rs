@@ -239,6 +239,10 @@ enum Commands {
         #[arg(long, short = 'y', alias = "auto-approve")]
         yes: bool,
 
+        /// Allow spending wallet Coins automatically when daily credits are insufficient.
+        #[arg(long = "use-coins")]
+        use_coins: bool,
+
         /// Override the managed Openmi API base URL.
         #[arg(long)]
         api_url: Option<String>,
@@ -299,6 +303,7 @@ async fn main() -> ExitCode {
                             cwd: cli.cwd,
                             output_format,
                             yes: cli.auto_approve,
+                            use_coins: cli.auto_approve,
                             api_url: cli.api_url,
                             max_steps: cli.max_turns,
                         })
@@ -366,6 +371,7 @@ async fn main() -> ExitCode {
             json,
             output_format,
             yes,
+            use_coins,
             api_url,
             max_steps,
         }) => match parse_output_format(output_format.as_deref(), json) {
@@ -377,6 +383,7 @@ async fn main() -> ExitCode {
                     cwd,
                     output_format: fmt,
                     yes,
+                    use_coins,
                     api_url,
                     max_steps,
                 })

@@ -27,6 +27,7 @@ pub struct RunOptions {
     pub cwd: Option<PathBuf>,
     pub output_format: OutputFormat,
     pub yes: bool,
+    pub use_coins: bool,
     pub api_url: Option<String>,
     pub max_steps: Option<u32>,
 }
@@ -83,6 +84,7 @@ pub async fn execute(opts: RunOptions) -> Result<(), CliError> {
         proxy_config,
     )?;
     session.set_reasoning_effort(UserSettings::load_default().reasoning_effort);
+    session.set_auto_allow_coins(opts.use_coins || opts.yes);
     match (tier_max_steps, opts.max_steps) {
         (Some(tier_cap), Some(requested)) => session.set_max_steps(requested.min(tier_cap)),
         (Some(tier_cap), None) => session.set_max_steps(tier_cap),

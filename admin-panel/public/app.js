@@ -356,7 +356,7 @@ function renderUsers() {
           <input type="number" min="0" step="1" class="input mono credits-input" data-balance value="${dailyVal}" />
         </div>
         <div class="credits-cell">
-          <span class="hint" style="width:42px;">Wallet</span>
+          <span class="hint" style="width:42px;">Coins</span>
           <input type="number" min="0" step="1" class="input mono credits-input" data-wallet value="${walletVal}" />
         </div>
         <div class="hint mono" style="margin-top:4px;">Today: ${escapeHtml(tokenInfo)} · ${escapeHtml(totalTokenInfo)}</div>
