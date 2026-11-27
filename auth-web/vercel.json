@@ -1,9 +1,8 @@
 {
   "rewrites": [
-    { "source": "/", "destination": "/dashboard.html" },
-    { "source": "/dashboard", "destination": "/dashboard.html" },
-    { "source": "/verify", "destination": "/index.html" },
-    { "source": "/login", "destination": "/index.html" },
+    { "source": "/dashboard", "destination": "/index.html" },
+    { "source": "/verify", "destination": "/verify.html" },
+    { "source": "/login", "destination": "/verify.html" },
     { "source": "/pay", "destination": "/pay.html" }
   ]
 }

@@ -29,17 +29,34 @@ function showStatus(msg, kind = "") {
   el.className = `status-msg${kind ? ` is-${kind}` : ""}`;
 }
 
+let isCliFlow = false;
+
 function initDeviceCode() {
   const params = new URLSearchParams(window.location.search);
   const fromUrl = (params.get("code") || "").trim().toUpperCase();
+  const isVerifyPath = window.location.pathname.startsWith("/verify");
   if (fromUrl) {
     sessionStorage.setItem(CODE_STORAGE_KEY, fromUrl);
     $("device-code").value = fromUrl;
-    return;
+    isCliFlow = true;
+  } else if (isVerifyPath) {
+    const saved = (sessionStorage.getItem(CODE_STORAGE_KEY) || "").trim().toUpperCase();
+    if (saved) {
+      $("device-code").value = saved;
+      isCliFlow = true;
+    }
+  } else {
+    // Normal /login web sign-in: clear any stale CLI code so the user goes to Dashboard.
+    sessionStorage.removeItem(CODE_STORAGE_KEY);
+    $("device-code").value = "";
+    isCliFlow = false;
   }
-  const saved = (sessionStorage.getItem(CODE_STORAGE_KEY) || "").trim().toUpperCase();
-  if (saved) {
-    $("device-code").value = saved;
+
+  const codeBox = $("code-box");
+  if (codeBox) codeBox.classList.toggle("hidden", !isCliFlow);
+  const titleEl = $("card-title");
+  if (titleEl) {
+    titleEl.textContent = isCliFlow ? "Authorize Openmi CLI" : "Sign in to Openmi";
   }
 }
 
@@ -68,9 +85,8 @@ function renderView(session) {
   currentSession = session;
   $("done-view").classList.add("hidden");
   if (session?.user) {
-    const code = $("device-code").value.trim();
-    const nextPath = getSafeNextPath();
-    if (nextPath && !code) {
+    if (!isCliFlow) {
+      const nextPath = getSafeNextPath() || "/";
       sessionStorage.removeItem(NEXT_STORAGE_KEY);
       window.location.replace(nextPath);
       return;
@@ -82,19 +98,21 @@ function renderView(session) {
   } else {
     $("approve-view").classList.add("hidden");
     $("auth-view").classList.remove("hidden");
-    $("card-subtitle").textContent = "Sign in to connect your terminal session.";
+    $("card-subtitle").textContent = isCliFlow
+      ? "Sign in to connect your terminal session."
+      : "Sign in to access your Openmi dashboard and billing.";
   }
 }
 
 async function startOAuth(provider) {
   showStatus("");
-  const code = $("device-code").value.trim().toUpperCase();
+  const code = isCliFlow ? $("device-code").value.trim().toUpperCase() : "";
   if (code) sessionStorage.setItem(CODE_STORAGE_KEY, code);
 
   const nextPath = getSafeNextPath();
   const redirectUrl = code
     ? new URL("/verify", window.location.origin)
-    : new URL(nextPath || "/verify", window.location.origin);
+    : new URL(nextPath || "/", window.location.origin);
   if (code) redirectUrl.searchParams.set("code", code);
 
   const { error } = await supabase.auth.signInWithOAuth({
