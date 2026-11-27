@@ -12,7 +12,7 @@ use crate::events::{AgentEvent, ControlState, TodoItem, TodoStatus};
 use crate::hooks::{
     run_post_tool_hooks, run_pre_tool_hooks, run_stop_hooks, HookOutcome, HooksConfig,
 };
-use crate::llm::{stream_step, ProxyConfig};
+use crate::llm::{stream_step, ProxyConfig, ReasoningEffort};
 use crate::permissions::{
     evaluate_permission, ApprovalDecision, ApprovalHandler, ApprovalRequest, AskUserHandler,
     AskUserRequest, DenyAllApprovalHandler, NonInteractiveAskUserHandler, PermissionMode,
@@ -150,6 +150,7 @@ pub struct CompactReport {
 /// UI-agnostic agent session state and turn runner.
 pub struct AgentSession {
     model: String,
+    reasoning_effort: ReasoningEffort,
     permission_mode: PermissionMode,
     permission_rules: PermissionRules,
     hooks: HooksConfig,
@@ -177,6 +178,7 @@ impl AgentSession {
         let path_guard = PathGuard::new(cwd)?;
         Ok(Self {
             model: model.into(),
+            reasoning_effort: ReasoningEffort::default(),
             permission_mode: PermissionMode::Ask,
             permission_rules: PermissionRules::default(),
             hooks: HooksConfig::default(),
@@ -214,6 +216,14 @@ impl AgentSession {
 
     pub fn set_model(&mut self, model: impl Into<String>) {
         self.model = model.into();
+    }
+
+    pub fn reasoning_effort(&self) -> ReasoningEffort {
+        self.reasoning_effort
+    }
+
+    pub fn set_reasoning_effort(&mut self, effort: ReasoningEffort) {
+        self.reasoning_effort = effort;
     }
 
     pub fn permission_mode(&self) -> PermissionMode {
@@ -382,6 +392,7 @@ impl AgentSession {
             let step = stream_step(
                 &proxy,
                 &self.model,
+                ReasoningEffort::Off,
                 &req_messages,
                 &[],
                 None,
@@ -571,6 +582,7 @@ impl AgentSession {
             let resp = stream_step(
                 proxy,
                 &self.model,
+                self.reasoning_effort,
                 &req_messages,
                 &extra_tools,
                 self.allowed_tools.as_deref(),

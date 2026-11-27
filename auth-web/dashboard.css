@@ -330,6 +330,17 @@ body {
   border-color: #c7c7cc;
 }
 
+.btn-danger {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: var(--danger-border);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
 .btn-sm {
   height: 30px;
   padding: 0 10px;
@@ -403,6 +414,12 @@ body {
   background: var(--danger-bg);
   border-color: var(--danger-border);
   color: var(--danger);
+}
+
+.alert-success {
+  background: var(--ok-bg);
+  border-color: var(--ok-border);
+  color: var(--ok);
 }
 
 /* Metric Grid */

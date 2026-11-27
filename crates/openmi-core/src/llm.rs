@@ -7,6 +7,74 @@ use crate::events::AgentEvent;
 use crate::registry::DynamicToolSpec;
 use crate::session::{CoreError, Message};
 
+/// AI reasoning effort level sent to reasoning-capable models.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    #[default]
+    Off,
+    Low,
+    Medium,
+    High,
+}
+
+impl ReasoningEffort {
+    pub const ALL: [Self; 4] = [Self::Off, Self::Low, Self::Medium, Self::High];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off (default)",
+            Self::Low => "Low",
+            Self::Medium => "Medium",
+            Self::High => "High",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Off => "Fastest responses — omit reasoning_effort parameter",
+            Self::Low => "Light reasoning — quick answers with minimal thinking",
+            Self::Medium => "Balanced reasoning — good for most coding tasks",
+            Self::High => "Deep reasoning — thorough analysis for hard problems",
+        }
+    }
+
+    /// Value sent in the JSON `reasoning_effort` field (`None` when `Off`).
+    pub fn api_value(self) -> Option<&'static str> {
+        match self {
+            Self::Off => None,
+            Self::Low => Some("low"),
+            Self::Medium => Some("medium"),
+            Self::High => Some("high"),
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "off" | "none" | "0" | "false" => Some(Self::Off),
+            "low" | "l" | "1" => Some(Self::Low),
+            "medium" | "med" | "m" | "2" => Some(Self::Medium),
+            "high" | "h" | "3" => Some(Self::High),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for ReasoningEffort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Configuration for the managed Openmi Supabase LLM proxy.
 #[derive(Debug, Clone)]
 pub struct ProxyConfig {
@@ -61,9 +129,11 @@ fn default_err_code() -> String {
 }
 
 /// Stream a single model step over Server-Sent Events (`text/event-stream`).
+#[allow(clippy::too_many_arguments)]
 pub async fn stream_step(
     config: &ProxyConfig,
     model: &str,
+    reasoning_effort: ReasoningEffort,
     messages: &[Message],
     extra_tools: &[DynamicToolSpec],
     allowed_tools: Option<&[String]>,
@@ -108,6 +178,9 @@ pub async fn stream_step(
         "stream": true,
         "messages": wire_messages,
     });
+    if let Some(effort) = reasoning_effort.api_value() {
+        payload["reasoning_effort"] = serde_json::json!(effort);
+    }
     if let Some(allowed) = allowed_tools {
         payload["allowed_tools"] = serde_json::json!(allowed);
     }

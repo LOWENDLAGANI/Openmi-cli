@@ -22,4 +22,5 @@ alter table public.user_providers enable row level security;
 
 -- No direct anon/authenticated policies: all access is mediated by Edge Functions
 -- using service_role after validating the caller's Supabase JWT.
-revoke all on table public.user_providers from anon, authenticated;
+revoke all on table public.user_providers from public, anon, authenticated;
+grant select, insert, update, delete on table public.user_providers to service_role;

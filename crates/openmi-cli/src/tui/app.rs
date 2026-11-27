@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use openmi_core::{
     AgentEvent, ApprovalDecision, ControlState, CreditStatus, Message, ModelInfo, PermissionMode,
-    Role, TodoItem,
+    ReasoningEffort, Role, TodoItem,
 };
 use similar::TextDiff;
 
@@ -101,6 +101,43 @@ impl ModelSelectorState {
 
     pub fn current(&self) -> Option<&ModelInfo> {
         self.models.get(self.selected)
+    }
+}
+
+/// Interactive `/effort` selector modal state.
+#[derive(Debug, Clone)]
+pub struct EffortSelectorState {
+    pub selected: usize,
+}
+
+impl EffortSelectorState {
+    pub fn new(current: ReasoningEffort) -> Self {
+        let selected = ReasoningEffort::ALL
+            .iter()
+            .position(|e| *e == current)
+            .unwrap_or(0);
+        Self { selected }
+    }
+
+    pub fn move_up(&mut self) {
+        let total = ReasoningEffort::ALL.len();
+        if self.selected == 0 {
+            self.selected = total - 1;
+        } else {
+            self.selected -= 1;
+        }
+    }
+
+    pub fn move_down(&mut self) {
+        let total = ReasoningEffort::ALL.len();
+        self.selected = (self.selected + 1) % total;
+    }
+
+    pub fn current(&self) -> ReasoningEffort {
+        ReasoningEffort::ALL
+            .get(self.selected)
+            .copied()
+            .unwrap_or_default()
     }
 }
 
@@ -309,6 +346,7 @@ pub struct TuiApp {
     pub approval_selected: usize,
     pub full_access_modal: Option<FullAccessModalState>,
     pub model_selector: Option<ModelSelectorState>,
+    pub effort_selector: Option<EffortSelectorState>,
     pub folder_picker: Option<FolderPickerState>,
     pub resume_picker: Option<ResumePickerState>,
     pub settings_modal: Option<SettingsModalState>,
@@ -417,6 +455,7 @@ impl TuiApp {
             approval_selected: 0,
             full_access_modal: None,
             model_selector: None,
+            effort_selector: None,
             folder_picker: None,
             resume_picker: None,
             settings_modal: None,
@@ -926,6 +965,11 @@ impl TuiApp {
 
         if self.model_selector.is_some() {
             self.model_selector = None;
+            return false;
+        }
+
+        if self.effort_selector.is_some() {
+            self.effort_selector = None;
             return false;
         }
 

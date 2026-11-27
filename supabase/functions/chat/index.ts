@@ -699,6 +699,9 @@ Deno.serve(async (req: Request) => {
   }
 
   const requestedModel = String((body as Record<string, unknown>).model ?? "").trim() || "openmi-default";
+  const rawEffort = String((body as Record<string, unknown>).reasoning_effort ?? "").trim().toLowerCase();
+  const reasoningEffort: "low" | "medium" | "high" | null =
+    rawEffort === "low" || rawEffort === "medium" || rawEffort === "high" ? rawEffort : null;
   const byokParsed = parseByokModelId(requestedModel);
 
   let isByok = false;
@@ -1068,7 +1071,7 @@ Deno.serve(async (req: Request) => {
   };
 
   // 5. Call upstream OpenAI-compatible chat completions API with streaming + usage reporting
-  const fetchUpstream = (includeStreamOptions: boolean) =>
+  const fetchUpstream = (includeStreamOptions: boolean, includeReasoningEffort: boolean) =>
     fetch(`${llmBaseUrl}/chat/completions`, {
       method: "POST",
       headers: {
@@ -1081,6 +1084,7 @@ Deno.serve(async (req: Request) => {
         stream: true,
         ...(isByok ? {} : { max_tokens: maxOutputTokens }),
         ...(includeStreamOptions && !isByok ? { stream_options: { include_usage: true } } : {}),
+        ...(includeReasoningEffort && reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
         messages: upstreamMessages,
         tools: allTools,
         tool_choice: "auto",
@@ -1090,11 +1094,22 @@ Deno.serve(async (req: Request) => {
 
   let upstreamResp: Response;
   try {
-    upstreamResp = await fetchUpstream(true);
-    if (upstreamResp.status === 400 && !isByok) {
+    let useStreamOptions = true;
+    let useReasoningEffort = Boolean(reasoningEffort);
+    upstreamResp = await fetchUpstream(useStreamOptions, useReasoningEffort);
+    if (upstreamResp.status === 400) {
       const probeText = await upstreamResp.clone().text().catch(() => "");
-      if (/stream_options/i.test(probeText)) {
-        upstreamResp = await fetchUpstream(false);
+      let shouldRetry = false;
+      if (!isByok && useStreamOptions && /stream_options/i.test(probeText)) {
+        useStreamOptions = false;
+        shouldRetry = true;
+      }
+      if (useReasoningEffort && /reasoning_effort|reasoning/i.test(probeText)) {
+        useReasoningEffort = false;
+        shouldRetry = true;
+      }
+      if (shouldRetry) {
+        upstreamResp = await fetchUpstream(useStreamOptions, useReasoningEffort);
       }
     }
   } catch (err) {

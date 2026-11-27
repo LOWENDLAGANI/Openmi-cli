@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use openmi_core::{HooksConfig, PermissionMode, PermissionRules};
+use openmi_core::{HooksConfig, PermissionMode, PermissionRules, ReasoningEffort};
 use openmi_platform::{atomic_write, AppPaths};
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +27,10 @@ pub struct UserSettings {
     #[serde(default = "default_true")]
     pub show_tool_activity: bool,
 
+    /// AI reasoning effort level (`off`, `low`, `medium`, `high`). Defaults to `off`.
+    #[serde(default)]
+    pub reasoning_effort: ReasoningEffort,
+
     /// Granular glob-based permission rules (`allow`, `ask`, `deny`).
     #[serde(default)]
     pub permissions: PermissionRules,
@@ -42,6 +46,7 @@ impl Default for UserSettings {
             auto_approve: true,
             read_only: false,
             show_tool_activity: true,
+            reasoning_effort: ReasoningEffort::default(),
             permissions: PermissionRules::default(),
             hooks: HooksConfig::default(),
         }
@@ -202,6 +207,7 @@ mod tests {
             auto_approve: false,
             read_only: false,
             show_tool_activity: false,
+            reasoning_effort: ReasoningEffort::Medium,
             permissions: PermissionRules {
                 allow: vec!["Bash(cargo test *)".into()],
                 ask: vec![],
@@ -222,6 +228,7 @@ mod tests {
             auto_approve: true,
             read_only: true,
             show_tool_activity: true,
+            reasoning_effort: ReasoningEffort::Off,
             permissions: PermissionRules::default(),
             hooks: HooksConfig::default(),
         };

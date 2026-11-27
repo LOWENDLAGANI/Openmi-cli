@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#FFB5D8" />
+  <meta name="description" content="Openmi Account Settings — bind Google, GitHub, and Email sign-in methods to the same Openmi account." />
+  <title>Settings — Openmi</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/dashboard.css" />
+  <style>
+    .settings-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .account-meta-grid {
+      padding: 18px 20px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    @media (max-width: 760px) {
+      .account-meta-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .meta-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .meta-label {
+      font-size: 11.5px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--ink-muted);
+    }
+
+    .meta-value {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--ink);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .meta-id-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .identity-list {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .identity-row {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .identity-row:last-child {
+      border-bottom: 0;
+    }
+
+    .identity-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+      flex: 1 1 260px;
+    }
+
+    .provider-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      border: 1px solid var(--border-strong);
+      background: var(--surface-subtle);
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+      color: var(--ink);
+    }
+
+    .identity-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .identity-title-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .identity-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+
+    .identity-detail {
+      font-size: 12.5px;
+      color: var(--ink-muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .identity-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .password-panel {
+      padding: 16px 20px 20px;
+      background: var(--surface-subtle);
+      border-top: 1px solid var(--border);
+    }
+
+    .password-form {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      max-width: 680px;
+    }
+
+    @media (max-width: 640px) {
+      .password-form {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .field.is-full {
+      grid-column: 1 / -1;
+    }
+
+    .field label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink-secondary);
+    }
+
+    .field input {
+      width: 100%;
+      height: 38px;
+      padding: 0 11px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
+      color: var(--ink);
+      font-family: var(--font-sans);
+      font-size: 13px;
+    }
+
+    .field input:focus {
+      outline: none;
+      border-color: var(--pink-border);
+      box-shadow: 0 0 0 3px rgba(255, 181, 216, 0.35);
+    }
+
+    .field input:read-only {
+      background: var(--chrome-soft);
+      color: var(--ink-secondary);
+    }
+
+    .password-actions {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 2px;
+    }
+
+    .panel-footer-note {
+      padding: 12px 20px;
+      background: var(--surface-subtle);
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--ink-muted);
+    }
+  </style>
+</head>
+<body>
+  <header class="mobile-bar">
+    <a href="/" class="brand-link" style="padding:0;">
+      <span class="brand-mark" aria-hidden="true">O</span>
+      <span class="brand-title">Openmi</span>
+    </a>
+    <nav class="mobile-nav" aria-label="Mobile navigation">
+      <a href="/" class="btn btn-sm btn-secondary">Dashboard</a>
+      <a href="/provider" class="btn btn-sm btn-secondary">BYOK</a>
+      <a href="/pay" class="btn btn-sm btn-secondary">Passes</a>
+      <a href="/settings" class="btn btn-sm btn-primary">Settings</a>
+    </nav>
+  </header>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Console navigation">
+      <div class="sidebar-top">
+        <a href="/" class="brand-link">
+          <span class="brand-mark" aria-hidden="true">O</span>
+          <div>
+            <div class="brand-title">Openmi</div>
+            <div class="brand-sub">Developer Console</div>
+          </div>
+        </a>
+
+        <nav class="side-nav">
+          <div class="side-nav-label">Console</div>
+          <a href="/" class="side-link">Overview</a>
+          <a href="/#models" class="side-link">Model Availability</a>
+          <a href="/#activity" class="side-link">Usage &amp; Ledger</a>
+
+          <div class="side-nav-label" style="margin-top:8px;">Account</div>
+          <a href="/provider" class="side-link">Providers (BYOK)</a>
+          <a href="/pay" class="side-link">Passes &amp; Billing</a>
+          <a href="/settings" class="side-link is-active">Settings</a>
+        </nav>
+      </div>
+
+      <div class="sidebar-footer">
+        <div id="sidebar-account" class="account-card hidden">
+          <div class="account-row">
+            <span class="account-email" id="sidebar-email">—</span>
+            <span class="badge badge-free" id="sidebar-linked-count">0 linked</span>
+          </div>
+          <div class="account-row">
+            <span class="brand-sub">Account &amp; sign-in</span>
+            <button type="button" class="link-btn" id="btn-signout">Sign out</button>
+          </div>
+        </div>
+        <a id="sidebar-signin-btn" href="/login?next=/settings" class="btn btn-primary hidden">Sign in</a>
+      </div>
+    </aside>
+
+    <main class="main-area">
+      <div class="page-header">
+        <div>
+          <h1>Settings</h1>
+          <p class="page-desc">Manage your Openmi account and bind multiple sign-in options to the same account.</p>
+        </div>
+        <div class="header-actions">
+          <button type="button" class="btn btn-secondary" id="btn-refresh">Refresh</button>
+        </div>
+      </div>
+
+      <div id="status-banner" class="alert hidden" role="status"></div>
+
+      <section id="signed-out-section" class="signed-out-card hidden">
+        <div>
+          <h2>Sign in to manage account settings</h2>
+          <p>Bind Google, GitHub, and Email &amp; Password to one Openmi account so all sign-in options share your credits, passes, and BYOK providers.</p>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <a href="/login?next=/settings" class="btn btn-primary">Sign in to Console</a>
+        </div>
+      </section>
+
+      <div id="settings-section" class="settings-stack hidden">
+        <!-- Account Overview -->
+        <section class="panel" aria-labelledby="account-info-heading">
+          <div class="panel-head">
+            <div>
+              <h2 id="account-info-heading">Account</h2>
+              <p class="panel-desc">All bound sign-in providers resolve to this single Openmi user ID.</p>
+            </div>
+          </div>
+          <div class="account-meta-grid">
+            <div class="meta-item">
+              <span class="meta-label">Primary Email</span>
+              <span class="meta-value" id="meta-email">—</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Account ID</span>
+              <div class="meta-id-row">
+                <span class="meta-value mono" id="meta-user-id">—</span>
+                <button type="button" class="btn btn-sm btn-secondary" id="btn-copy-uid">Copy</button>
+              </div>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Member Since</span>
+              <span class="meta-value" id="meta-created-at">—</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Bind Accounts / Linked Sign-In Methods -->
+        <section class="panel" id="bind-accounts" aria-labelledby="bind-accounts-heading">
+          <div class="panel-head">
+            <div>
+              <h2 id="bind-accounts-heading">Bound Sign-In Accounts</h2>
+              <p class="panel-desc">Link Google, GitHub, or Email &amp; Password so you can sign in to the dashboard and CLI with any of them.</p>
+            </div>
+            <span class="badge badge-free" id="linked-methods-badge">Loading…</span>
+          </div>
+
+          <div class="identity-list" id="identity-list">
+            <!-- Google -->
+            <div class="identity-row" id="row-google">
+              <div class="identity-left">
+                <div class="provider-icon" aria-hidden="true">
+                  <svg width="20" height="20" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M23.49 12.27c0-.79-.07-1.54-.2-2.27H12v4.3h6.44a5.5 5.5 0 0 1-2.39 3.61v3h3.87c2.26-2.08 3.57-5.15 3.57-8.64Z"/>
+                    <path fill="#34A853" d="M12 24c3.24 0 5.95-1.07 7.93-2.91l-3.87-3c-1.07.72-2.44 1.14-4.06 1.14-3.12 0-5.77-2.11-6.72-4.95H1.28v3.1A12 12 0 0 0 12 24Z"/>
+                    <path fill="#FBBC05" d="M5.28 14.28A7.2 7.2 0 0 1 4.9 12c0-.79.14-1.56.38-2.28v-3.1H1.28A12 12 0 0 0 0 12c0 1.94.46 3.77 1.28 5.38l4-3.1Z"/>
+                    <path fill="#EA4335" d="M12 4.77c1.76 0 3.34.61 4.58 1.8l3.44-3.44C17.94 1.19 15.23 0 12 0A12 12 0 0 0 1.28 6.62l4 3.1C6.23 6.88 8.88 4.77 12 4.77Z"/>
+                  </svg>
+                </div>
+                <div class="identity-info">
+                  <div class="identity-title-row">
+                    <span class="identity-name">Google</span>
+                    <span class="badge badge-free" id="badge-google">Not connected</span>
+                  </div>
+                  <div class="identity-detail" id="detail-google">Bind your Google account for one-click sign-in.</div>
+                </div>
+              </div>
+              <div class="identity-actions" id="actions-google"></div>
+            </div>
+
+            <!-- GitHub -->
+            <div class="identity-row" id="row-github">
+              <div class="identity-left">
+                <div class="provider-icon" aria-hidden="true">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.69-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.47.11-3.06 0 0 .97-.31 3.18 1.18a11.1 11.1 0 0 1 5.79 0c2.21-1.49 3.18-1.18 3.18-1.18.63 1.59.23 2.77.11 3.06.74.8 1.19 1.83 1.19 3.09 0 4.41-2.69 5.39-5.26 5.67.42.36.79 1.07.79 2.16 0 1.56-.01 2.82-.01 3.2 0 .31.21.68.8.56A11.52 11.52 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/>
+                  </svg>
+                </div>
+                <div class="identity-info">
+                  <div class="identity-title-row">
+                    <span class="identity-name">GitHub</span>
+                    <span class="badge badge-free" id="badge-github">Not connected</span>
+                  </div>
+                  <div class="identity-detail" id="detail-github">Bind your GitHub account for developer sign-in.</div>
+                </div>
+              </div>
+              <div class="identity-actions" id="actions-github"></div>
+            </div>
+
+            <!-- Email & Password -->
+            <div class="identity-row" id="row-email">
+              <div class="identity-left">
+                <div class="provider-icon" aria-hidden="true">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="4" width="20" height="16" rx="2"/>
+                    <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+                  </svg>
+                </div>
+                <div class="identity-info">
+                  <div class="identity-title-row">
+                    <span class="identity-name">Email &amp; Password</span>
+                    <span class="badge badge-free" id="badge-email">No password set</span>
+                  </div>
+                  <div class="identity-detail" id="detail-email">Add a password to sign in with your email address.</div>
+                </div>
+              </div>
+              <div class="identity-actions" id="actions-email"></div>
+            </div>
+          </div>
+
+          <!-- Inline Set / Change Password Form -->
+          <div id="password-panel" class="password-panel hidden">
+            <form id="password-form" class="password-form" autocomplete="off">
+              <div class="field is-full">
+                <label for="pw-email-input">Account Email</label>
+                <input id="pw-email-input" type="email" placeholder="you@example.com" required />
+              </div>
+              <div class="field">
+                <label for="pw-new-input">New Password</label>
+                <input id="pw-new-input" type="password" minlength="6" placeholder="At least 6 characters" required autocomplete="new-password" />
+              </div>
+              <div class="field">
+                <label for="pw-confirm-input">Confirm Password</label>
+                <input id="pw-confirm-input" type="password" minlength="6" placeholder="Re-enter password" required autocomplete="new-password" />
+              </div>
+              <div class="password-actions">
+                <button type="submit" class="btn btn-primary btn-sm" id="btn-save-password">Save Password</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="btn-cancel-password">Cancel</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="panel-footer-note">
+            You must keep at least one sign-in method connected. If a Google or GitHub account is already registered to a separate Openmi account, it cannot be bound here.
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="/settings.js"></script>
+</body>
+</html>

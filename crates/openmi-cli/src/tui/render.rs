@@ -1,4 +1,4 @@
-use openmi_core::{PermissionMode, Role, TodoStatus};
+use openmi_core::{PermissionMode, ReasoningEffort, Role, TodoStatus};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -7,9 +7,9 @@ use ratatui::Frame;
 
 use crate::auth::store::now_unix_secs;
 use crate::tui::app::{
-    format_friendly_path, friendly_tool_title, AskUserModalState, FolderEntry, FolderPickerState,
-    FullAccessModalState, ModelSelectorState, ResumePickerState, SettingsModalState,
-    TranscriptKind, TuiApp,
+    format_friendly_path, friendly_tool_title, AskUserModalState, EffortSelectorState, FolderEntry,
+    FolderPickerState, FullAccessModalState, ModelSelectorState, ResumePickerState,
+    SettingsModalState, TranscriptKind, TuiApp,
 };
 use crate::tui::markdown::{render_markdown_lines, MarkdownTheme};
 use crate::tui::slash::FULL_ACCESS_MODAL_WARNING;
@@ -104,6 +104,8 @@ pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
         render_full_access_modal(frame, modal);
     } else if let Some(selector) = &app.model_selector {
         render_model_selector_modal(frame, app, selector);
+    } else if let Some(selector) = &app.effort_selector {
+        render_effort_selector_modal(frame, app, selector);
     } else if let Some(picker) = &app.folder_picker {
         render_folder_picker_modal(frame, picker);
     } else if let Some(resume) = &app.resume_picker {
@@ -287,6 +289,12 @@ fn render_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         Span::styled("· ", Style::default().fg(MUTED)),
         Span::styled(app.model_display(), Style::default().fg(Color::Reset)),
     ];
+    if app.settings.reasoning_effort != ReasoningEffort::Off {
+        left_spans.push(Span::styled(
+            format!(" · effort:{}", app.settings.reasoning_effort.as_str()),
+            Style::default().fg(ACCENT),
+        ));
+    }
     if !narrow {
         left_spans.push(Span::styled(" · ", Style::default().fg(MUTED)));
         left_spans.push(Span::styled(
@@ -761,6 +769,7 @@ fn render_input(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         && app.ask_user_modal.is_none()
         && app.full_access_modal.is_none()
         && app.model_selector.is_none()
+        && app.effort_selector.is_none()
         && app.folder_picker.is_none()
         && app.resume_picker.is_none()
         && app.settings_modal.is_none()
@@ -945,6 +954,69 @@ fn render_full_access_modal(frame: &mut Frame<'_>, modal: &FullAccessModalState)
         )
         .wrap(Wrap { trim: true });
     frame.render_widget(widget, popup_area);
+}
+
+fn render_effort_selector_modal(
+    frame: &mut Frame<'_>,
+    app: &TuiApp,
+    selector: &EffortSelectorState,
+) {
+    let popup_area = centered_rect(68, 42, frame.area());
+    frame.render_widget(Clear, popup_area);
+
+    let mut lines: Vec<Line<'_>> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "Choose AI reasoning effort (saved across sessions):",
+        Style::default().fg(MUTED),
+    )));
+    lines.push(Line::from(""));
+
+    for (idx, effort) in ReasoningEffort::ALL.iter().copied().enumerate() {
+        let is_sel = idx == selector.selected;
+        let is_current = effort == app.settings.reasoning_effort;
+        let prefix = if is_sel { "▸ " } else { "  " };
+        let mut spans = vec![Span::styled(
+            format!("{prefix}{}", effort.label()),
+            if is_sel {
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Reset)
+            },
+        )];
+        if is_current {
+            spans.push(Span::styled(
+                "  (current)",
+                Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD),
+            ));
+        }
+        lines.push(Line::from(spans));
+        lines.push(Line::from(Span::styled(
+            format!("    {}", effort.description()),
+            Style::default().fg(MUTED),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Up/Down or j/k to move  ·  Enter to select  ·  Esc to cancel",
+        Style::default().fg(MUTED),
+    )));
+
+    let modal = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(ACCENT))
+                .padding(Padding::new(2, 2, 1, 1))
+                .title(Span::styled(
+                    " Reasoning Effort ",
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                )),
+        )
+        .wrap(Wrap { trim: false });
+
+    frame.render_widget(modal, popup_area);
 }
 
 fn render_model_selector_modal(frame: &mut Frame<'_>, app: &TuiApp, selector: &ModelSelectorState) {

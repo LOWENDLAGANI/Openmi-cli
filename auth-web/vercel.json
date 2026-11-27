@@ -4,6 +4,7 @@
     { "source": "/verify", "destination": "/verify.html" },
     { "source": "/login", "destination": "/verify.html" },
     { "source": "/pay", "destination": "/pay.html" },
-    { "source": "/provider", "destination": "/provider.html" }
+    { "source": "/provider", "destination": "/provider.html" },
+    { "source": "/settings", "destination": "/settings.html" }
   ]
 }

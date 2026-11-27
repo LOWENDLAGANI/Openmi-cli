@@ -16,7 +16,7 @@ pub use catalog::{
 };
 pub use events::{AgentEvent, ControlState, TodoItem, TodoStatus};
 pub use hooks::{HookOutcome, HookRule, HooksConfig};
-pub use llm::ProxyConfig;
+pub use llm::{ProxyConfig, ReasoningEffort};
 pub use mcp::{
     load_merged_mcp_config, load_merged_mcp_config_with_trust, McpConfigFile, McpError, McpManager,
     McpServerConfig, McpServerStatus, McpStdioClient, McpToolInfo,

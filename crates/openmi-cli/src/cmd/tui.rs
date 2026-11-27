@@ -16,7 +16,7 @@ use futures_util::StreamExt;
 use openmi_checkpoints::CheckpointStore;
 use openmi_core::{
     fetch_credit_status, fetch_models_with_fallback, AgentEvent, ApprovalDecision, CreditStatus,
-    ModelInfo, PermissionMode, ProxyConfig,
+    ModelInfo, PermissionMode, ProxyConfig, ReasoningEffort,
 };
 use openmi_platform::AppPaths;
 use ratatui::backend::CrosstermBackend;
@@ -32,7 +32,8 @@ use crate::session::{build_session_with_options, generate_starter_openmi_md};
 use crate::session_store::{SavedSession, SessionStore};
 use crate::settings::UserSettings;
 use crate::tui::app::{
-    resolve_folder_input, AskUserModalState, FolderPickerState, FullAccessModalState,
+    resolve_folder_input, AskUserModalState, EffortSelectorState, FolderPickerState,
+    FullAccessModalState,
     ModelSelectorState, ResumePickerState, SettingsModalState, TuiApp,
 };
 use crate::tui::approval::{
@@ -153,6 +154,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
         mgr.start_all(raw_session.tool_registry_mut()).await;
     }
 
+    raw_session.set_reasoning_effort(user_settings.reasoning_effort);
     let session = Arc::new(tokio::sync::Mutex::new(raw_session));
 
     install_panic_hook();
@@ -235,6 +237,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                             modal.error = None;
                         } else if app.pending_approval.is_none()
                             && app.model_selector.is_none()
+                            && app.effort_selector.is_none()
                             && app.folder_picker.is_none()
                             && app.resume_picker.is_none()
                             && app.settings_modal.is_none()
@@ -264,6 +267,16 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                 app.model = chosen.id.clone();
                                 session.lock().await.set_model(chosen.id.clone());
                                 app.push_system(format_model_switch_message(&app, &chosen));
+                            }
+                            KeyAction::SelectedEffort(effort) => {
+                                app.settings.reasoning_effort = effort;
+                                let _ = app.settings.save_default();
+                                session.lock().await.set_reasoning_effort(effort);
+                                app.push_system(format!(
+                                    "Reasoning effort set to `{}` ({}).",
+                                    effort.as_str(),
+                                    effort.description()
+                                ));
                             }
                             KeyAction::OpenByokProvider => {
                                 let mut url = app
@@ -505,6 +518,21 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                                 .unwrap_or_else(|| " Your 1-hour pass starts when you send your first prompt.".to_string());
                                             let shown = app.display_name_for(&m).to_string();
                                             app.push_system(format!("Switched to {shown}.{active_note}"));
+                                        }
+                                        SlashOutcome::OpenEffortSelector => {
+                                            app.effort_selector = Some(EffortSelectorState::new(
+                                                app.settings.reasoning_effort,
+                                            ));
+                                        }
+                                        SlashOutcome::SetEffort(effort) => {
+                                            app.settings.reasoning_effort = effort;
+                                            let _ = app.settings.save_default();
+                                            session.lock().await.set_reasoning_effort(effort);
+                                            app.push_system(format!(
+                                                "Reasoning effort set to `{}` ({}).",
+                                                effort.as_str(),
+                                                effort.description()
+                                            ));
                                         }
                                         SlashOutcome::TogglePlan(desired) => {
                                             let mut sess = session.lock().await;
@@ -922,6 +950,7 @@ enum KeyAction {
     Submit(String),
     ConfirmedFullAccess,
     SelectedModel(ModelInfo),
+    SelectedEffort(ReasoningEffort),
     OpenByokProvider,
     SelectedFolder(PathBuf),
     SettingsChanged(Option<PermissionMode>),
@@ -1057,6 +1086,21 @@ fn handle_key_event(
                     return KeyAction::SelectedModel(chosen);
                 }
                 app.model_selector = None;
+            }
+            _ => {}
+        }
+        return KeyAction::None;
+    }
+
+    // 3b. Interactive `/effort` selector modal intercepts Up/Down/j/k/Enter until selected or Esc.
+    if let Some(selector) = app.effort_selector.as_mut() {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => selector.move_up(),
+            KeyCode::Down | KeyCode::Char('j') => selector.move_down(),
+            KeyCode::Enter => {
+                let chosen = selector.current();
+                app.effort_selector = None;
+                return KeyAction::SelectedEffort(chosen);
             }
             _ => {}
         }

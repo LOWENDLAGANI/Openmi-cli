@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use openmi_checkpoints::CheckpointStore;
-use openmi_core::PermissionMode;
+use openmi_core::{PermissionMode, ReasoningEffort};
 
 use crate::tui::diff::render_latest_checkpoint_diff;
 
@@ -27,6 +27,7 @@ pub const SLASH_PALETTE: &[(&str, &str)] = &[
     ("/settings", "Configure auto-approve & preferences"),
     ("/folder", "Pick or change project folder"),
     ("/model", "Switch AI model"),
+    ("/effort", "Set AI reasoning effort (off|low|medium|high)"),
     ("/resume", "Continue a previous chat"),
     ("/new", "Start a fresh chat"),
     ("/init", "Create a starter OPENMI.md guide"),
@@ -88,6 +89,7 @@ pub enum SlashCommand {
     Settings,
     Folder(Option<String>),
     Model(Option<String>),
+    Effort(Option<String>),
     Resume,
     Init,
     Memory(Option<String>),
@@ -116,6 +118,8 @@ pub enum SlashOutcome {
     SetFolder(String),
     OpenModelSelector,
     SetModel(String),
+    OpenEffortSelector,
+    SetEffort(ReasoningEffort),
     OpenResumePicker,
     InitProjectGuide,
     TogglePlan(Option<bool>),
@@ -149,6 +153,7 @@ pub fn parse_slash(input: &str) -> Option<SlashCommand> {
         "/settings" | "/setting" => SlashCommand::Settings,
         "/folder" | "/project" | "/cd" => SlashCommand::Folder(arg),
         "/model" => SlashCommand::Model(arg),
+        "/effort" => SlashCommand::Effort(arg),
         "/resume" => SlashCommand::Resume,
         "/init" => SlashCommand::Init,
         "/memory" => SlashCommand::Memory(arg),
@@ -183,6 +188,13 @@ pub fn execute_slash(
         SlashCommand::Folder(Some(path)) => SlashOutcome::SetFolder(path),
         SlashCommand::Model(None) => SlashOutcome::OpenModelSelector,
         SlashCommand::Model(Some(model)) => SlashOutcome::SetModel(model),
+        SlashCommand::Effort(None) => SlashOutcome::OpenEffortSelector,
+        SlashCommand::Effort(Some(raw)) => match ReasoningEffort::parse(&raw) {
+            Some(effort) => SlashOutcome::SetEffort(effort),
+            None => SlashOutcome::Error(format!(
+                "Unknown effort level `{raw}`. Use: off, low, medium, or high."
+            )),
+        },
         SlashCommand::Resume => SlashOutcome::OpenResumePicker,
         SlashCommand::Init => SlashOutcome::InitProjectGuide,
         SlashCommand::Memory(arg) => execute_memory(arg.as_deref(), cwd),
@@ -375,6 +387,7 @@ macro_rules! help_commands {
             "  /settings                       Toggle auto-approve, read-only, tool activity lines\n",
             "  /folder [path]                  Pick a project folder (aliases: /project, /cd)\n",
             "  /model [id]                     Open interactive model selector or switch directly\n",
+            "  /effort [off|low|medium|high]   Set AI reasoning effort (default: off)\n",
             "  /resume                         Pick a previous chat to continue\n",
             "  /new (or /clear)                Start a fresh chat (clears history)\n",
             "  /init                           Create a starter OPENMI.md in the project folder\n",

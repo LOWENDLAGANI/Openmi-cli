@@ -82,6 +82,7 @@ pub async fn execute(opts: RunOptions) -> Result<(), CliError> {
         approval_handler,
         proxy_config,
     )?;
+    session.set_reasoning_effort(UserSettings::load_default().reasoning_effort);
     match (tier_max_steps, opts.max_steps) {
         (Some(tier_cap), Some(requested)) => session.set_max_steps(requested.min(tier_cap)),
         (Some(tier_cap), None) => session.set_max_steps(tier_cap),
