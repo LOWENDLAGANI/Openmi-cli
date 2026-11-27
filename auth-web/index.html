@@ -145,6 +145,20 @@
           </div>
           <a href="/pay" class="btn btn-secondary btn-sm">Manage Passes</a>
         </div>
+
+        <form class="pass-strip" id="redeem-form" style="border-color:var(--border-strong);" autocomplete="off">
+          <div class="pass-strip-left">
+            <div class="pass-strip-title">
+              <span>Redeem Coin Code</span>
+              <span class="badge badge-free">Giveaway</span>
+            </div>
+            <div class="pass-strip-sub" id="redeem-status-msg">Have a promo or giveaway code? Enter it to claim Wallet Coins.</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <input type="text" id="redeem-code-input" class="search-input mono" style="min-width:190px;text-transform:uppercase;" maxlength="64" placeholder="OPENMI-XXXX-XXXX" required />
+            <button type="submit" class="btn btn-primary btn-sm" id="btn-redeem-code">Redeem</button>
+          </div>
+        </form>
       </section>
 
       <!-- Live Model Availability -->

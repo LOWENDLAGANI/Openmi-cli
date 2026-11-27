@@ -4,6 +4,7 @@ const SUPABASE_URL = "https://umjlmqeghfrfpduhkits.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_5VfWWlMRio4X-dCfq8IZnw_oYPbh6db";
 const CREDITS_ENDPOINT = `${SUPABASE_URL}/functions/v1/credits`;
 const MODELS_ENDPOINT = `${SUPABASE_URL}/functions/v1/models`;
+const REDEEM_ENDPOINT = `${SUPABASE_URL}/functions/v1/redeem`;
 
 // Preserve legacy `/?code=XXXX-XXXX` links by forwarding directly to `/verify`.
 const initialParams = new URLSearchParams(window.location.search);
@@ -252,6 +253,7 @@ function renderLedger(rows) {
     topup: { label: "Pass Top-up", cls: "badge-paid" },
     admin_grant: { label: "Credit Grant", cls: "badge-paid" },
     admin_pass: { label: "Pass Update", cls: "badge-paid" },
+    redeem_code: { label: "Coin Code", cls: "badge-paid" },
   };
 
   const fmtDelta = (n) => {
@@ -359,6 +361,49 @@ $("btn-refresh").addEventListener("click", async () => {
 $("btn-signout").addEventListener("click", async () => {
   await supabase.auth.signOut();
   window.location.reload();
+});
+
+$("redeem-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!currentSession?.access_token) return;
+  const input = $("redeem-code-input");
+  const btn = $("btn-redeem-code");
+  const statusEl = $("redeem-status-msg");
+  const code = (input.value || "").trim().toUpperCase();
+  if (!code) return;
+
+  btn.disabled = true;
+  btn.textContent = "Redeeming…";
+  statusEl.style.color = "var(--ink-muted)";
+  statusEl.textContent = "Checking code…";
+
+  try {
+    const resp = await fetch(REDEEM_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${currentSession.access_token}`,
+      },
+      body: JSON.stringify({ code }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(data.message || data.error || `HTTP ${resp.status}`);
+    }
+    const parts = [];
+    if (data.coins_granted > 0) parts.push(`+${data.coins_granted} Coins`);
+    if (data.bonus_pass_days > 0) parts.push(`+${data.bonus_pass_days}d Paid Pass`);
+    statusEl.style.color = "var(--ok)";
+    statusEl.textContent = `Redeemed ${data.code}: ${parts.join(" & ")} added to your account!`;
+    input.value = "";
+    await loadDashboard();
+  } catch (err) {
+    statusEl.style.color = "var(--danger)";
+    statusEl.textContent = err.message || "Could not redeem code.";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Redeem";
+  }
 });
 
 document.querySelectorAll("[data-copy]").forEach((btn) => {

@@ -349,6 +349,20 @@ function renderUsers() {
           <button type="button" class="btn btn-sm btn-ghost" data-pass-days="30">+30d</button>
           ${u.is_paid ? `<button type="button" class="btn btn-sm btn-danger-ghost" data-pass-days="0">Revoke</button>` : ""}
         </div>
+        <div class="row-actions" style="margin-top:6px;gap:4px;flex-wrap:wrap;">
+          <input type="number" min="1" step="1" value="7" class="input mono" data-custom-pass-val style="width:58px;height:28px;padding:0 6px;font-size:12px;" title="Custom duration" />
+          <select class="input" data-custom-pass-unit style="height:28px;padding:0 6px;font-size:12px;width:auto;">
+            <option value="hours">hrs</option>
+            <option value="days" selected>days</option>
+            <option value="weeks">wks</option>
+            <option value="months">mos</option>
+          </select>
+          <select class="input" data-custom-pass-mode style="height:28px;padding:0 6px;font-size:12px;width:auto;" title="Add to existing pass or set from now">
+            <option value="add" selected>Add</option>
+            <option value="set">Set</option>
+          </select>
+          <button type="button" class="btn btn-sm btn-secondary" data-custom-pass-apply>Grant</button>
+        </div>
       </td>
       <td>
         <div class="credits-cell" style="margin-bottom:4px;">
@@ -395,6 +409,35 @@ function renderUsers() {
           btn.disabled = false;
         }
       });
+    });
+
+    const customApplyBtn = tr.querySelector("[data-custom-pass-apply]");
+    customApplyBtn.addEventListener("click", async () => {
+      const val = Number(tr.querySelector("[data-custom-pass-val]").value);
+      const unit = tr.querySelector("[data-custom-pass-unit]").value;
+      const mode = tr.querySelector("[data-custom-pass-mode]").value;
+      if (!Number.isFinite(val) || val <= 0) {
+        showToast("Enter a positive duration.", true);
+        return;
+      }
+      customApplyBtn.disabled = true;
+      try {
+        await api("/api/users", {
+          method: "POST",
+          body: JSON.stringify({
+            action: "set_pass",
+            user_id: u.id,
+            duration_value: val,
+            duration_unit: unit,
+            mode,
+          }),
+        });
+        showToast(`Granted ${mode === "add" ? "+" : ""}${val} ${unit} Paid pass to ${u.email}`);
+        await loadAll();
+      } catch (err) {
+        showToast(err.message, true);
+        customApplyBtn.disabled = false;
+      }
     });
 
     saveBtn.addEventListener("click", async () => {
@@ -530,17 +573,19 @@ function escapeAttr(str) {
 async function loadAll() {
   setGlobalError(null);
   try {
-    const [settings, usersRes, devicesRes, paymentsRes] = await Promise.all([
+    const [settings, usersRes, devicesRes, paymentsRes, codesRes] = await Promise.all([
       api("/api/settings"),
       api("/api/users"),
       api("/api/devices").catch(() => ({ devices: [] })),
       api("/api/payments").catch(() => ({ requests: [], pending_count: 0 })),
+      api("/api/codes").catch(() => ({ codes: [] })),
     ]);
     renderSettings(settings);
     state.users = usersRes.users || [];
     renderUsers();
     renderDevices(devicesRes.devices || []);
     renderPayments(paymentsRes.requests || [], paymentsRes.pending_count || 0);
+    renderCodes(codesRes.codes || []);
   } catch (err) {
     setGlobalError(
       `Failed to load Supabase data: ${err.message}. Make sure the latest Supabase migrations are applied and SUPABASE_SERVICE_ROLE_KEY is set in Vercel.`,
@@ -801,5 +846,128 @@ async function bootAuth() {
     showAuthGate(err.message || "Unable to verify session.");
   }
 }
+
+function renderCodes(codes) {
+  const tbody = $("codes-tbody");
+  if (!tbody) return;
+  if (!Array.isArray(codes) || codes.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-cell">No giveaway codes created yet.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  const now = Date.now();
+  for (const c of codes) {
+    const expired = c.expires_at && Date.parse(c.expires_at) <= now;
+    const depleted = c.max_uses !== null && c.max_uses !== undefined && c.uses_count >= c.max_uses;
+    let statusBadge = `<span class="badge badge-ok">Active</span>`;
+    if (!c.is_active) statusBadge = `<span class="badge badge-muted">Paused</span>`;
+    else if (expired) statusBadge = `<span class="badge badge-danger">Expired</span>`;
+    else if (depleted) statusBadge = `<span class="badge badge-warn">Depleted</span>`;
+
+    const rewardParts = [];
+    if (c.coins > 0) rewardParts.push(`+${c.coins} Coins`);
+    if (c.bonus_pass_days > 0) rewardParts.push(`+${c.bonus_pass_days}d Pass`);
+    const usageText = c.max_uses ? `${c.uses_count} / ${c.max_uses}` : `${c.uses_count} / ∞`;
+    const tierLabel = c.eligible_tier === "free" ? "Free only" : c.eligible_tier === "paid" ? "Paid only" : "Everyone";
+    const expLabel = c.expires_at ? `Exp ${fmtShortDate(c.expires_at)}` : "No expiry";
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>
+        <div class="mono" style="font-weight:700;">${escapeHtml(c.code)}</div>
+        ${c.note ? `<div class="hint">${escapeHtml(c.note)}</div>` : ""}
+      </td>
+      <td class="mono">${escapeHtml(rewardParts.join(" · ") || "—")}</td>
+      <td class="mono">${escapeHtml(usageText)} <span class="hint">(${c.per_user_limit}/user)</span></td>
+      <td>
+        <div>${escapeHtml(tierLabel)}</div>
+        <div class="hint">${escapeHtml(expLabel)}</div>
+      </td>
+      <td>${statusBadge}</td>
+      <td class="col-actions">
+        <div class="row-actions">
+          <button type="button" class="btn btn-sm btn-ghost" data-copy-code="${escapeHtml(c.code)}">Copy</button>
+          <button type="button" class="btn btn-sm btn-secondary" data-toggle-code>${c.is_active ? "Pause" : "Resume"}</button>
+          <button type="button" class="btn btn-sm btn-danger-ghost" data-delete-code>Delete</button>
+        </div>
+      </td>
+    `;
+
+    tr.querySelector("[data-copy-code]").addEventListener("click", async (e) => {
+      try {
+        await navigator.clipboard.writeText(c.code);
+        e.currentTarget.textContent = "Copied";
+        setTimeout(() => { e.currentTarget.textContent = "Copy"; }, 1200);
+      } catch (_) {}
+    });
+
+    tr.querySelector("[data-toggle-code]").addEventListener("click", async (e) => {
+      e.currentTarget.disabled = true;
+      try {
+        await api("/api/codes", {
+          method: "POST",
+          body: JSON.stringify({ action: "toggle", id: c.id, is_active: !c.is_active }),
+        });
+        showToast(`${c.code} ${c.is_active ? "paused" : "resumed"}`);
+        await loadAll();
+      } catch (err) {
+        showToast(err.message, true);
+        e.currentTarget.disabled = false;
+      }
+    });
+
+    tr.querySelector("[data-delete-code]").addEventListener("click", async (e) => {
+      if (!confirm(`Delete giveaway code ${c.code}?`)) return;
+      e.currentTarget.disabled = true;
+      try {
+        await api("/api/codes", {
+          method: "POST",
+          body: JSON.stringify({ action: "delete", id: c.id }),
+        });
+        showToast(`Deleted ${c.code}`);
+        await loadAll();
+      } catch (err) {
+        showToast(err.message, true);
+        e.currentTarget.disabled = false;
+      }
+    });
+
+    tbody.appendChild(tr);
+  }
+}
+
+$("create-code-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = $("create-code-btn");
+  btn.disabled = true;
+  try {
+    const expiresRaw = $("code-expires").value.trim();
+    const res = await api("/api/codes", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "create",
+        code: $("code-input").value.trim(),
+        coins: Number($("code-coins").value) || 0,
+        bonus_pass_days: Number($("code-pass-days").value) || 0,
+        max_uses: $("code-max-uses").value.trim() === "" ? null : Number($("code-max-uses").value),
+        per_user_limit: Number($("code-per-user").value) || 1,
+        eligible_tier: $("code-tier").value,
+        expires_at: expiresRaw ? new Date(expiresRaw).toISOString() : null,
+        note: $("code-note").value.trim(),
+      }),
+    });
+    $("code-input").value = "";
+    $("code-note").value = "";
+    showToast(`Created code ${res.code?.code || ""}`);
+    await loadAll();
+  } catch (err) {
+    showToast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("refresh-codes-btn")?.addEventListener("click", () => loadAll());
 
 bootAuth();

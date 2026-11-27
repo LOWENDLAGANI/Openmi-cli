@@ -141,17 +141,95 @@ export default async function handler(req, res) {
       }
 
       if (body.action === "set_pass") {
-        const days = Math.floor(Number(body.days) || 0);
-        const result = await supabaseFetch("/rest/v1/rpc/admin_set_pass", {
+        const unit = String(body.duration_unit || "days").trim().toLowerCase();
+        const mode = String(body.mode || "add").trim().toLowerCase();
+        const hasCustom = body.duration_value !== undefined || body.paid_until !== undefined || unit !== "days" || mode === "set";
+
+        if (!hasCustom) {
+          const days = Math.floor(Number(body.days) || 0);
+          const result = await supabaseFetch("/rest/v1/rpc/admin_set_pass", {
+            method: "POST",
+            body: JSON.stringify({
+              p_user_id: userId,
+              p_days: days,
+              p_note: String(body.note || "").trim(),
+              p_actor: "admin-panel",
+            }),
+          });
+          return sendJson(res, 200, { ok: true, user_credits: result });
+        }
+
+        // Custom duration (hours, days, weeks, months) or exact paid_until timestamp
+        const rawVal = Number(body.duration_value ?? body.days ?? 0);
+        if (!body.paid_until && (!Number.isFinite(rawVal) || rawVal <= 0)) {
+          // Revoke pass
+          const result = await supabaseFetch("/rest/v1/rpc/admin_set_pass", {
+            method: "POST",
+            body: JSON.stringify({
+              p_user_id: userId,
+              p_days: 0,
+              p_note: String(body.note || "Pass revoked by admin").trim(),
+              p_actor: "admin-panel",
+            }),
+          });
+          return sendJson(res, 200, { ok: true, user_credits: result });
+        }
+
+        // Fetch current user_credits row to stack on active paid_until when mode === "add"
+        const existingRows = await supabaseFetch(
+          `/rest/v1/user_credits?user_id=eq.${encodeURIComponent(userId)}&select=balance,wallet_credit,paid_until`,
+        );
+        const existing = Array.isArray(existingRows) && existingRows[0] ? existingRows[0] : null;
+        const nowMs = Date.now();
+        const currentUntilMs = existing?.paid_until ? Date.parse(existing.paid_until) : 0;
+        const baseMs = mode === "add" && Number.isFinite(currentUntilMs) && currentUntilMs > nowMs ? currentUntilMs : nowMs;
+
+        let targetIso;
+        let label;
+        if (body.paid_until) {
+          const parsed = Date.parse(String(body.paid_until));
+          if (!Number.isFinite(parsed) || parsed <= nowMs) {
+            return sendJson(res, 400, { error: "paid_until must be a valid future date/time" });
+          }
+          targetIso = new Date(parsed).toISOString();
+          label = `until ${targetIso.slice(0, 16).replace("T", " ")} UTC`;
+        } else {
+          const unitMs =
+            unit === "hours" ? 3600_000 :
+            unit === "weeks" ? 7 * 86400_000 :
+            unit === "months" ? 30 * 86400_000 :
+            86400_000;
+          targetIso = new Date(baseMs + Math.round(rawVal * unitMs)).toISOString();
+          label = `${mode === "add" ? "+" : ""}${rawVal} ${unit}`;
+        }
+
+        const nextBalance = Math.max(Number(existing?.balance ?? 0), 15);
+        await supabaseFetch("/rest/v1/user_credits?on_conflict=user_id", {
           method: "POST",
+          headers: { Prefer: "resolution=merge-duplicates" },
           body: JSON.stringify({
-            p_user_id: userId,
-            p_days: days,
-            p_note: String(body.note || "").trim(),
-            p_actor: "admin-panel",
+            user_id: userId,
+            plan: "paid",
+            paid_until: targetIso,
+            balance: nextBalance,
+            wallet_credit: Number(existing?.wallet_credit ?? 0),
+            updated_at: new Date().toISOString(),
           }),
         });
-        return sendJson(res, 200, { ok: true, user_credits: result });
+
+        await supabaseFetch("/rest/v1/credit_ledger", {
+          method: "POST",
+          body: JSON.stringify({
+            user_id: userId,
+            kind: "admin_pass",
+            daily_delta: 0,
+            wallet_delta: 0,
+            reference: "admin-panel",
+            note: String(body.note || `Admin granted Paid pass (${label})`).trim(),
+          }),
+        }).catch(() => {});
+
+        return sendJson(res, 200, { ok: true, paid_until: targetIso, label });
       }
 
       if (body.action === "update_credits") {
