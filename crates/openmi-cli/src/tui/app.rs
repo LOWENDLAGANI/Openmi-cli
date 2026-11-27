@@ -18,6 +18,7 @@ use crate::tui::slash::{filter_slash_suggestions_with_skills, SlashSuggestion};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TranscriptKind {
     User,
+    Thinking,
     Assistant,
     System,
     Error,
@@ -813,6 +814,18 @@ impl TuiApp {
             }
             AgentEvent::StepStarted { .. } => {
                 self.status_hint = "Thinking...".to_string();
+            }
+            AgentEvent::ThinkingDelta { text } => {
+                if let Some(last) = self.transcript.last_mut() {
+                    if last.kind == TranscriptKind::Thinking {
+                        last.text.push_str(&text);
+                        return;
+                    }
+                }
+                self.transcript.push(TranscriptEntry {
+                    kind: TranscriptKind::Thinking,
+                    text,
+                });
             }
             AgentEvent::TextDelta { text } => {
                 if let Some(last) = self.transcript.last_mut() {

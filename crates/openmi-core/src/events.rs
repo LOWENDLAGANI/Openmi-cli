@@ -35,6 +35,9 @@ pub enum AgentEvent {
     StepStarted {
         step: u32,
     },
+    ThinkingDelta {
+        text: String,
+    },
     TextDelta {
         text: String,
     },

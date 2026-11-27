@@ -101,6 +101,9 @@ pub struct StepResponse {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum SseChunk {
+    ThinkingDelta {
+        text: String,
+    },
     TextDelta {
         text: String,
     },
@@ -333,6 +336,11 @@ pub async fn stream_step(
                 .map_err(|e| CoreError::Llm(format!("invalid SSE JSON `{data}`: {e}")))?;
 
             match parsed {
+                SseChunk::ThinkingDelta { text: delta } => {
+                    let _ = event_tx
+                        .send(AgentEvent::ThinkingDelta { text: delta })
+                        .await;
+                }
                 SseChunk::TextDelta { text: delta } => {
                     text.push_str(&delta);
                     let _ = event_tx.send(AgentEvent::TextDelta { text: delta }).await;

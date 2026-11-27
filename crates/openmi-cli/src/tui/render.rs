@@ -379,6 +379,21 @@ fn render_chat(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                     lines.push(Line::from(Span::raw(format!("  {line_text}"))));
                 }
             }
+            TranscriptKind::Thinking => {
+                lines.push(Line::from(Span::styled(
+                    "Thinking",
+                    Style::default().fg(MUTED).add_modifier(Modifier::ITALIC | Modifier::BOLD),
+                )));
+                for line_text in entry.text.lines() {
+                    lines.push(Line::from(vec![
+                        Span::styled("  │ ", Style::default().fg(MUTED)),
+                        Span::styled(
+                            line_text.to_string(),
+                            Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
+                        ),
+                    ]));
+                }
+            }
             TranscriptKind::Assistant => {
                 lines.push(Line::from(Span::styled(
                     "Openmi",

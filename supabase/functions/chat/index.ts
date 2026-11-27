@@ -1298,6 +1298,16 @@ Deno.serve(async (req: Request) => {
 
             const delta = choice.delta as Record<string, unknown> | undefined;
             if (delta) {
+              const reasoningChunk =
+                typeof delta.reasoning_content === "string" && delta.reasoning_content.length > 0
+                  ? delta.reasoning_content
+                  : typeof delta.reasoning === "string" && delta.reasoning.length > 0
+                    ? delta.reasoning
+                    : "";
+              if (reasoningChunk) {
+                outputChars += reasoningChunk.length;
+                controller.enqueue(sseLine({ type: "thinking_delta", text: reasoningChunk }));
+              }
               if (typeof delta.content === "string" && delta.content.length > 0) {
                 outputChars += delta.content.length;
                 controller.enqueue(sseLine({ type: "text_delta", text: delta.content }));

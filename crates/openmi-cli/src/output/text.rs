@@ -30,6 +30,11 @@ impl<W: Write + Send> TextRenderer<W> {
 impl<W: Write + Send> EventRenderer for TextRenderer<W> {
     fn render_event(&mut self, event: &AgentEvent) -> std::io::Result<()> {
         match event {
+            AgentEvent::ThinkingDelta { text } => {
+                write!(self.out, "{text}")?;
+                self.out.flush()?;
+                self.in_text_line = !text.ends_with('\n');
+            }
             AgentEvent::TextDelta { text } => {
                 write!(self.out, "{text}")?;
                 self.out.flush()?;
