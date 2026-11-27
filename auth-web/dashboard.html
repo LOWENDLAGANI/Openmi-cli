@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Openmi Console — view your daily credits, token usage, active hourly pass, model availability, and CLI activity." />
+  <title>Dashboard — Openmi</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/dashboard.css" />
+</head>
+<body>
+  <header class="mobile-bar">
+    <a href="/" class="brand-link" style="padding:0;">
+      <span class="brand-mark" aria-hidden="true">O</span>
+      <span class="brand-title">Openmi</span>
+    </a>
+    <nav class="mobile-nav" aria-label="Mobile navigation">
+      <a href="/" class="btn btn-sm btn-primary">Dashboard</a>
+      <a href="/pay" class="btn btn-sm btn-secondary">Passes</a>
+      <a href="/verify" class="btn btn-sm btn-secondary">CLI Login</a>
+    </nav>
+  </header>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Console navigation">
+      <div class="sidebar-top">
+        <a href="/" class="brand-link">
+          <span class="brand-mark" aria-hidden="true">O</span>
+          <div>
+            <div class="brand-title">Openmi</div>
+            <div class="brand-sub">Developer Console</div>
+          </div>
+        </a>
+
+        <nav class="side-nav">
+          <div class="side-nav-label">Console</div>
+          <a href="/" class="side-link is-active">Overview</a>
+          <a href="#models" class="side-link">Model Availability</a>
+          <a href="#activity" class="side-link">Usage &amp; Ledger</a>
+
+          <div class="side-nav-label" style="margin-top:8px;">Account</div>
+          <a href="/pay" class="side-link">Passes &amp; Billing</a>
+          <a href="/verify" class="side-link">CLI Device Login</a>
+        </nav>
+      </div>
+
+      <div class="sidebar-footer">
+        <div id="sidebar-account" class="account-card hidden">
+          <div class="account-row">
+            <span class="account-email" id="sidebar-email">—</span>
+            <span class="badge badge-free" id="sidebar-tier">FREE</span>
+          </div>
+          <div class="account-row">
+            <span class="brand-sub" id="sidebar-paid-until">Daily reset 00:00 UTC</span>
+            <button type="button" class="link-btn" id="btn-signout">Sign out</button>
+          </div>
+        </div>
+        <a id="sidebar-signin-btn" href="/login?next=/" class="btn btn-primary hidden">Sign in</a>
+      </div>
+    </aside>
+
+    <main class="main-area">
+      <div class="page-header">
+        <div>
+          <h1>Overview</h1>
+          <p class="page-desc">Live usage, daily quotas, model availability, and CLI activity for your Openmi account.</p>
+        </div>
+        <div class="header-actions">
+          <span class="status-chip" id="service-status-chip">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="service-status-label">Checking service…</span>
+          </span>
+          <button type="button" class="btn btn-secondary" id="btn-refresh">Refresh</button>
+          <a href="/pay" class="btn btn-primary" id="btn-upgrade-cta">Upgrade Pass</a>
+        </div>
+      </div>
+
+      <div id="global-error" class="alert alert-error hidden" role="alert"></div>
+
+      <!-- Signed-out prompt (models still visible below) -->
+      <section id="signed-out-section" class="signed-out-card hidden">
+        <div>
+          <h2>Sign in to view your usage &amp; quotas</h2>
+          <p>Check your daily credits, 2M / 7M daily token usage, active hourly model pass, and credit ledger — or authorize your terminal with <span class="mono">openmi login</span>.</p>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <a href="/login?next=/" class="btn btn-primary">Sign in to Console</a>
+          <a href="/verify" class="btn btn-secondary">Authorize CLI Device</a>
+        </div>
+      </section>
+
+      <!-- Signed-in usage metrics -->
+      <section id="usage-section" class="hidden" style="display:flex;flex-direction:column;gap:16px;">
+        <div class="metrics-grid">
+          <article class="metric-card">
+            <div class="metric-head">
+              <span class="metric-label">Daily Credits</span>
+              <span class="badge badge-free" id="metric-tier-badge">FREE</span>
+            </div>
+            <div class="metric-value mono" id="metric-daily-credits">—</div>
+            <div class="progress-track"><div class="progress-fill" id="bar-daily-credits" style="width:0%"></div></div>
+            <div class="metric-sub" id="metric-reset-countdown">Resets at 00:00 UTC</div>
+          </article>
+
+          <article class="metric-card">
+            <div class="metric-head">
+              <span class="metric-label">Daily Tokens (In + Out)</span>
+              <span class="metric-label mono" id="metric-token-pct">0%</span>
+            </div>
+            <div class="metric-value mono" id="metric-daily-tokens">—</div>
+            <div class="progress-track"><div class="progress-fill" id="bar-daily-tokens" style="width:0%"></div></div>
+            <div class="metric-sub" id="metric-token-sub">Hard cap across the day</div>
+          </article>
+
+          <article class="metric-card">
+            <div class="metric-head">
+              <span class="metric-label">Lifetime AI Tokens</span>
+              <span class="metric-label">All time</span>
+            </div>
+            <div class="metric-value mono" id="metric-lifetime-tokens">—</div>
+            <div class="metric-sub" id="metric-lifetime-sub">Total input + output since account creation</div>
+          </article>
+
+          <article class="metric-card">
+            <div class="metric-head">
+              <span class="metric-label">Wallet &amp; Max Turns</span>
+              <span class="metric-label" id="metric-pass-duration">60m pass</span>
+            </div>
+            <div class="metric-value mono" id="metric-max-steps">—</div>
+            <div class="metric-sub" id="metric-wallet-line">Wallet: 0 cr (no expiry)</div>
+          </article>
+        </div>
+
+        <div class="pass-strip" id="active-pass-strip">
+          <div class="pass-strip-left">
+            <div class="pass-strip-title">
+              <span>Active Hourly Pass</span>
+              <span class="badge badge-free" id="pass-status-badge">Idle</span>
+            </div>
+            <div class="pass-strip-sub" id="pass-status-desc">Starts automatically on your first CLI prompt.</div>
+          </div>
+          <a href="/pay" class="btn btn-secondary btn-sm">Manage Passes</a>
+        </div>
+      </section>
+
+      <!-- Live Model Availability -->
+      <section class="panel" id="models" aria-labelledby="models-heading">
+        <div class="panel-head">
+          <div>
+            <h2 id="models-heading">Model Availability</h2>
+            <p class="panel-desc">Live catalog from Openmi. Paid passes unlock Paid-only models, 15 cr/day, 7M tokens/day, and 70 turns/prompt.</p>
+          </div>
+          <input type="search" id="model-search" class="search-input" placeholder="Filter models…" aria-label="Filter models" />
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Context</th>
+                <th>Hourly Cost</th>
+                <th>Availability</th>
+              </tr>
+            </thead>
+            <tbody id="models-tbody">
+              <tr><td colspan="4" class="empty-cell">Loading model catalog…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Activity & Credit Ledger (signed-in) -->
+      <section class="panel hidden" id="activity" aria-labelledby="activity-heading">
+        <div class="panel-head">
+          <div>
+            <h2 id="activity-heading">Recent Activity &amp; Credit Ledger</h2>
+            <p class="panel-desc">Latest hourly passes, automatic refunds, top-ups, and credit grants.</p>
+          </div>
+          <a href="/pay" class="btn btn-secondary btn-sm">View Receipts</a>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Event</th>
+                <th>Daily Δ</th>
+                <th>Wallet Δ</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody id="ledger-tbody">
+              <tr><td colspan="5" class="empty-cell">Loading activity…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- CLI Quick Reference -->
+      <section class="panel" aria-labelledby="cli-heading">
+        <div class="panel-head">
+          <div>
+            <h2 id="cli-heading">CLI Quick Commands</h2>
+            <p class="panel-desc">Run these from your terminal to sign in, check quotas, or open billing directly.</p>
+          </div>
+        </div>
+        <div class="cli-grid">
+          <div class="cli-item">
+            <div class="cli-cmd-row">
+              <span class="cli-code">openmi login</span>
+              <button type="button" class="btn btn-secondary btn-sm" data-copy="openmi login">Copy</button>
+            </div>
+            <div class="cli-note">Opens browser automatically to sign in</div>
+          </div>
+          <div class="cli-item">
+            <div class="cli-cmd-row">
+              <span class="cli-code">openmi</span>
+              <button type="button" class="btn btn-secondary btn-sm" data-copy="openmi">Copy</button>
+            </div>
+            <div class="cli-note">Launch interactive AI coding TUI</div>
+          </div>
+          <div class="cli-item">
+            <div class="cli-cmd-row">
+              <span class="cli-code">openmi credits</span>
+              <button type="button" class="btn btn-secondary btn-sm" data-copy="openmi credits">Copy</button>
+            </div>
+            <div class="cli-note">Check daily credits, tokens &amp; turns</div>
+          </div>
+          <div class="cli-item">
+            <div class="cli-cmd-row">
+              <span class="cli-code">openmi upgrade</span>
+              <button type="button" class="btn btn-secondary btn-sm" data-copy="openmi upgrade">Copy</button>
+            </div>
+            <div class="cli-note">Jump straight to /pay in your browser</div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/dashboard.js"></script>
+</body>
+</html>

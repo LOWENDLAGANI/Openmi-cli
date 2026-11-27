@@ -288,8 +288,10 @@ function renderUsers() {
       ? (state.settings?.paid_daily_token_limit ?? 7000000)
       : (state.settings?.free_daily_token_limit ?? 2000000);
     const tokensUsed = Number(u.daily_tokens_used || 0);
+    const totalTokens = Number(u.total_tokens_used || tokensUsed);
     const fmtTok = (n) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(2)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n));
     const tokenInfo = tokenCap > 0 ? `${fmtTok(tokensUsed)} / ${fmtTok(tokenCap)} tok` : `${fmtTok(tokensUsed)} tok`;
+    const totalTokenInfo = `${fmtTok(totalTokens)} lifetime`;
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -315,7 +317,7 @@ function renderUsers() {
           <span class="hint" style="width:42px;">Wallet</span>
           <input type="number" min="0" step="1" class="input mono credits-input" data-wallet value="${walletVal}" />
         </div>
-        <div class="hint mono" style="margin-top:4px;">Today: ${escapeHtml(tokenInfo)}</div>
+        <div class="hint mono" style="margin-top:4px;">Today: ${escapeHtml(tokenInfo)} · ${escapeHtml(totalTokenInfo)}</div>
       </td>
       <td>${activeModelInfo}</td>
       <td class="col-actions">

@@ -71,10 +71,17 @@ Deno.serve(async (req: Request) => {
   const userId = userData.user.id;
   const envPayUrl = derivePayUrl();
 
-  // Preferred path: atomic UTC daily-reset + active pass sync RPC.
-  const { data: synced, error: rpcErr } = await admin.rpc("sync_user_daily_credits", {
-    p_user_id: userId,
-  });
+  // Preferred path: atomic UTC daily-reset + active pass sync RPC, plus live service status.
+  const [{ data: synced, error: rpcErr }, { data: settingsRow }] = await Promise.all([
+    admin.rpc("sync_user_daily_credits", { p_user_id: userId }),
+    admin.from("app_settings").select("ai_enabled, pass_duration_minutes").eq("id", 1).maybeSingle(),
+  ]);
+
+  const aiEnabled = settingsRow ? settingsRow.ai_enabled !== false : true;
+  const passDurationMinutes =
+    settingsRow && typeof settingsRow.pass_duration_minutes === "number" && settingsRow.pass_duration_minutes > 0
+      ? Math.floor(settingsRow.pass_duration_minutes)
+      : 60;
 
   if (!rpcErr && synced && typeof synced === "object") {
     const s = synced as Record<string, unknown>;
@@ -90,7 +97,10 @@ Deno.serve(async (req: Request) => {
       daily_limit: Number(s.daily_limit ?? (isPaid ? 15 : 6)),
       daily_tokens_used: Number(s.daily_tokens_used ?? 0),
       daily_token_limit: Number(s.daily_token_limit ?? (isPaid ? 7_000_000 : 2_000_000)),
+      total_tokens_used: Number(s.total_tokens_used ?? 0),
       max_steps: Number(s.max_steps ?? (isPaid ? 70 : 40)),
+      pass_duration_minutes: passDurationMinutes,
+      ai_enabled: aiEnabled,
       next_reset_at: s.next_reset_at ?? null,
       active_model: s.active_model ?? null,
       pass_expires_at: s.pass_expires_at ?? null,
