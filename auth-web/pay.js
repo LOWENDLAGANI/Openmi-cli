@@ -3,6 +3,26 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const SUPABASE_URL = "https://umjlmqeghfrfpduhkits.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_5VfWWlMRio4X-dCfq8IZnw_oYPbh6db";
 const PAYMENTS_ENDPOINT = `${SUPABASE_URL}/functions/v1/payments`;
+const DEFAULT_PAYMENT_LINK = "https://sociabuzz.com/minetallestmc/tribe";
+
+const DEFAULT_PLANS = [
+  {
+    id: "pass-30",
+    name: "30-day pass",
+    price_myr: 36,
+    days: 30,
+    upfront_credit: 3,
+    daily_credits: 15,
+  },
+  {
+    id: "pass-15",
+    name: "15-day pass",
+    price_myr: 18,
+    days: 15,
+    upfront_credit: 2,
+    daily_credits: 15,
+  },
+];
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {
@@ -15,7 +35,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
 const $ = (id) => document.getElementById(id);
 
 let currentSession = null;
-let loadedPlans = [];
+let loadedPlans = [...DEFAULT_PLANS];
 
 function showStatus(msg, kind = "") {
   const el = $("status-msg");
@@ -40,39 +60,123 @@ function fmtDate(iso) {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return String(iso);
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  return d.toISOString().slice(0, 10);
+}
+
+function daysUntil(iso) {
+  if (!iso) return 0;
+  const ms = Date.parse(iso) - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return 0;
+  return Math.ceil(ms / (1000 * 60 * 60 * 24));
 }
 
 function renderPlans(plans, paymentLink, paused) {
-  loadedPlans = plans;
-  const grid = $("plans-grid");
-  grid.innerHTML = plans
+  // Always put 30-day pass first (Most popular), then 15-day pass, then Free tier
+  const source = Array.isArray(plans) && plans.length > 0 ? plans : DEFAULT_PLANS;
+  const ordered = [...source].sort((a, b) => Number(b.days || 0) - Number(a.days || 0));
+  loadedPlans = ordered;
+
+  const paidCards = ordered
     .map((p) => {
+      const isPopular = p.id === "pass-30" || Number(p.days) >= 30;
+      const tag = isPopular ? "Most popular" : "Fixed term";
+      const priceText = `MYR ${Number(p.price_myr).toFixed(2)}`;
+      const btnCls = isPopular ? "btn btn-primary" : "btn btn-secondary";
+      const ctaLabel = isPopular ? `Get ${escapeHtml(p.name)} →` : `Get ${escapeHtml(p.name)}`;
       const cta = paused
         ? `<button type="button" class="btn btn-secondary" disabled>Checkout paused</button>`
-        : `<a href="${escapeHtml(paymentLink)}" target="_blank" rel="noopener noreferrer" class="btn btn-primary" style="text-align:center;text-decoration:none;">Pay RM ${p.price_myr} on Sociabuzz →</a>`;
+        : `<a href="${escapeHtml(paymentLink)}" target="_blank" rel="noopener noreferrer" class="${btnCls}" data-select-plan="${escapeHtml(p.id)}">${ctaLabel}</a>`;
+
       return `
-        <div class="plan-card">
-          <h3>${escapeHtml(p.name)}</h3>
-          <div class="plan-price">RM ${p.price_myr}</div>
-          <ul class="plan-perks">
-            <li><strong>${p.daily_credits} Credits/day</strong> for ${p.days} days (resets 00:00 UTC)</li>
-            <li><strong>7M tokens/day</strong> cap &amp; <strong>70 turns/prompt</strong> (vs 2M / 40 on Free)</li>
-            <li><strong>+${p.upfront_credit} wallet Credits</strong> (never expire)</li>
-            <li>Unlocks all <strong>Paid-only</strong> models</li>
-            <li>Stacks onto any active pass — no auto-renewal</li>
-          </ul>
+        <article class="plan-card${isPopular ? " is-popular" : ""}">
+          <div class="plan-head">
+            <h2 class="plan-title">${escapeHtml(p.name)}</h2>
+            <span class="plan-tag">${tag}</span>
+          </div>
+          <p class="plan-submeta">${p.daily_credits} Credit/day · +${p.upfront_credit} wallet Credit</p>
+          <div class="plan-price-row">
+            <span class="plan-price">${priceText}</span>
+            <span class="plan-period">/ ${p.days} days</span>
+          </div>
           ${cta}
-        </div>
+          <div class="plan-divider" aria-hidden="true"></div>
+          <ul class="plan-features">
+            <li>
+              <div class="plan-feature-title">2.5x daily usage allowance</div>
+              <div class="plan-feature-desc">${p.daily_credits} Credit/day instead of 6 Credit/day on Free (resets 00:00 UTC).</div>
+            </li>
+            <li>
+              <div class="plan-feature-title">7M tokens/day &amp; 70 turns/prompt</div>
+              <div class="plan-feature-desc">3.5x daily token cap and extended agent turns vs 2M tokens &amp; 40 turns on Free.</div>
+            </li>
+            <li>
+              <div class="plan-feature-title">Unlocks all Paid-only models</div>
+              <div class="plan-feature-desc">Full access to frontier coding models alongside Free-tier models in Openmi CLI.</div>
+            </li>
+            <li>
+              <div class="plan-feature-title">+${p.upfront_credit} upfront wallet Credit</div>
+              <div class="plan-feature-desc">Added to your append-only ledger immediately on top of your daily allowance.</div>
+            </li>
+            <li>
+              <div class="plan-feature-title">Stackable, never auto-renews</div>
+              <div class="plan-feature-desc">One-time ${p.days}-day pass that extends from your current end date.</div>
+            </li>
+          </ul>
+        </article>
       `;
     })
     .join("");
+
+  const freeCard = `
+    <article class="plan-card">
+      <div class="plan-head">
+        <h2 class="plan-title">Free tier</h2>
+        <span class="plan-tag">Always free</span>
+      </div>
+      <p class="plan-submeta">6 Credit/day · 2M tokens/day</p>
+      <div class="plan-price-row">
+        <span class="plan-price">MYR 0.00</span>
+        <span class="plan-period">/ forever</span>
+      </div>
+      <a href="/" class="btn btn-secondary">Open dashboard</a>
+      <div class="plan-divider" aria-hidden="true"></div>
+      <ul class="plan-features">
+        <li>
+          <div class="plan-feature-title">6 Credit daily allowance</div>
+          <div class="plan-feature-desc">Resets every day at 00:00 UTC for everyday terminal coding sessions.</div>
+        </li>
+        <li>
+          <div class="plan-feature-title">2M tokens/day &amp; 40 turns/prompt</div>
+          <div class="plan-feature-desc">Generous daily hard cap across all Free-tier models.</div>
+        </li>
+        <li>
+          <div class="plan-feature-title">Instant CLI workspace</div>
+          <div class="plan-feature-desc">Sign in with openmi login and start coding right away — no card required.</div>
+        </li>
+      </ul>
+    </article>
+  `;
+
+  const grid = $("plans-grid");
+  grid.innerHTML = paidCards + freeCard;
+
+  // Clicking a pass button also pre-selects that plan in the receipt form below
+  grid.querySelectorAll("[data-select-plan]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const planId = el.getAttribute("data-select-plan");
+      const select = $("plan-select");
+      if (select && planId) {
+        select.value = planId;
+        syncAmountWithPlan(true);
+      }
+    });
+  });
 }
 
 function renderRequests(requests) {
   const list = $("requests-list");
   if (!Array.isArray(requests) || requests.length === 0) {
-    list.innerHTML = `<p class="muted">No receipt submissions yet.</p>`;
+    list.innerHTML = `<p class="muted" style="margin:0;">No receipt submissions yet.</p>`;
     return;
   }
   list.innerHTML = requests
@@ -92,7 +196,7 @@ function renderRequests(requests) {
       return `
         <div class="req-row">
           <div>
-            <div><strong>${escapeHtml(r.plan_id)}</strong> · <span class="mono">RM ${Number(r.amount_myr).toFixed(2)}</span> · <span class="mono">${escapeHtml(r.reference)}</span></div>
+            <div><strong>${escapeHtml(r.plan_id)}</strong> · <span class="mono">MYR ${Number(r.amount_myr).toFixed(2)}</span> · <span class="mono">${escapeHtml(r.reference)}</span></div>
             <div class="muted">Submitted ${escapeHtml(fmtDate(r.created_at))}${r.credit_granted ? ` · +${r.credit_granted} wallet cr` : ""}</div>
             ${noteLine}
           </div>
@@ -121,8 +225,20 @@ async function loadPayments() {
 
     const c = data.credits || {};
     const isPaid = Boolean(c.is_paid);
-    $("stat-tier").textContent = isPaid ? "PAID" : "FREE";
-    $("stat-paid-until").textContent = isPaid && c.paid_until ? `Until ${fmtDate(c.paid_until)}` : "6 cr/day free tier";
+    const tierEl = $("stat-tier");
+    tierEl.textContent = isPaid ? "PAID" : "FREE";
+    tierEl.className = `tier-badge ${isPaid ? "is-paid" : "is-free"}`;
+
+    const paidPill = $("stat-paid-until");
+    if (isPaid && c.paid_until) {
+      const dLeft = daysUntil(c.paid_until);
+      paidPill.textContent = `Active until ${fmtDate(c.paid_until)}${dLeft > 0 ? ` (${dLeft} days left)` : ""}`;
+      paidPill.className = "active-pill";
+    } else {
+      paidPill.textContent = "Free tier · resets 00:00 UTC";
+      paidPill.className = "active-pill is-free";
+    }
+
     $("stat-daily").textContent = `${c.balance ?? 0} / ${c.daily_limit ?? 6}`;
     $("stat-wallet").textContent = `${c.wallet_credit ?? 0}`;
 
@@ -130,7 +246,7 @@ async function loadPayments() {
     $("paused-banner").classList.toggle("hidden", !paused);
     $("receipt-form").classList.toggle("hidden", paused);
 
-    renderPlans(data.plans || [], data.payment_link || "https://sociabuzz.com/minetallestmc/tribe", paused);
+    renderPlans(data.plans || DEFAULT_PLANS, data.payment_link || DEFAULT_PAYMENT_LINK, paused);
     renderRequests(data.requests || []);
     syncAmountWithPlan();
   } catch (err) {
@@ -138,19 +254,19 @@ async function loadPayments() {
   }
 }
 
-function syncAmountWithPlan() {
+function syncAmountWithPlan(force = false) {
   const planId = $("plan-select").value;
   const plan = loadedPlans.find((p) => p.id === planId);
   if (!plan) return;
   const input = $("amount-input");
   input.min = String(plan.price_myr);
   input.placeholder = plan.price_myr.toFixed(2);
-  if (!input.value || Number(input.value) < plan.price_myr) {
+  if (force || !input.value || Number(input.value) < plan.price_myr) {
     input.value = plan.price_myr.toFixed(2);
   }
 }
 
-$("plan-select").addEventListener("change", syncAmountWithPlan);
+$("plan-select").addEventListener("change", () => syncAmountWithPlan(true));
 
 $("receipt-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -199,7 +315,7 @@ $("receipt-form").addEventListener("submit", async (e) => {
     showStatus(err.message || "Network error uploading receipt.", "error");
   } finally {
     btn.disabled = false;
-    btn.textContent = "Submit Receipt for Approval";
+    btn.textContent = "Submit Receipt for Approval →";
   }
 });
 
@@ -220,8 +336,12 @@ function renderAuth(session) {
     $("signed-in-view").classList.add("hidden");
     $("account-bar").classList.add("hidden");
     $("signed-out-view").classList.remove("hidden");
+    renderPlans(DEFAULT_PLANS, DEFAULT_PAYMENT_LINK, false);
   }
 }
+
+// Render default plans immediately so the page never flashes empty
+renderPlans(DEFAULT_PLANS, DEFAULT_PAYMENT_LINK, false);
 
 supabase.auth.onAuthStateChange((_event, session) => {
   renderAuth(session);

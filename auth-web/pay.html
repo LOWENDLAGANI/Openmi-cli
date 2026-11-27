@@ -3,141 +3,543 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Upgrade your Openmi CLI account with a 15-day or 30-day paid pass via Sociabuzz." />
-  <title>Passes &amp; Receipts — Openmi CLI</title>
+  <meta name="theme-color" content="#FFB5D8" />
+  <meta name="description" content="Plans &amp; billing for Openmi CLI — upgrade with a 30-day or 15-day paid pass via Sociabuzz." />
+  <title>Plans &amp; billing — Openmi</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/styles.css" />
   <style>
-    .pay-page { width: 100%; max-width: 720px; display: flex; flex-direction: column; gap: 18px; }
-    .pay-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-    .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-    .stat-box { background: var(--surface-subtle); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; }
-    .stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-muted); }
-    .stat-val { font-size: 16px; font-weight: 600; margin-top: 2px; font-family: var(--font-mono); }
-    .plans-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-    .plan-card { border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 16px; display: flex; flex-direction: column; gap: 10px; background: var(--surface); }
-    .plan-card h3 { margin: 0; font-size: 16px; }
-    .plan-price { font-size: 22px; font-weight: 700; font-family: var(--font-mono); }
-    .plan-perks { margin: 0; padding-left: 18px; color: var(--ink-muted); font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
-    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .req-list { display: flex; flex-direction: column; gap: 8px; }
-    .req-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-subtle); flex-wrap: wrap; }
-    .pill { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
-    .pill-pending { background: #fef3c7; color: #92400e; }
-    .pill-approved { background: var(--ok-bg); color: var(--ok); }
-    .pill-rejected { background: var(--danger-bg); color: var(--danger); }
-    .mono { font-family: var(--font-mono); }
-    .muted { color: var(--ink-muted); font-size: 12px; }
+    body {
+      display: block;
+      padding: 0;
+      min-height: 100dvh;
+      background: var(--bg);
+    }
+
+    /* Top header matching reference */
+    .pay-topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .pay-topbar-inner {
+      max-width: 1060px;
+      margin: 0 auto;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .pay-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: var(--ink);
+      font-weight: 650;
+      font-size: 16px;
+      letter-spacing: -0.02em;
+    }
+
+    .pay-brand .brand-mark {
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      font-size: 14px;
+    }
+
+    .pay-top-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .pay-close-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
+      color: var(--ink);
+      display: inline-grid;
+      place-items: center;
+      text-decoration: none;
+      font-size: 18px;
+      line-height: 1;
+      transition: background 0.14s ease, border-color 0.14s ease;
+    }
+
+    .pay-close-btn:hover {
+      background: var(--chrome-soft);
+      border-color: #c2c2c8;
+    }
+
+    /* Main container */
+    .pay-shell {
+      max-width: 1060px;
+      margin: 0 auto;
+      padding: 24px 20px 64px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Plans grid — 3 columns on desktop, single column stack on mobile */
+    .plans-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .plan-card {
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 18px;
+      padding: 24px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      box-shadow: var(--shadow-sm);
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .plan-card.is-popular {
+      border: 1.5px solid var(--pink-border);
+      box-shadow: 0 8px 28px rgba(255, 181, 216, 0.22);
+    }
+
+    .plan-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .plan-title {
+      margin: 0;
+      font-size: 21px;
+      font-weight: 600;
+      letter-spacing: -0.025em;
+      color: var(--ink);
+      line-height: 1.2;
+    }
+
+    .plan-tag {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--ink-muted);
+      white-space: nowrap;
+    }
+
+    .plan-card.is-popular .plan-tag {
+      color: var(--pink-ink);
+      font-weight: 600;
+    }
+
+    .plan-submeta {
+      margin: -8px 0 0;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      color: var(--ink-muted);
+    }
+
+    .plan-price-row {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      margin: 2px 0;
+    }
+
+    .plan-price {
+      font-family: var(--font-mono);
+      font-size: 30px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      color: var(--ink);
+      line-height: 1.1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .plan-period {
+      font-size: 13.5px;
+      color: var(--ink-muted);
+    }
+
+    .plan-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 2px 0;
+    }
+
+    .plan-features {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .plan-feature-title {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--ink);
+      line-height: 1.35;
+    }
+
+    .plan-feature-desc {
+      margin-top: 2px;
+      font-size: 12.5px;
+      color: var(--ink-muted);
+      line-height: 1.45;
+    }
+
+    /* Balance strip card (bottom card from reference) */
+    .balance-card {
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 16px;
+      padding: 18px 22px;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .balance-metrics {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    .balance-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .balance-divider {
+      width: 1px;
+      height: 32px;
+      background: var(--border-strong);
+    }
+
+    .balance-label {
+      font-size: 11.5px;
+      color: var(--ink-muted);
+      font-weight: 500;
+    }
+
+    .balance-val {
+      font-family: var(--font-mono);
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--ink);
+      display: inline-flex;
+      align-items: baseline;
+      gap: 5px;
+    }
+
+    .balance-unit {
+      font-family: var(--font-sans);
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--ink-muted);
+    }
+
+    .active-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--pink-soft);
+      color: var(--pink-ink);
+      border: 1px solid var(--pink-border);
+    }
+
+    .active-pill.is-free {
+      background: var(--chrome-soft);
+      color: var(--ink-secondary);
+      border-color: var(--border-strong);
+    }
+
+    .tier-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+
+    .tier-badge.is-paid {
+      background: var(--lime);
+      color: var(--lime-ink);
+      border: 1px solid var(--lime-border);
+    }
+
+    .tier-badge.is-free {
+      background: var(--chrome-soft);
+      color: var(--ink-secondary);
+      border: 1px solid var(--border-strong);
+    }
+
+    /* Section cards (Receipt upload & Requests) */
+    .pay-card {
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 18px;
+      padding: 22px 24px;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .pay-card h2 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 650;
+      letter-spacing: -0.015em;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .req-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .req-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
+      background: var(--surface-subtle);
+      flex-wrap: wrap;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .pill-pending {
+      background: var(--pink-soft);
+      color: var(--pink-ink);
+      border: 1px solid var(--pink-border);
+    }
+
+    .pill-approved {
+      background: var(--lime);
+      color: var(--lime-ink);
+      border: 1px solid var(--lime-border);
+    }
+
+    .pill-rejected {
+      background: var(--danger-bg);
+      color: var(--danger);
+      border: 1px solid var(--danger-border);
+    }
+
+    .mono {
+      font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .muted {
+      color: var(--ink-muted);
+      font-size: 12.5px;
+    }
+
+    .signed-out-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      border-color: var(--pink-border);
+    }
+
+    .signed-out-banner .btn {
+      width: auto;
+      padding: 0 20px;
+    }
+
+    @media (max-width: 920px) {
+      .plans-grid {
+        grid-template-columns: 1fr;
+      }
+      .pay-shell {
+        max-width: 520px;
+      }
+    }
+
     @media (max-width: 600px) {
-      .summary-grid, .plans-grid, .form-row { grid-template-columns: 1fr; }
+      .form-row {
+        grid-template-columns: 1fr;
+      }
+      .pay-shell {
+        padding: 16px 14px 48px;
+      }
+      .plan-card,
+      .pay-card {
+        padding: 20px 18px;
+      }
     }
   </style>
 </head>
 <body>
-  <main class="pay-page">
-    <div class="card">
-      <nav class="top-nav" aria-label="Primary navigation">
-        <a href="/" class="nav-link">Dashboard</a>
-        <a href="/pay" class="nav-link is-active">Passes &amp; Billing</a>
-      </nav>
+  <header class="pay-topbar">
+    <div class="pay-topbar-inner">
+      <a href="/" class="pay-brand">
+        <span class="brand-mark" aria-hidden="true">O</span>
+        <span>Openmi</span>
+      </a>
 
-      <div class="pay-header">
-        <div class="brand">
-          <span class="brand-mark" aria-hidden="true">O</span>
-          <div>
-            <h1>Openmi Passes</h1>
-            <p class="subtitle">Pay via Sociabuzz, upload your receipt, and unlock 15 Credits/day, 7M tokens/day, 70 turns/prompt &amp; Paid models.</p>
+      <div class="pay-top-actions">
+        <nav style="display:flex;align-items:center;gap:4px;" aria-label="Primary navigation">
+          <a href="/" class="nav-link">Dashboard</a>
+          <a href="/pay" class="nav-link is-active">Plans &amp; Billing</a>
+        </nav>
+        <div id="account-bar" class="hidden" style="display:inline-flex;align-items:center;gap:8px;margin-left:4px;">
+          <span class="muted" id="user-email"></span>
+          <button type="button" class="link-btn" id="btn-signout" style="margin-left:0;">Sign out</button>
+        </div>
+        <a href="/" class="pay-close-btn" aria-label="Back to Dashboard" title="Back to Dashboard">×</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="pay-shell">
+    <div id="status-msg" class="status-msg hidden" role="alert"></div>
+
+    <div id="paused-banner" class="status-msg hidden">
+      Checkout and receipt uploads are temporarily paused by the operator.
+    </div>
+
+    <!-- Plans showcase (visible to everyone, synced with live backend when signed in) -->
+    <section aria-label="Available plans">
+      <div class="plans-grid" id="plans-grid"></div>
+    </section>
+
+    <!-- Signed-out prompt -->
+    <section id="signed-out-view" class="pay-card signed-out-banner hidden">
+      <div>
+        <h2>Sign in to view your balance &amp; upload receipts</h2>
+        <p class="muted" style="margin:4px 0 0;">Log in with your Openmi account to submit Sociabuzz proof of payment and track pass activation.</p>
+      </div>
+      <a href="/login?next=/pay" class="btn btn-primary">Sign in to Openmi →</a>
+    </section>
+
+    <!-- Signed-in balance + receipt submission + history -->
+    <section id="signed-in-view" class="hidden" style="display:flex;flex-direction:column;gap:18px;">
+      <!-- Balance card (matching reference) -->
+      <div class="balance-card">
+        <div class="balance-metrics">
+          <div class="balance-item">
+            <span class="balance-label">Your balance</span>
+            <span class="balance-val">
+              <span id="stat-daily">—</span>
+              <span class="balance-unit">Credit</span>
+            </span>
+          </div>
+          <div class="balance-divider" aria-hidden="true"></div>
+          <div class="balance-item">
+            <span class="balance-label">Wallet</span>
+            <span class="balance-val" id="stat-wallet">—</span>
+          </div>
+          <div class="balance-divider" aria-hidden="true"></div>
+          <div class="balance-item">
+            <span class="balance-label">Tier</span>
+            <span class="tier-badge is-free" id="stat-tier">—</span>
           </div>
         </div>
-        <div id="account-bar" class="hidden">
-          <span class="muted" id="user-email"></span>
-          <button type="button" class="link-btn" id="btn-signout" style="margin-left:8px;">Sign out</button>
-        </div>
+
+        <span class="active-pill is-free" id="stat-paid-until">Free tier · resets 00:00 UTC</span>
       </div>
 
-      <!-- Signed-out gate -->
-      <section id="signed-out-view" class="section hidden">
-        <p class="muted">Sign in with your Openmi account to view your balance, buy a pass, and upload receipts.</p>
-        <a href="/login?next=/pay" class="btn btn-primary" style="text-align:center;text-decoration:none;">Sign in to Openmi</a>
-      </section>
-
-      <!-- Signed-in view -->
-      <section id="signed-in-view" class="section hidden" style="display:flex;flex-direction:column;gap:18px;">
-        <div class="summary-grid">
-          <div class="stat-box">
-            <div class="stat-label">Current Tier</div>
-            <div class="stat-val" id="stat-tier">—</div>
-            <div class="muted" id="stat-paid-until"></div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-label">Daily Credits</div>
-            <div class="stat-val" id="stat-daily">—</div>
-            <div class="muted">Resets 00:00 UTC</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-label">Wallet Credits</div>
-            <div class="stat-val" id="stat-wallet">—</div>
-            <div class="muted">Never expires</div>
-          </div>
-        </div>
-
-        <div id="paused-banner" class="status-msg hidden">
-          Checkout and receipt uploads are temporarily paused by the operator.
-        </div>
-
+      <!-- Step 2: Upload Proof of Payment -->
+      <form id="receipt-form" class="pay-card">
         <div>
-          <h2 style="margin:0 0 10px;font-size:15px;">Step 1 — Pay on Sociabuzz (Charged in MYR)</h2>
-          <div class="plans-grid" id="plans-grid"></div>
+          <h2>Upload Proof of Payment</h2>
+          <p class="muted" style="margin:4px 0 0;">After paying on Sociabuzz (charged in MYR), submit your transaction reference and receipt (PNG, JPEG, WEBP, or PDF up to 5 MB). Your pass activates once approved.</p>
         </div>
 
-        <form id="receipt-form" style="display:flex;flex-direction:column;gap:12px;">
-          <h2 style="margin:0;font-size:15px;">Step 2 — Upload Proof of Payment</h2>
-          <p class="muted" style="margin:0;">After paying on Sociabuzz, submit your transaction reference and receipt (PNG, JPEG, WEBP, or PDF up to 5 MB). Your pass activates as soon as the operator approves it.</p>
-
-          <div class="form-row">
-            <div class="field">
-              <label for="plan-select">Plan</label>
-              <select id="plan-select" class="input" required>
-                <option value="pass-15">15-day pass (RM 18 · +2 wallet cr)</option>
-                <option value="pass-30">30-day pass (RM 36 · +3 wallet cr)</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="amount-input">Amount Paid (MYR)</label>
-              <input id="amount-input" type="number" step="0.01" min="18" class="input mono" placeholder="18.00" required />
-            </div>
-          </div>
-
+        <div class="form-row">
           <div class="field">
-            <label for="ref-input">Sociabuzz Transaction Reference</label>
-            <input id="ref-input" type="text" maxlength="120" class="input mono" placeholder="e.g. SBZ-123456789" required />
+            <label for="plan-select">Plan</label>
+            <select id="plan-select" class="input" required>
+              <option value="pass-30">30-day pass (MYR 36.00 · +3 wallet Credit)</option>
+              <option value="pass-15">15-day pass (MYR 18.00 · +2 wallet Credit)</option>
+            </select>
           </div>
-
           <div class="field">
-            <label for="receipt-file">Receipt File (PNG, JPEG, WEBP, or PDF · max 5 MB)</label>
-            <input id="receipt-file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" class="input" required />
-          </div>
-
-          <div class="field">
-            <label for="note-input">Note (optional)</label>
-            <input id="note-input" type="text" maxlength="500" class="input" placeholder="Sociabuzz supporter name or extra details" />
-          </div>
-
-          <button type="submit" class="btn btn-primary" id="submit-btn">Submit Receipt for Approval</button>
-        </form>
-
-        <div>
-          <h2 style="margin:0 0 10px;font-size:15px;">Your Requests</h2>
-          <div id="requests-list" class="req-list">
-            <p class="muted">Loading…</p>
+            <label for="amount-input">Amount Paid (MYR)</label>
+            <input id="amount-input" type="number" step="0.01" min="18" class="input mono" placeholder="36.00" required />
           </div>
         </div>
-      </section>
 
-      <div id="status-msg" class="status-msg hidden" role="alert"></div>
-    </div>
+        <div class="field">
+          <label for="ref-input">Sociabuzz Transaction Reference</label>
+          <input id="ref-input" type="text" maxlength="120" class="input mono" placeholder="e.g. SBZ-123456789" required />
+        </div>
+
+        <div class="field">
+          <label for="receipt-file">Receipt File (PNG, JPEG, WEBP, or PDF · max 5 MB)</label>
+          <input id="receipt-file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" class="input" required />
+        </div>
+
+        <div class="field">
+          <label for="note-input">Note (optional)</label>
+          <input id="note-input" type="text" maxlength="500" class="input" placeholder="Sociabuzz supporter name or extra details" />
+        </div>
+
+        <button type="submit" class="btn btn-primary" id="submit-btn">Submit Receipt for Approval →</button>
+      </form>
+
+      <!-- Requests history -->
+      <div class="pay-card">
+        <h2>Your Requests</h2>
+        <div id="requests-list" class="req-list">
+          <p class="muted" style="margin:0;">Loading…</p>
+        </div>
+      </div>
+    </section>
   </main>
 
   <script type="module" src="/pay.js"></script>
