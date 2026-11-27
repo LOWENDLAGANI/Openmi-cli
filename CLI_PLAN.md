@@ -1,5 +1,8 @@
 # Openmi CLI — Final Plan (planner → builder handoff)
 
+> [!NOTE]
+> Historical planning document. For current behavior see the [README](README.md); some details below (e.g. a separate tool timeline pane, `ask` as default mode) no longer match the shipped CLI.
+
 Roles: **Planner** writes/updates this spec and reviews. **Builder** implements one milestone at a time, never deviates without raising a question in `docs/CLI_QUESTIONS.md`.
 
 ## Goal

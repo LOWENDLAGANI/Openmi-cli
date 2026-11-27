@@ -1,34 +1,35 @@
 # Openmi CLI — Manual QA Script (TUI & Workflow)
 
-Run through this checklist on Linux (including `tmux`), macOS, Windows Terminal, Termux (Android), and over SSH at `80x24`.
-
 ## 1. Launch & Layout (`80x24`, SSH, Resize)
 1. Resize terminal to `80x24`.
 2. Run `openmi` (or `openmi tui`).
 3. Verify:
-   - Transcript pane, Tool timeline pane, multiline Prompt box, and bottom Status bar (`model | mode | credits | cwd | git`) render with zero flicker and no clipping.
-   - Resize terminal down to `40x12` and back up to `120x40`; verify clean redraw without panic.
+   - Header (`✦ Openmi · <model> · <folder>`, credits on the right), chat area, prompt box and footer hints (`/ commands · Shift+Tab mode · /folder project · Esc ×2 quit`) render without clipping.
+   - In the default `trusted` mode no mode badge is shown; after `Shift+Tab` the header shows `Ask` / `Read-only`.
+   - Shrink the terminal (below `60` columns the folder is hidden; below `10x6` "Terminal too small" is shown) and grow it back; verify clean redraw without panic.
 
 ## 2. Multiline Input & Prompt History
 1. Type `line 1`, press `Shift+Enter` (or `Alt+Enter`), type `line 2`, press `Enter`.
-2. Verify the multiline prompt submits cleanly and streams the assistant response.
-3. Press `Up` arrow to recall the previous prompt; press `Down` arrow to return to the blank draft.
+2. Verify the multiline prompt submits and the assistant response streams in.
+3. Press `Up` to recall the previous prompt; press `Down` to return to the draft.
+4. Type `/` and verify the command palette appears; `Up`/`Down` select, `Tab` completes, `Enter` runs.
 
-## 3. Approval Popup (`Ask` Mode)
-1. Trigger a mutating tool call (`write_file` or `run_command`) while in `Ask` mode.
-2. Verify the centered yellow **Approval Required** modal appears with `[y] Approve once`, `[a] Always this session`, `[n] Deny`.
-3. Test `n` (denies tool cleanly), `y` (approves once), and `a` (subsequent calls to the same tool auto-approve for the rest of the session).
+## 3. Approval Popup (`ask` Mode)
+1. Switch to `ask` with `Shift+Tab` (or `/mode ask`, or turn off auto-approve in `/settings`).
+2. Trigger `write_file` or `run_command`.
+3. Verify the **Permission needed** popup shows the action, summary, a diff preview for writes, and `[y] Allow once`, `[a] Always allow this session`, `[n] Cancel`.
+4. Test `n`, `y`, `a` (later calls of the same tool auto-approve this session), and `Up`/`Down` + `Enter`. `Esc` denies.
 
 ## 4. Cancel & Quit + Panic Recovery
-1. While a turn or long command (`sleep 30`) is running, press `Esc` (or `Ctrl-C`) once:
-   - Verify the active turn cancels and child processes terminate without exiting the TUI.
-2. Press `Esc` (or `Ctrl-C`) again:
-   - Verify the TUI exits cleanly and restores normal terminal input/echo/cursor.
-3. Verify `PageUp` / `PageDown` scroll long transcripts cleanly.
+1. While a turn (e.g. `sleep 30` via `run_command`) is running, press `Esc` (or `Ctrl-C`) once:
+   - Verify the turn stops, the footer shows "Stopping... press Esc again to quit", and the child process is killed.
+2. Press `Esc` again: verify the TUI exits and restores terminal input/echo/cursor.
+3. When idle, verify a single `Esc` only arms quit ("Press Esc again to quit") and any other key disarms it.
+4. Verify `PageUp`/`PageDown` and `Ctrl`/`Alt` + `Up`/`Down` scroll long transcripts.
 
-## 5. Workflow Features (M4)
-1. Test slash commands: `/help`, `/model <id>`, `/mode <mode>`, `/diff`, `/undo`, `/clear`, `/credits`, `/quit`.
-2. Test `/mode full-access`: verify typed confirmation (`I UNDERSTAND FULL ACCESS`) is required before switching.
-3. Type `@` followed by partial filename and press `Tab`: verify fuzzy `@path` completion inserts a workspace-relative path (respecting `.gitignore`).
-4. Quit and run `openmi --resume`: verify prior conversation history is restored.
-5. Create `OPENMI.md` in workspace root and restart `openmi`: verify project instructions are loaded into system context.
+## 5. Workflow Features
+1. Test slash commands: `/settings`, `/folder`, `/model`, `/model <id>`, `/resume`, `/new`, `/init`, `/mode <mode>`, `/diff`, `/undo`, `/credits`, `/mcp`, `/help`, `/help keys`, `/version`, `/quit`.
+2. `/mode full-access`: verify typed confirmation (`I UNDERSTAND FULL ACCESS`) is required; `Esc` cancels.
+3. Type `@` + partial filename and press `Tab`: verify a workspace-relative path is inserted (respecting `.gitignore`).
+4. Quit and run `openmi --resume`: verify the prior conversation is restored ("Resumed your previous chat.").
+5. Run `/init` (or create `OPENMI.md` / `CLAUDE.md` / `AGENTS.md`) and verify project instructions are loaded.

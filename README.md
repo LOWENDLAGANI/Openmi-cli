@@ -1,6 +1,6 @@
 # Openmi CLI
 
-`openmi` is an interactive `ratatui` TUI and headless coding agent for **Windows**, **Linux**, **macOS**, and **Termux (Android `aarch64`)**. It uses **rustls-only** TLS (no OpenSSL dependency), strict workspace `PathGuard` sandboxing, exact-byte checkpoints, and managed Supabase auth & credits.
+`openmi` is an interactive `ratatui` TUI and headless coding agent for **Windows**, **Linux**, **macOS**, and **Termux (Android `aarch64`)**. It uses **rustls-only** TLS (no OpenSSL dependency), workspace `PathGuard` sandboxing, exact-byte checkpoints, and a managed Supabase backend for auth & credits (no bring-your-own-key).
 
 ## Installation
 
@@ -22,6 +22,10 @@ cargo build -p openmi-cli --release
 
 See [docs/TERMUX_BUILD.md](docs/TERMUX_BUILD.md) for Termux-specific build instructions and [docs/CLI_QA.md](docs/CLI_QA.md) for the manual TUI QA checklist.
 
+### Automatic updates
+
+On every launch (except `openmi update`) the CLI checks GitHub Releases with a 3-second timeout. If a newer version exists it downloads it, verifies the SHA-256 checksum, replaces the binary and re-runs your command. Offline or failed checks are silently skipped. Disable with `OPENMI_NO_AUTO_UPDATE=1`.
+
 ## Quickstart
 
 ```sh
@@ -32,18 +36,38 @@ openmi whoami
 # 2. Launch the interactive TUI
 openmi
 
-# 3. Resume your previous session
+# 3. Resume your latest session for the current folder (or pass a session ID)
 openmi --resume
 
 # 4. Run headlessly in scripts / CI
 openmi run "explain src/main.rs" --permission read-only
 openmi run "fix compiler warnings" --json --yes
 
-# 5. Inspect models, credits, or self-update
+# 5. Inspect models, credits, or update manually
 openmi models
 openmi credits
-openmi update
+openmi update --check
 ```
+
+`openmi login --token <JWT> [--refresh-token <TOKEN>]` pastes a Supabase token directly instead of running device-code pairing.
+
+### Global flags (TUI)
+
+`openmi` and `openmi tui` accept `--model <id>` (default `openmi-default`), `--permission <mode>`, `--cwd <dir>`, `--api-url <url>` and `--resume [SESSION_ID]`.
+
+### `openmi run` flags
+
+| Flag | Meaning |
+| --- | --- |
+| `--model <id>` | Model (default `openmi-default`) |
+| `--permission <mode>` | `read-only`, `ask`, `trusted`, `full-access` (default from settings, initially `trusted`) |
+| `--cwd <dir>` | Workspace root (default: current directory) |
+| `--json` | Stream versioned JSONL events (one `AgentEvent` per line) |
+| `-y`, `--yes` | Auto-approve tool prompts in `ask` mode |
+| `--max-steps <n>` | Tool-calling step cap (default `16`); exceeding it exits with code `5` |
+| `--api-url <url>` | Override backend URL |
+
+In `ask` mode without `--yes`: if stdin is a TTY you are prompted `[y/N/a]`; otherwise the tool is denied with a message on stderr.
 
 ### Backend configuration
 
@@ -59,28 +83,69 @@ The Supabase publishable key (sent as the `apikey` header, required by `/auth/v1
 for the production project. Set `OPENMI_SUPABASE_ANON_KEY` to override it when pointing at
 another Supabase project.
 
+### Environment variables
+
+| Variable | Effect |
+| --- | --- |
+| `OPENMI_API_URL` | Backend base URL (see above) |
+| `OPENMI_SUPABASE_ANON_KEY` | Override the built-in Supabase publishable key |
+| `OPENMI_CREDENTIALS_FILE` | Use a custom credentials file path |
+| `OPENMI_NO_AUTO_UPDATE` | Any value except empty/`0`/`false` disables the startup update check |
+| `OPENMI_RELEASE_URL` | Override the GitHub Releases JSON endpoint used for updates |
+| `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` | Relocate config/data/cache dirs (Unix/Termux) |
+
+## Permission Modes
+
+| Mode | Behavior |
+| --- | --- |
+| `read-only` | Only `read_file` and `list_dir`; writes and commands are blocked |
+| `ask` | Asks before `write_file`, `run_command` and MCP tools |
+| `trusted` | **Default.** Auto-approves workspace tools within PathGuard; MCP tools still ask unless allowlisted |
+| `full-access` | No prompts; in the TUI requires typing `I UNDERSTAND FULL ACCESS` |
+
+The default comes from `settings.json` (managed by `/settings`): `auto_approve: true` → `trusted`, `false` → `ask`, `read_only: true` → `read-only`. `--permission` overrides it for one launch.
+
 ## Interactive TUI Features
 
-- **Layout**: Scrollable transcript, live tool timeline, multiline prompt (`Enter` send, `Shift+Enter` / `Alt+Enter` newline, `↑`/`↓` prompt history), and status bar (`model | mode | credits | cwd | git`).
-- **Approval Popup**: In `Ask` mode, mutating tools prompt with `[y]` approve once, `[a]` always this session, or `[n]` deny.
-- **Cancel & Quit**: First `Esc` or `Ctrl-C` cancels an active turn (killing child process trees cleanly); second press exits and restores the terminal.
-- **Slash Commands**:
-  - `/model [id]` — view or switch the active model
-  - `/mode [read-only|ask|trusted|full-access]` — view or change permission mode (`full-access` requires typing `I UNDERSTAND FULL ACCESS`)
-  - `/diff` — render colored unified diff from the latest checkpoint
-  - `/undo [file|run]` — restore exact pre-write bytes (including UTF-8 BOM and CRLF)
-  - `/clear` — clear session history
-  - `/credits` — refresh credit balance
+- **Layout**: a header line (`✦ Openmi · <model> · <folder>`, a mode badge when not `trusted`, and credits / active pass on the right), the chat transcript with inline tool activity lines, a multiline prompt box, and a footer with key hints. There is no separate tool pane.
+- **Input**: `Enter` sends, `Shift+Enter` / `Alt+Enter` inserts a newline, `↑`/`↓` browse prompt history, `Tab` completes `/` commands or `@path` mentions.
+- **Scrolling**: `PageUp`/`PageDown` (5 lines) or `Ctrl`/`Alt` + `↑`/`↓` (3 lines). Mouse capture is disabled so the Termux soft keyboard works.
+- **Mode cycling**: `Shift+Tab` cycles `ask → trusted → read-only → ask` (`full-access` only via `/mode full-access`).
+- **Approval popup**: shows the tool, a summary and, for file writes, a diff preview. Choose `[y]` allow once, `[a]` always allow this tool for the session, `[n]` cancel — or move with `↑`/`↓` (`j`/`k`) and press `Enter`.
+- **Esc / Ctrl-C**: closes any open popup first (a pending approval is denied). While the agent is working, the first press stops the turn and a second press quits. When idle, press twice to quit.
+- **Slash Commands** (type `/` to see a live palette):
+  - `/settings` — toggle auto-approve, read-only, and inline tool activity (saved to `settings.json`)
+  - `/folder [path]` — pick or switch the project folder (aliases `/project`, `/cd`)
+  - `/model [id]` — open the model picker or switch directly
+  - `/resume` — pick a previous chat to continue
+  - `/new` (alias `/clear`) — start a fresh chat
+  - `/init` — create a starter `OPENMI.md` tailored to the detected stack
+  - `/mode [read-only|ask|trusted|full-access]` — show or change permission mode
+  - `/diff` — colored unified diff of the latest checkpointed run
+  - `/undo [file|run_id]` — restore exact pre-write bytes (including UTF-8 BOM and CRLF)
+  - `/credits` — refresh plan, daily + wallet credits, and pass status
   - `/mcp [status|restart [server]]` — inspect or restart configured stdio MCP servers
-  - `/help` — show command summary
-  - `/quit` — exit the TUI
-- **`@path` Completion**: Type `@` followed by a partial filename and press `Tab` for `.gitignore`-aware fuzzy completion.
-- **Project Instructions**: Place an `OPENMI.md` file in your workspace root to inject project guidelines into the system prompt automatically.
-- **Session Persistence**: Sessions are saved automatically under `~/.local/share/openmi/sessions` and restored with `openmi --resume [SESSION_ID]`.
+  - `/help [steps|commands|modes|keys|mcp|cli]` — full guide or one topic
+  - `/version` — show version and platform
+  - `/quit` (alias `/exit`) — exit the TUI
+- **`@path` Completion**: type `@` and part of a filename, then `Tab`, for `.gitignore`-aware fuzzy completion.
+- **Project Instructions**: the first non-empty file of `OPENMI.md`, `CLAUDE.md`, `AGENTS.md` in the workspace root is added to the system prompt.
+- **Session Persistence**: chats are saved automatically to the sessions directory and restored with `/resume` or `openmi --resume [SESSION_ID]` (without an ID, the latest session for the current folder is preferred).
 
-## MCP Support (`v1.0`)
+## Files
 
-Configure stdio MCP servers globally in `~/.config/openmi/mcp.json` or per-project in `.openmi/mcp.json`:
+| Purpose | Linux / macOS / Termux | Windows |
+| --- | --- | --- |
+| Credentials (`0600` on Unix) | `~/.config/openmi/credentials.json` | `%APPDATA%\openmi\credentials.json` |
+| User settings | `~/.config/openmi/settings.json` | `%APPDATA%\openmi\settings.json` |
+| Global MCP config | `~/.config/openmi/mcp.json` | `%APPDATA%\openmi\mcp.json` |
+| Saved sessions | `~/.local/share/openmi/sessions/` | `%LOCALAPPDATA%\openmi\data\sessions\` |
+| Model catalog cache | `~/.cache/openmi/models.json` | `%LOCALAPPDATA%\openmi\cache\models.json` |
+| Project MCP config | `<workspace>/.openmi/mcp.json` | same |
+
+## MCP Support
+
+Configure stdio MCP servers globally (see Files above) or per-project in `.openmi/mcp.json`:
 
 ```json
 {
@@ -96,9 +161,9 @@ Configure stdio MCP servers globally in `~/.config/openmi/mcp.json` or per-proje
 ```
 
 - Discovered tools are registered dynamically as `mcp__<server>__<tool>`.
-- All MCP tools are classified at least `Ask` risk and are **never auto-approved in `Trusted` mode** unless explicitly listed in the server's `allowlist`.
-- Inspect servers and tools from the CLI with `openmi mcp list [--json]` or inside the TUI with `/mcp status` and `/mcp restart [server]`.
-- Server processes are spawned in managed process groups and terminated cleanly on exit.
+- MCP tools are denied in `read-only`, always ask in `ask`, ask in `trusted` unless listed in the server's `allowlist` (`"*"` allows all), and run without prompts in `full-access`.
+- Inspect servers and tools with `openmi mcp list [--cwd <dir>] [--json]` or inside the TUI with `/mcp status` and `/mcp restart [server]`.
+- Server processes are spawned in managed process groups and terminated on exit.
 
 ## Exit Codes
 
@@ -112,10 +177,11 @@ Configure stdio MCP servers globally in `~/.config/openmi/mcp.json` or per-proje
 | `5` | Agent loop-cap exceeded |
 | `130` | Cancelled (`Ctrl-C` / `SIGINT`) |
 
-## Architecture
+## Repository Layout
 
 - `crates/openmi-platform` — cross-platform paths (`AppPaths`), `PathGuard` (symlink / `..` / Unix `O_NOFOLLOW` TOCTOU protection), atomic writes (`0600` private mode), process-group tree kill.
 - `crates/openmi-checkpoints` — exact-byte pre-write snapshots and per-file/per-run rollback.
-- `crates/openmi-core` — UI-agnostic `AgentSession`, `AgentEvent` stream, `PermissionMode`, SSE proxy client, built-in tools, model/credit catalog.
-- `crates/openmi-cli` — `openmi` binary (`login`, `logout`, `whoami`, `models`, `credits`, `run`, `tui`, `update`, `smoke-test`).
-- `supabase/functions/cli-auth/` & `supabase/migrations/` — device-code pairing Edge Function and `device_codes` schema.
+- `crates/openmi-core` — UI-agnostic `AgentSession`, `AgentEvent` stream, `PermissionMode`, SSE proxy client, built-in tools, MCP client & dynamic `ToolRegistry`, model/credit catalog.
+- `crates/openmi-cli` — `openmi` binary (`login`, `logout`, `whoami`, `models`, `credits`, `mcp list`, `run`, `tui`, `update`, `smoke-test`).
+- `supabase/` — Edge Functions (`cli-auth`, `models`, `credits`, `chat`, `payments`) and SQL migrations. See [docs/SUPABASE_DEPLOY.md](docs/SUPABASE_DEPLOY.md).
+- `auth-web/` — device-login approval and payment web pages; `admin-panel/` — admin UI for backend settings.

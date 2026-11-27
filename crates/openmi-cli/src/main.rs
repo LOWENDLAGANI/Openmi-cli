@@ -34,11 +34,12 @@ EXIT CODES:
 
 FILES:
   ~/.config/openmi/credentials.json   Auth tokens (0600 permissions on Unix/Termux)
+  ~/.config/openmi/settings.json      Saved TUI preferences (/settings)
   ~/.config/openmi/mcp.json           Global stdio MCP server configuration
   .openmi/mcp.json                    Project-level stdio MCP server overrides
   ~/.local/share/openmi/sessions/     Saved interactive sessions (--resume)
   ~/.cache/openmi/models.json         Cached model catalog
-  OPENMI.md                           Project-specific system instructions in workspace root
+  OPENMI.md                           Project instructions in workspace root (or CLAUDE.md / AGENTS.md)
 
 EXAMPLES:
   openmi login

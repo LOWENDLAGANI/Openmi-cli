@@ -270,156 +270,145 @@ fn execute_undo(target: Option<&str>, checkpoints: &CheckpointStore, cwd: &Path)
     }
 }
 
-const HELP_STEPS: &str = concat!(
-    "=== STEP-BY-STEP TUTORIAL (HOW TO USE OPENMI) ===\n",
-    "  Step 1. Sign in & check credits\n",
-    "    - Run `openmi login` in your terminal if not signed in yet.\n",
-    "    - Inside TUI, run `/credits` to see your plan, daily/wallet credits, and 1-hr pass.\n",
-    "  Step 2. Pick a model\n",
-    "    - Run `/model` to open the interactive picker (Up/Down or j/k, Enter to select),\n",
-    "      or `/model <id>` to switch directly. Your 1-hour pass starts on your 1st prompt.\n",
-    "  Step 3. Choose a permission mode\n",
-    "    - Run `/mode` to check your current mode (default: `ask`).\n",
-    "    - Use `/mode read-only` to explore safely, or `/mode trusted` for faster edits.\n",
-    "  Step 4. Send a prompt (with @file mentions)\n",
-    "    - Type your request and press Enter to send (Shift+Enter or Alt+Enter for newline).\n",
-    "    - Type `@` + partial filename + Tab for .gitignore-aware fuzzy file completion.\n",
-    "  Step 5. Review & approve tool calls\n",
-    "    - In `ask` mode, mutating tools (`write_file`, `run_command`, MCP) ask:\n",
-    "      [y] approve once | [a] always this session | [n] deny.\n",
-    "    - Watch live tool status in the right-hand `Tools` pane.\n",
-    "  Step 6. Inspect diffs or undo changes\n",
-    "    - Run `/diff` to view a colored unified diff of the latest run.\n",
-    "    - Run `/undo`, `/undo <file>`, or `/undo <run_id>` to restore exact pre-write bytes\n",
-    "      (including UTF-8 BOM and CRLF line endings).\n",
-    "  Step 7. Customize & resume later\n",
-    "    - Add `OPENMI.md` in your workspace root to auto-load project instructions.\n",
-    "    - Exit with `/quit` (or press Esc/Ctrl-C twice); resume with `openmi --resume`."
-);
+// Help topics are macros (not consts) so `help_text()` can `concat!` them without
+// duplicating the copy — keeping the full guide and per-topic output in sync.
+macro_rules! help_steps {
+    () => {
+        concat!(
+            "=== STEP-BY-STEP TUTORIAL (HOW TO USE OPENMI) ===\n",
+            "  Step 1. Sign in & check credits\n",
+            "    - Run `openmi login` in your terminal if not signed in yet.\n",
+            "    - Inside TUI, run `/credits` to see your plan, daily/wallet credits, and active pass.\n",
+            "  Step 2. Pick a project folder and model\n",
+            "    - Run `/folder` to browse to a project (or `/folder <path>`).\n",
+            "    - Run `/model` to open the picker (Up/Down or j/k, Enter to select),\n",
+            "      or `/model <id>` to switch directly.\n",
+            "  Step 3. Choose a permission mode\n",
+            "    - Default is `trusted` (auto-approve). Change it in `/settings`, with `/mode <mode>`,\n",
+            "      or press Shift+Tab to cycle ask -> trusted -> read-only.\n",
+            "  Step 4. Send a prompt (with @file mentions)\n",
+            "    - Type your request and press Enter to send (Shift+Enter or Alt+Enter for newline).\n",
+            "    - Type `@` + partial filename + Tab for .gitignore-aware fuzzy file completion.\n",
+            "  Step 5. Review & approve tool calls\n",
+            "    - In `ask` mode, `write_file`, `run_command` and MCP tools show a popup:\n",
+            "      [y] allow once | [a] always this session | [n] cancel (or Up/Down + Enter).\n",
+            "    - Tool activity is shown inline in the chat (toggle in `/settings`).\n",
+            "  Step 6. Inspect diffs or undo changes\n",
+            "    - Run `/diff` to view a colored unified diff of the latest run.\n",
+            "    - Run `/undo`, `/undo <file>`, or `/undo <run_id>` to restore exact pre-write bytes.\n",
+            "  Step 7. Customize & resume later\n",
+            "    - Run `/init` to create a starter `OPENMI.md` (CLAUDE.md / AGENTS.md also work).\n",
+            "    - Exit with `/quit` or Esc twice; continue with `/resume` or `openmi --resume`.\n"
+        )
+    };
+}
 
-const HELP_COMMANDS: &str = concat!(
-    "=== SLASH COMMANDS (INSIDE TUI) ===\n",
-    "  /folder [path]                  Pick a project folder interactively or switch directly\n",
-    "  /model [id]                     Open interactive model selector or switch directly\n",
-    "  /mode [mode]                    Show or switch mode (read-only|ask|trusted|full-access)\n",
-    "  /diff                           Show colored unified diff for the latest run\n",
-    "  /undo [file|run]                Restore latest run, run ID, or file to pre-write bytes\n",
-    "  /clear                          Clear conversation history and tool timeline\n",
-    "  /credits                        Refresh plan, daily + wallet credits, and 1-hour pass\n",
-    "  /mcp [status|restart [server]]  Inspect or restart configured stdio MCP servers\n",
-    "  /help [topic]                   Show full tutorial or topic (steps|commands|modes|keys|mcp|cli)\n",
-    "  /version                        Show the running Openmi CLI version and platform\n",
-    "  /quit (or /exit)                Exit Openmi TUI (session is auto-saved)"
-);
+macro_rules! help_commands {
+    () => {
+        concat!(
+            "=== SLASH COMMANDS (INSIDE TUI) ===\n",
+            "  /settings                       Toggle auto-approve, read-only, tool activity lines\n",
+            "  /folder [path]                  Pick a project folder (aliases: /project, /cd)\n",
+            "  /model [id]                     Open interactive model selector or switch directly\n",
+            "  /resume                         Pick a previous chat to continue\n",
+            "  /new (or /clear)                Start a fresh chat (clears history)\n",
+            "  /init                           Create a starter OPENMI.md in the project folder\n",
+            "  /mode [mode]                    Show or switch mode (read-only|ask|trusted|full-access)\n",
+            "  /diff                           Show colored unified diff for the latest run\n",
+            "  /undo [file|run]                Restore latest run, run ID, or file to pre-write bytes\n",
+            "  /credits                        Refresh plan, daily + wallet credits, and pass status\n",
+            "  /mcp [status|restart [server]]  Inspect or restart configured stdio MCP servers\n",
+            "  /help [topic]                   Show full guide or topic (steps|commands|modes|keys|mcp|cli)\n",
+            "  /version                        Show the running Openmi CLI version and platform\n",
+            "  /quit (or /exit)                Exit Openmi TUI (session is auto-saved)\n"
+        )
+    };
+}
 
-const HELP_MODES: &str = concat!(
-    "=== PERMISSION MODES & TOOLS ===\n",
-    "  read-only    Allow `read_file` & `list_dir` only; block all writes and commands.\n",
-    "  ask          Prompt [y/a/n] before writes/commands (default).\n",
-    "  trusted      Auto-approve workspace tools within PathGuard boundaries\n",
-    "               (MCP tools still ask unless listed in the server's `allowlist`).\n",
-    "  full-access  Unrestricted tool execution; requires typing `I UNDERSTAND FULL ACCESS`.\n",
-    "  Built-in tools: `read_file`, `list_dir`, `write_file`, `run_command`."
-);
+macro_rules! help_modes {
+    () => {
+        concat!(
+            "=== PERMISSION MODES & TOOLS ===\n",
+            "  read-only    Allow `read_file` & `list_dir` only; block all writes and commands.\n",
+            "  ask          Prompt [y/a/n] before writes/commands.\n",
+            "  trusted      Auto-approve workspace tools within PathGuard boundaries (default)\n",
+            "               (MCP tools still ask unless listed in the server's `allowlist`).\n",
+            "  full-access  Unrestricted tool execution; requires typing `I UNDERSTAND FULL ACCESS`.\n",
+            "  Built-in tools: `read_file`, `list_dir`, `write_file`, `run_command`.\n"
+        )
+    };
+}
 
-const HELP_KEYS: &str = concat!(
-    "=== KEYBOARD SHORTCUTS ===\n",
-    "  Enter                 Send prompt or run /command\n",
-    "  Shift+Enter / Alt+Enter  Insert newline in multiline prompt\n",
-    "  Tab                   Accept top @path fuzzy file completion\n",
-    "  Up / Down             Browse prompt history (or move in /model selector)\n",
-    "  PageUp / PageDown     Scroll transcript up / down\n",
-    "  y / a / n             Approval popup: approve once / always / deny\n",
-    "  Esc / Ctrl-C          1st press: close modal or cancel active turn; 2nd press: quit"
-);
+macro_rules! help_keys {
+    () => {
+        concat!(
+            "=== KEYBOARD SHORTCUTS ===\n",
+            "  Enter                    Send prompt or run /command\n",
+            "  Shift+Enter / Alt+Enter  Insert newline in multiline prompt\n",
+            "  Tab                      Accept / command or @path completion\n",
+            "  Shift+Tab                Cycle mode: ask -> trusted -> read-only\n",
+            "  Up / Down                Prompt history (or move in lists and pickers)\n",
+            "  Ctrl/Alt+Up / Down       Scroll chat 3 lines\n",
+            "  PageUp / PageDown        Scroll chat 5 lines\n",
+            "  y / a / n                Approval popup: allow once / always / cancel\n",
+            "  Esc / Ctrl-C             Close popup (denies a pending approval) or stop the\n",
+            "                           running turn; press twice to quit\n"
+        )
+    };
+}
 
-const HELP_MCP: &str = concat!(
-    "=== WORKSPACE, SESSIONS & MCP ===\n",
-    "  OPENMI.md       Place in workspace root to inject project guidelines automatically.\n",
-    "  Sessions        Auto-saved to `~/.local/share/openmi/sessions/`; use `openmi --resume [ID]`.\n",
-    "  MCP servers     Configure stdio servers in `~/.config/openmi/mcp.json` or `.openmi/mcp.json`.\n",
-    "                  Tools register as `mcp__<server>__<tool>`. Use `/mcp status` or `/mcp restart`."
-);
+macro_rules! help_mcp {
+    () => {
+        concat!(
+            "=== WORKSPACE, SESSIONS & MCP ===\n",
+            "  OPENMI.md       Project instructions loaded from the workspace root\n",
+            "                  (falls back to CLAUDE.md, then AGENTS.md).\n",
+            "  Sessions        Auto-saved to `~/.local/share/openmi/sessions/`; use `/resume`\n",
+            "                  or `openmi --resume [ID]`.\n",
+            "  MCP servers     Configure stdio servers in `~/.config/openmi/mcp.json` or `.openmi/mcp.json`.\n",
+            "                  Tools register as `mcp__<server>__<tool>`. Use `/mcp status` or `/mcp restart`.\n"
+        )
+    };
+}
 
-const HELP_CLI: &str = concat!(
-    "=== CLI COMMANDS (OUTSIDE TUI) ===\n",
-    "  openmi login / whoami / logout       Authenticate or inspect current account\n",
-    "  openmi [--resume [ID]]               Launch TUI (or resume latest/specific session)\n",
-    "  openmi run \"<prompt>\" [--json] [-y]  Run a single headless prompt turn\n",
-    "  openmi models [--json]               List available models\n",
-    "  openmi credits [--json]              Check credit balance and active pass\n",
-    "  openmi mcp list [--json]             List configured MCP servers and tools\n",
-    "  openmi update [--check]              Check for or install CLI updates"
-);
+macro_rules! help_cli {
+    () => {
+        concat!(
+            "=== CLI COMMANDS (OUTSIDE TUI) ===\n",
+            "  openmi login / whoami / logout       Authenticate or inspect current account\n",
+            "  openmi [--resume [ID]]               Launch TUI (or resume latest/specific session)\n",
+            "  openmi run \"<prompt>\" [--json] [-y]  Run a single headless prompt turn\n",
+            "  openmi models [--json]               List available models\n",
+            "  openmi credits [--json]              Check credit balance and active pass\n",
+            "  openmi mcp list [--json]             List configured MCP servers and tools\n",
+            "  openmi update [--check]              Check for or install CLI updates\n"
+        )
+    };
+}
+
+const HELP_STEPS: &str = help_steps!();
+const HELP_COMMANDS: &str = help_commands!();
+const HELP_MODES: &str = help_modes!();
+const HELP_KEYS: &str = help_keys!();
+const HELP_MCP: &str = help_mcp!();
+const HELP_CLI: &str = help_cli!();
 
 pub fn help_text() -> &'static str {
     concat!(
         "Openmi CLI Tutorial & Feature Guide\n",
         "===================================\n\n",
-        "=== STEP-BY-STEP TUTORIAL (HOW TO USE OPENMI) ===\n",
-        "  Step 1. Sign in & check credits\n",
-        "    - Run `openmi login` in your terminal if not signed in yet.\n",
-        "    - Inside TUI, run `/credits` to see your plan, daily/wallet credits, and 1-hr pass.\n",
-        "  Step 2. Pick a model\n",
-        "    - Run `/model` to open the interactive picker (Up/Down or j/k, Enter to select),\n",
-        "      or `/model <id>` to switch directly. Your 1-hour pass starts on your 1st prompt.\n",
-        "  Step 3. Choose a permission mode\n",
-        "    - Run `/mode` to check your current mode (default: `ask`).\n",
-        "    - Use `/mode read-only` to explore safely, or `/mode trusted` for faster edits.\n",
-        "  Step 4. Send a prompt (with @file mentions)\n",
-        "    - Type your request and press Enter to send (Shift+Enter or Alt+Enter for newline).\n",
-        "    - Type `@` + partial filename + Tab for .gitignore-aware fuzzy file completion.\n",
-        "  Step 5. Review & approve tool calls\n",
-        "    - In `ask` mode, mutating tools (`write_file`, `run_command`, MCP) ask:\n",
-        "      [y] approve once | [a] always this session | [n] deny.\n",
-        "    - Watch live tool status in the right-hand `Tools` pane.\n",
-        "  Step 6. Inspect diffs or undo changes\n",
-        "    - Run `/diff` to view a colored unified diff of the latest run.\n",
-        "    - Run `/undo`, `/undo <file>`, or `/undo <run_id>` to restore exact pre-write bytes\n",
-        "      (including UTF-8 BOM and CRLF line endings).\n",
-        "  Step 7. Customize & resume later\n",
-        "    - Add `OPENMI.md` in your workspace root to auto-load project instructions.\n",
-        "    - Exit with `/quit` (or press Esc/Ctrl-C twice); resume with `openmi --resume`.\n\n",
-        "=== SLASH COMMANDS (INSIDE TUI) ===\n",
-        "  /folder [path]                  Pick a project folder interactively or switch directly\n",
-        "  /model [id]                     Open interactive model selector or switch directly\n",
-        "  /mode [mode]                    Show or switch mode (read-only|ask|trusted|full-access)\n",
-        "  /diff                           Show colored unified diff for the latest run\n",
-        "  /undo [file|run]                Restore latest run, run ID, or file to pre-write bytes\n",
-        "  /clear                          Clear conversation history and tool timeline\n",
-        "  /credits                        Refresh plan, daily + wallet credits, and 1-hour pass\n",
-        "  /mcp [status|restart [server]]  Inspect or restart configured stdio MCP servers\n",
-        "  /help [topic]                   Show full tutorial or topic (steps|commands|modes|keys|mcp|cli)\n",
-        "  /version                        Show the running Openmi CLI version and platform\n",
-        "  /quit (or /exit)                Exit Openmi TUI (session is auto-saved)\n\n",
-        "=== PERMISSION MODES & TOOLS ===\n",
-        "  read-only    Allow `read_file` & `list_dir` only; block all writes and commands.\n",
-        "  ask          Prompt [y/a/n] before writes/commands (default).\n",
-        "  trusted      Auto-approve workspace tools within PathGuard boundaries\n",
-        "               (MCP tools still ask unless listed in the server's `allowlist`).\n",
-        "  full-access  Unrestricted tool execution; requires typing `I UNDERSTAND FULL ACCESS`.\n",
-        "  Built-in tools: `read_file`, `list_dir`, `write_file`, `run_command`.\n\n",
-        "=== KEYBOARD SHORTCUTS ===\n",
-        "  Enter                    Send prompt or run /command\n",
-        "  Shift+Enter / Alt+Enter  Insert newline in multiline prompt\n",
-        "  Tab                      Accept top @path fuzzy file completion\n",
-        "  Up / Down                Browse prompt history (or move in /model selector)\n",
-        "  PageUp / PageDown        Scroll transcript up / down\n",
-        "  y / a / n                Approval popup: approve once / always / deny\n",
-        "  Esc / Ctrl-C             1st press: close modal or cancel active turn; 2nd press: quit\n\n",
-        "=== WORKSPACE, SESSIONS & MCP ===\n",
-        "  OPENMI.md       Place in workspace root to inject project guidelines automatically.\n",
-        "  Sessions        Auto-saved to `~/.local/share/openmi/sessions/`; use `openmi --resume [ID]`.\n",
-        "  MCP servers     Configure stdio servers in `~/.config/openmi/mcp.json` or `.openmi/mcp.json`.\n",
-        "                  Tools register as `mcp__<server>__<tool>`. Use `/mcp status` or `/mcp restart`.\n\n",
-        "=== CLI COMMANDS (OUTSIDE TUI) ===\n",
-        "  openmi login / whoami / logout       Authenticate or inspect current account\n",
-        "  openmi [--resume [ID]]               Launch TUI (or resume latest/specific session)\n",
-        "  openmi run \"<prompt>\" [--json] [-y]  Run a single headless prompt turn\n",
-        "  openmi models [--json]               List available models\n",
-        "  openmi credits [--json]              Check credit balance and active pass\n",
-        "  openmi mcp list [--json]             List configured MCP servers and tools\n",
-        "  openmi update [--check]              Check for or install CLI updates\n\n",
+        help_steps!(),
+        "\n",
+        help_commands!(),
+        "\n",
+        help_modes!(),
+        "\n",
+        help_keys!(),
+        "\n",
+        help_mcp!(),
+        "\n",
+        help_cli!(),
+        "\n",
         "Tip: Use PageUp/PageDown to scroll, or run `/help <topic>` (steps|commands|modes|keys|mcp|cli)."
     )
 }
