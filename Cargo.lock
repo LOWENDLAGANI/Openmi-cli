@@ -973,7 +973,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "openmi-checkpoints"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "openmi-platform",
  "tempfile",
@@ -983,7 +983,7 @@ dependencies = [
 
 [[package]]
 name = "openmi-cli"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1011,7 +1011,7 @@ dependencies = [
 
 [[package]]
 name = "openmi-core"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -1027,7 +1027,7 @@ dependencies = [
 
 [[package]]
 name = "openmi-platform"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "libc",
  "tempfile",
