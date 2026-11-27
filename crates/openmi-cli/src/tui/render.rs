@@ -14,15 +14,16 @@ use crate::tui::app::{
 use crate::tui::markdown::{render_markdown_lines, MarkdownTheme};
 use crate::tui::slash::FULL_ACCESS_MODAL_WARNING;
 
-// Soft, beginner-friendly color palette (readable on dark and light terminals).
-const ACCENT: Color = Color::Rgb(110, 195, 224); // Soft sky teal (Openmi, focus)
-const USER_COLOR: Color = Color::Rgb(134, 219, 178); // Soft mint (You)
-const SUCCESS: Color = Color::Rgb(126, 214, 150); // Gentle green (Active, additions)
+// Openmi brand palette: Candy Pink (#FFB5D8), Lime Burst (#C6FF4D), Chrome Silver (#D9D9D9).
+const ACCENT: Color = Color::Rgb(255, 181, 216); // Candy Pink (#FFB5D8)
+const USER_COLOR: Color = Color::Rgb(198, 255, 77); // Lime Burst (#C6FF4D)
+const SUCCESS: Color = Color::Rgb(198, 255, 77); // Lime Burst (#C6FF4D)
+const CHROME: Color = Color::Rgb(217, 217, 217); // Chrome Silver (#D9D9D9)
 const WARNING: Color = Color::Rgb(245, 194, 107); // Warm amber (Permissions, notices)
 const DANGER: Color = Color::Rgb(242, 139, 130); // Soft coral (Errors, removals)
-const PRO_BADGE: Color = Color::Rgb(196, 167, 231); // Soft lavender (Pro models)
-const MUTED: Color = Color::Rgb(138, 148, 166); // Calm slate (Hints, secondary text)
-const BORDER_SUBTLE: Color = Color::Rgb(78, 86, 102); // Quiet border / divider
+const PRO_BADGE: Color = Color::Rgb(255, 181, 216); // Candy Pink (Pro models)
+const MUTED: Color = Color::Rgb(152, 152, 162); // Silver-slate (Hints, secondary text)
+const BORDER_SUBTLE: Color = Color::Rgb(108, 108, 118); // Chrome-muted border / divider
 
 /// Render the full TUI layout safely at any terminal size (including 80x24, Termux, and SSH).
 pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
@@ -389,44 +390,93 @@ fn wrapped_single_line_rows(line: &str, width: u16) -> usize {
 }
 
 fn render_welcome(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    let lines = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "✦ Welcome to Openmi",
+    let pink = Style::default().fg(ACCENT);
+    let lime = Style::default().fg(SUCCESS).add_modifier(Modifier::BOLD);
+    let eye = Style::default().fg(Color::Rgb(20, 20, 23)).bg(ACCENT);
+    let chrome = Style::default().fg(CHROME);
+    let muted = Style::default().fg(MUTED);
+
+    let plan_label = match app.credit_status.as_ref() {
+        Some(cs) if cs.is_paid => "Openmi Paid",
+        Some(_) => "Openmi Free",
+        None => "Openmi CLI",
+    };
+
+    let version = env!("CARGO_PKG_VERSION");
+    let compact = area.height < 14 || area.width < 46;
+
+    let mut lines: Vec<Line<'_>> = Vec::new();
+    if !compact {
+        lines.push(Line::from(""));
+    }
+
+    // Openmi pixel mascot (Candy Pink body + Lime Burst sparks)
+    lines.push(Line::from(vec![
+        Span::styled("✦", lime),
+        Span::raw("   "),
+        Span::styled("✦", lime),
+    ]));
+    lines.push(Line::from(Span::styled("█████████", pink)));
+    lines.push(Line::from(vec![
+        Span::styled("████", pink),
+        Span::styled("█", eye),
+        Span::styled("███", pink),
+        Span::styled("█", eye),
+        Span::styled("████", pink),
+    ]));
+    lines.push(Line::from(Span::styled("█████████", pink)));
+    lines.push(Line::from(Span::styled("█ █ █ █", pink)));
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(app.model_display(), chrome.add_modifier(Modifier::BOLD)),
+        Span::styled(" · ", muted),
+        Span::styled(plan_label, lime),
+    ]));
+    lines.push(Line::from(Span::styled(app.friendly_cwd(), muted)));
+
+    if !compact {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("/plan", pink),
+            Span::styled(" · ", muted),
+            Span::styled("/compact", pink),
+            Span::styled(" · ", muted),
+            Span::styled("/model", pink),
+            Span::styled(" · ", muted),
+            Span::styled("/folder", pink),
+            Span::styled(" · ", muted),
+            Span::styled("/help", pink),
+        ]));
+    }
+
+    let box_width = area.width.saturating_sub(4).clamp(28, 66);
+    let box_height = (lines.len() as u16 + 2).min(area.height.saturating_sub(1).max(6));
+    let x = area.x + area.width.saturating_sub(box_width) / 2;
+    let y = area.y + area.height.saturating_sub(box_height) / 2;
+    let card_area = Rect {
+        x,
+        y,
+        width: box_width.min(area.width),
+        height: box_height.min(area.height),
+    };
+
+    let title = format!(" Openmi v{version} ");
+    let block = Block::default()
+        .title(Span::styled(
+            title,
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Project folder: ", Style::default().fg(MUTED)),
-            Span::styled(app.friendly_cwd(), Style::default().fg(USER_COLOR)),
-        ]),
-        Line::from(""),
-        Line::from(Span::raw(
-            "Type what you need help with below and press Enter.",
-        )),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("  /folder  ", Style::default().fg(ACCENT)),
-            Span::styled("Pick or change project folder", Style::default().fg(MUTED)),
-        ]),
-        Line::from(vec![
-            Span::styled("  /model   ", Style::default().fg(ACCENT)),
-            Span::styled("Switch AI model", Style::default().fg(MUTED)),
-        ]),
-        Line::from(vec![
-            Span::styled("  /help    ", Style::default().fg(ACCENT)),
-            Span::styled("See tips & commands", Style::default().fg(MUTED)),
-        ]),
-        Line::from(vec![
-            Span::styled("  /quit    ", Style::default().fg(ACCENT)),
-            Span::styled("Close Openmi", Style::default().fg(MUTED)),
-        ]),
-    ];
+        ))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(ACCENT))
+        .padding(Padding::new(2, 2, 0, 0));
 
     let widget = Paragraph::new(lines)
-        .block(Block::default().padding(Padding::new(2, 2, 1, 0)))
+        .alignment(Alignment::Center)
+        .block(block)
         .wrap(Wrap { trim: false });
-    frame.render_widget(widget, area);
+    frame.render_widget(widget, card_area);
 }
 
 fn render_activity_line(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {

@@ -4,6 +4,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::events::AgentEvent;
+use crate::registry::DynamicToolSpec;
 use crate::session::{CoreError, Message};
 
 /// Configuration for the managed Openmi Supabase LLM proxy.
@@ -64,6 +65,7 @@ pub async fn stream_step(
     config: &ProxyConfig,
     model: &str,
     messages: &[Message],
+    extra_tools: &[DynamicToolSpec],
     event_tx: &mpsc::Sender<AgentEvent>,
     cancel: &CancellationToken,
 ) -> Result<StepResponse, CoreError> {
@@ -71,11 +73,32 @@ pub async fn stream_step(
         .build()
         .map_err(|e| CoreError::Llm(e.to_string()))?;
 
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "model": model,
         "stream": true,
         "messages": messages,
     });
+    if !extra_tools.is_empty() {
+        let tools_json: Vec<serde_json::Value> = extra_tools
+            .iter()
+            .map(|spec| {
+                let params = if spec.input_schema.is_object() {
+                    spec.input_schema.clone()
+                } else {
+                    serde_json::json!({ "type": "object", "properties": {} })
+                };
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": spec.name,
+                        "description": spec.description,
+                        "parameters": params,
+                    }
+                })
+            })
+            .collect();
+        payload["tools"] = serde_json::Value::Array(tools_json);
+    }
 
     let send_fut = client
         .post(&config.endpoint)

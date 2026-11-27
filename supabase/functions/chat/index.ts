@@ -453,10 +453,41 @@ Deno.serve(async (req: Request) => {
     }
   };
 
+  // Merge optional client-registered MCP tools (`mcp__*`) with built-in tools.
+  const extraTools: unknown[] = Array.isArray(body?.tools)
+    ? body.tools
+        .filter(
+          (t: unknown): t is { type: string; function: { name: string; description?: string; parameters?: unknown } } =>
+            Boolean(
+              t &&
+                typeof t === "object" &&
+                (t as { type?: unknown }).type === "function" &&
+                typeof (t as { function?: { name?: unknown } }).function?.name === "string" &&
+                /^mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_-]+$/.test(
+                  (t as { function: { name: string } }).function.name,
+                ),
+            ),
+        )
+        .slice(0, 64)
+        .map((t) => ({
+          type: "function",
+          function: {
+            name: t.function.name,
+            description:
+              typeof t.function.description === "string" ? t.function.description.slice(0, 500) : "",
+            parameters:
+              t.function.parameters && typeof t.function.parameters === "object"
+                ? t.function.parameters
+                : { type: "object", properties: {} },
+          },
+        }))
+    : [];
+  const allTools = [...BUILTIN_TOOLS, ...extraTools];
+
   // Estimate input characters for fallback token counting when upstream omits `usage`.
   const inputChars =
     messages.reduce((sum, m) => sum + m.role.length + m.content.length + 12, 0) +
-    JSON.stringify(BUILTIN_TOOLS).length;
+    JSON.stringify(allTools).length;
 
   // 5. Call upstream OpenAI-compatible chat completions API with streaming + usage reporting
   const fetchUpstream = (includeStreamOptions: boolean) =>
@@ -472,7 +503,7 @@ Deno.serve(async (req: Request) => {
         stream: true,
         ...(includeStreamOptions ? { stream_options: { include_usage: true } } : {}),
         messages,
-        tools: BUILTIN_TOOLS,
+        tools: allTools,
         tool_choice: "auto",
       }),
     });

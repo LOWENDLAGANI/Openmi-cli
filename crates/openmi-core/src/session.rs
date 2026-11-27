@@ -255,7 +255,7 @@ impl AgentSession {
                 },
             ];
             let (sink_tx, _sink_rx) = mpsc::channel(64);
-            let step = stream_step(&proxy, &self.model, &req_messages, &sink_tx, cancel).await?;
+            let step = stream_step(&proxy, &self.model, &req_messages, &[], &sink_tx, cancel).await?;
             let text = step.text.trim().to_string();
             if text.is_empty() {
                 build_local_compact_digest(&self.history, focus)
@@ -415,7 +415,16 @@ impl AgentSession {
             let _ = event_tx.send(AgentEvent::StepStarted { step }).await;
 
             let req_messages = self.build_request_messages();
-            let resp = stream_step(proxy, &self.model, &req_messages, event_tx, cancel).await?;
+            let extra_tools = self.tool_registry.specs();
+            let resp = stream_step(
+                proxy,
+                &self.model,
+                &req_messages,
+                &extra_tools,
+                event_tx,
+                cancel,
+            )
+            .await?;
 
             if !resp.text.is_empty() {
                 self.history.push(Message {
