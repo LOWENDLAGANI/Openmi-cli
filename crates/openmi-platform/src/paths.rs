@@ -81,6 +81,26 @@ impl AppPaths {
         self.config_dir.join("mcp.json")
     }
 
+    /// Resolve the per-project external memory file:
+    /// `~/.config/openmi/projects/<workspace-hash>/memory.md`.
+    pub fn project_memory_file(&self, workspace_root: &Path) -> PathBuf {
+        use sha2::{Digest, Sha256};
+
+        let canonical = std::fs::canonicalize(workspace_root)
+            .unwrap_or_else(|_| workspace_root.to_path_buf());
+        let normalized = canonical.to_string_lossy().replace('\\', "/");
+        let digest = Sha256::digest(normalized.as_bytes());
+        let mut hex = String::with_capacity(16);
+        for byte in &digest[..8] {
+            use std::fmt::Write;
+            let _ = write!(&mut hex, "{byte:02x}");
+        }
+        self.config_dir
+            .join("projects")
+            .join(hex)
+            .join("memory.md")
+    }
+
     /// Ensure config, data, and cache directories exist on disk.
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
         for dir in [&self.config_dir, &self.data_dir, &self.cache_dir] {
@@ -161,5 +181,28 @@ mod tests {
         assert!(paths.config_dir.is_dir());
         assert!(paths.data_dir.is_dir());
         assert!(paths.cache_dir.is_dir());
+    }
+
+    #[test]
+    fn project_memory_file_is_deterministic_per_workspace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws_a = tmp.path().join("repo-a");
+        let ws_b = tmp.path().join("repo-b");
+        std::fs::create_dir_all(&ws_a).unwrap();
+        std::fs::create_dir_all(&ws_b).unwrap();
+
+        let paths = AppPaths {
+            config_dir: tmp.path().join("cfg/openmi"),
+            data_dir: tmp.path().join("data/openmi"),
+            cache_dir: tmp.path().join("cache/openmi"),
+        };
+        let mem_a1 = paths.project_memory_file(&ws_a);
+        let mem_a2 = paths.project_memory_file(&ws_a);
+        let mem_b = paths.project_memory_file(&ws_b);
+
+        assert_eq!(mem_a1, mem_a2);
+        assert_ne!(mem_a1, mem_b);
+        assert!(mem_a1.ends_with("memory.md"));
+        assert!(mem_a1.starts_with(paths.config_dir.join("projects")));
     }
 }

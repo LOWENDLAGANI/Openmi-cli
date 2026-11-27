@@ -16,95 +16,71 @@ pub const FULL_ACCESS_MODAL_WARNING: &str = concat!(
 );
 
 /// One entry in the live `/` slash command autocomplete palette.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlashSuggestion {
-    pub command: &'static str,
-    pub description: &'static str,
+    pub command: String,
+    pub description: String,
 }
 
-/// Ordered list of user-facing slash commands shown when the user types `/`.
-pub const SLASH_PALETTE: &[SlashSuggestion] = &[
-    SlashSuggestion {
-        command: "/settings",
-        description: "Configure auto-approve & preferences",
-    },
-    SlashSuggestion {
-        command: "/folder",
-        description: "Pick or change project folder",
-    },
-    SlashSuggestion {
-        command: "/model",
-        description: "Switch AI model",
-    },
-    SlashSuggestion {
-        command: "/resume",
-        description: "Continue a previous chat",
-    },
-    SlashSuggestion {
-        command: "/new",
-        description: "Start a fresh chat",
-    },
-    SlashSuggestion {
-        command: "/init",
-        description: "Create a starter OPENMI.md guide",
-    },
-    SlashSuggestion {
-        command: "/diff",
-        description: "View recent file changes",
-    },
-    SlashSuggestion {
-        command: "/undo",
-        description: "Undo the last file edit",
-    },
-    SlashSuggestion {
-        command: "/plan",
-        description: "Toggle read-only planning mode (/plan on|off)",
-    },
-    SlashSuggestion {
-        command: "/compact",
-        description: "Summarize chat to save context & tokens",
-    },
-    SlashSuggestion {
-        command: "/mode",
-        description: "Change permission mode (or Shift+Tab)",
-    },
-    SlashSuggestion {
-        command: "/credits",
-        description: "Check remaining credits & daily token cap",
-    },
-    SlashSuggestion {
-        command: "/upgrade",
-        description: "Open the /pay page in your browser to upgrade",
-    },
-    SlashSuggestion {
-        command: "/mcp",
-        description: "Check MCP server status",
-    },
-    SlashSuggestion {
-        command: "/help",
-        description: "Show tips & commands",
-    },
-    SlashSuggestion {
-        command: "/version",
-        description: "Show Openmi version",
-    },
-    SlashSuggestion {
-        command: "/quit",
-        description: "Close Openmi",
-    },
+/// Ordered list of user-facing built-in slash commands shown when the user types `/`.
+pub const SLASH_PALETTE: &[(&str, &str)] = &[
+    ("/settings", "Configure auto-approve & preferences"),
+    ("/folder", "Pick or change project folder"),
+    ("/model", "Switch AI model"),
+    ("/resume", "Continue a previous chat"),
+    ("/new", "Start a fresh chat"),
+    ("/init", "Create a starter OPENMI.md guide"),
+    (
+        "/memory",
+        "View or update persistent project memory (/memory [add <note>|clear])",
+    ),
+    ("/diff", "View recent file changes"),
+    ("/undo", "Undo the last file edit"),
+    ("/plan", "Toggle read-only planning mode (/plan on|off)"),
+    ("/compact", "Summarize chat to save context & tokens"),
+    ("/mode", "Change permission mode (or Shift+Tab)"),
+    ("/credits", "Check remaining credits & daily token cap"),
+    ("/upgrade", "Open the /pay page in your browser to upgrade"),
+    ("/mcp", "Check MCP server status"),
+    ("/help", "Show tips & commands"),
+    ("/version", "Show Openmi version"),
+    ("/quit", "Close Openmi"),
 ];
 
-/// Return matching slash commands when the input is an active single-token `/...` prefix.
+/// Return matching built-in slash commands when the input is an active single-token `/...` prefix.
+#[allow(dead_code)]
 pub fn filter_slash_suggestions(input: &str) -> Vec<SlashSuggestion> {
+    filter_slash_suggestions_with_skills(input, &[])
+}
+
+/// Return matching built-in slash commands and custom skills when the input is an active `/...` prefix.
+pub fn filter_slash_suggestions_with_skills(
+    input: &str,
+    skills: &[crate::skills::SkillDef],
+) -> Vec<SlashSuggestion> {
     if !input.starts_with('/') || input.contains('\n') || input.contains(char::is_whitespace) {
         return Vec::new();
     }
     let query = input.to_ascii_lowercase();
-    SLASH_PALETTE
+    let mut out: Vec<SlashSuggestion> = SLASH_PALETTE
         .iter()
-        .copied()
-        .filter(|s| s.command.starts_with(&query))
-        .collect()
+        .filter(|(cmd, _)| cmd.starts_with(&query))
+        .map(|(cmd, desc)| SlashSuggestion {
+            command: (*cmd).to_string(),
+            description: (*desc).to_string(),
+        })
+        .collect();
+
+    for skill in skills {
+        let cmd = format!("/{}", skill.name);
+        if cmd.starts_with(&query) && !out.iter().any(|s| s.command == cmd) {
+            out.push(SlashSuggestion {
+                command: cmd,
+                description: format!("[skill] {}", skill.description),
+            });
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,6 +90,7 @@ pub enum SlashCommand {
     Model(Option<String>),
     Resume,
     Init,
+    Memory(Option<String>),
     Plan(Option<String>),
     Compact(Option<String>),
     Mode(Option<String>),
@@ -174,6 +151,7 @@ pub fn parse_slash(input: &str) -> Option<SlashCommand> {
         "/model" => SlashCommand::Model(arg),
         "/resume" => SlashCommand::Resume,
         "/init" => SlashCommand::Init,
+        "/memory" => SlashCommand::Memory(arg),
         "/plan" => SlashCommand::Plan(arg),
         "/compact" => SlashCommand::Compact(arg),
         "/mode" => SlashCommand::Mode(arg),
@@ -207,6 +185,7 @@ pub fn execute_slash(
         SlashCommand::Model(Some(model)) => SlashOutcome::SetModel(model),
         SlashCommand::Resume => SlashOutcome::OpenResumePicker,
         SlashCommand::Init => SlashOutcome::InitProjectGuide,
+        SlashCommand::Memory(arg) => execute_memory(arg.as_deref(), cwd),
         SlashCommand::Plan(arg) => match arg.as_deref().map(str::to_ascii_lowercase).as_deref() {
             None | Some("toggle") => SlashOutcome::TogglePlan(None),
             Some("on") | Some("enter") | Some("start") => SlashOutcome::TogglePlan(Some(true)),
@@ -259,6 +238,61 @@ pub fn execute_slash(
         SlashCommand::Quit => SlashOutcome::Quit,
         SlashCommand::Unknown(name) => {
             SlashOutcome::Error(format!("Unknown slash command `{name}`. Try `/help`."))
+        }
+    }
+}
+
+fn execute_memory(arg: Option<&str>, cwd: &Path) -> SlashOutcome {
+    let Ok(paths) = openmi_platform::AppPaths::resolve() else {
+        return SlashOutcome::Error("Could not resolve Openmi config directory.".to_string());
+    };
+    let mem_path = paths.project_memory_file(cwd);
+
+    match arg.map(str::trim) {
+        None | Some("") | Some("view") => match std::fs::read_to_string(&mem_path) {
+            Ok(content) if !content.trim().is_empty() => SlashOutcome::Message(format!(
+                "Project memory ({}):\n\n{}",
+                mem_path.display(),
+                content.trim()
+            )),
+            _ => SlashOutcome::Message(format!(
+                "No project memory saved yet ({}). Use `/memory add <note>` to save a note.",
+                mem_path.display()
+            )),
+        },
+        Some("clear") => {
+            if mem_path.exists() {
+                if let Err(e) = std::fs::remove_file(&mem_path) {
+                    return SlashOutcome::Error(format!("Failed to clear memory: {e}"));
+                }
+            }
+            SlashOutcome::Message("Cleared project memory.".to_string())
+        }
+        Some(rest) => {
+            let note = rest.strip_prefix("add ").map(str::trim).unwrap_or(rest);
+            if note.is_empty() {
+                return SlashOutcome::Error(
+                    "Usage: `/memory` | `/memory add <note>` | `/memory clear`".to_string(),
+                );
+            }
+            let existing = std::fs::read_to_string(&mem_path).unwrap_or_default();
+            let updated = if existing.trim().is_empty() {
+                format!("- {note}\n")
+            } else {
+                format!("{}\n- {note}\n", existing.trim_end())
+            };
+            if let Some(parent) = mem_path.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    return SlashOutcome::Error(format!("Failed to create memory dir: {e}"));
+                }
+            }
+            if let Err(e) = openmi_platform::atomic_write(&mem_path, updated.as_bytes()) {
+                return SlashOutcome::Error(format!("Failed to save memory: {e}"));
+            }
+            SlashOutcome::Message(format!(
+                "Saved note to project memory ({}).",
+                mem_path.display()
+            ))
         }
     }
 }

@@ -17,6 +17,10 @@ const MAX_GREP_LIMIT: usize = 200;
 const DEFAULT_GLOB_LIMIT: usize = 100;
 const MAX_GLOB_LIMIT: usize = 300;
 const MAX_GREP_FILE_BYTES: u64 = 1_048_576; // 1 MiB per file
+pub const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 120_000;
+pub const MAX_COMMAND_TIMEOUT_MS: u64 = 600_000;
+pub const SHELL_OUTPUT_HEAD_BYTES: usize = 6 * 1024;
+pub const SHELL_OUTPUT_TAIL_BYTES: usize = 10 * 1024;
 
 /// Risk classification for built-in tools.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,7 +31,9 @@ pub enum ToolRisk {
 
 pub fn classify_tool_risk(tool_name: &str) -> ToolRisk {
     match tool_name {
-        "read_file" | "list_dir" | "grep" | "glob" => ToolRisk::ReadOnly,
+        "read_file" | "list_dir" | "grep" | "glob" | "todo_write" | "web_fetch" | "ask_user" => {
+            ToolRisk::ReadOnly
+        }
         _ => ToolRisk::Mutating,
     }
 }
@@ -62,14 +68,22 @@ pub async fn execute_tool(
         "list_dir" => exec_list_dir(&args, path_guard),
         "grep" => exec_grep(&args, path_guard, cancel),
         "glob" => exec_glob(&args, path_guard, cancel),
+        "web_fetch" => crate::web_fetch::exec_web_fetch(&args, cancel).await,
         "edit_file" => exec_edit_file(&args, path_guard, before_write_hook),
         "write_file" => exec_write_file(&args, path_guard, before_write_hook),
+        "delete_file" => exec_delete_file(&args, path_guard, before_write_hook),
+        "move_file" => exec_move_file(&args, path_guard, before_write_hook),
         "run_command" => {
             let command = args
                 .get("command")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| CoreError::Tool("run_command requires `command`".to_string()))?;
-            run_cancellable_shell(command, path_guard.root(), cancel).await
+            let timeout_ms = args
+                .get("timeout_ms")
+                .and_then(|v| v.as_u64())
+                .map(|ms| ms.clamp(1, MAX_COMMAND_TIMEOUT_MS))
+                .unwrap_or(DEFAULT_COMMAND_TIMEOUT_MS);
+            run_cancellable_shell(command, path_guard.root(), timeout_ms, cancel).await
         }
         other => Err(CoreError::Tool(format!("unknown tool `{other}`"))),
     }
@@ -254,6 +268,81 @@ fn exec_write_file(
         content.len(),
         resolved.display()
     ))
+}
+
+fn exec_delete_file(
+    args: &serde_json::Value,
+    path_guard: &PathGuard,
+    before_write_hook: Option<&BeforeWriteHook>,
+) -> Result<String, CoreError> {
+    let path = args
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| CoreError::Tool("delete_file requires `path`".to_string()))?;
+
+    let resolved = path_guard.resolve_existing(path)?;
+    if resolved.is_dir() {
+        return Err(CoreError::Tool(format!(
+            "delete_file cannot delete directory `{path}`; only regular files are supported"
+        )));
+    }
+    if let Some(hook) = before_write_hook {
+        hook(&resolved).map_err(CoreError::BeforeWriteHook)?;
+    }
+    fs::remove_file(&resolved)
+        .map_err(|e| CoreError::Tool(format!("delete_file failed: {e}")))?;
+    Ok(format!("deleted {path}"))
+}
+
+fn exec_move_file(
+    args: &serde_json::Value,
+    path_guard: &PathGuard,
+    before_write_hook: Option<&BeforeWriteHook>,
+) -> Result<String, CoreError> {
+    let from = args
+        .get("from")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| CoreError::Tool("move_file requires `from`".to_string()))?;
+    let to = args
+        .get("to")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| CoreError::Tool("move_file requires `to`".to_string()))?;
+
+    let src = path_guard.resolve_existing(from)?;
+    if src.is_dir() {
+        return Err(CoreError::Tool(format!(
+            "move_file cannot move directory `{from}`; only regular files are supported"
+        )));
+    }
+    let dst = path_guard.resolve_for_write(to)?;
+    if src == dst {
+        return Err(CoreError::Tool(format!(
+            "move_file source and destination are identical (`{from}`)"
+        )));
+    }
+
+    // Snapshot both source (original bytes) and destination (None or overwritten bytes)
+    // so `/undo` and `/diff` capture renames and moves completely.
+    if let Some(hook) = before_write_hook {
+        hook(&src).map_err(CoreError::BeforeWriteHook)?;
+        hook(&dst).map_err(CoreError::BeforeWriteHook)?;
+    }
+
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| CoreError::Tool(format!("move_file create parent dir failed: {e}")))?;
+    }
+
+    if let Err(rename_err) = fs::rename(&src, &dst) {
+        // Fallback across mount boundaries: copy + remove.
+        fs::copy(&src, &dst).map_err(|e| {
+            CoreError::Tool(format!("move_file failed (rename: {rename_err}; copy: {e})"))
+        })?;
+        fs::remove_file(&src)
+            .map_err(|e| CoreError::Tool(format!("move_file cleanup failed: {e}")))?;
+    }
+
+    Ok(format!("moved {from} -> {to}"))
 }
 
 fn exec_grep(
@@ -504,9 +593,40 @@ fn glob_match_slice(p: &[char], t: &[char]) -> bool {
     pi == p.len()
 }
 
+/// Cap text to `head_bytes + tail_bytes` using a smart head+tail split that preserves
+/// the beginning and end (e.g. compiler errors) while respecting UTF-8 char boundaries.
+pub fn truncate_head_tail(text: &str, head_bytes: usize, tail_bytes: usize) -> String {
+    let max_bytes = head_bytes.saturating_add(tail_bytes);
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+
+    let mut head_end = head_bytes.min(text.len());
+    while head_end > 0 && !text.is_char_boundary(head_end) {
+        head_end -= 1;
+    }
+
+    let mut tail_start = text.len().saturating_sub(tail_bytes);
+    while tail_start < text.len() && !text.is_char_boundary(tail_start) {
+        tail_start += 1;
+    }
+
+    if tail_start <= head_end {
+        return text.to_string();
+    }
+
+    let truncated = tail_start - head_end;
+    format!(
+        "{}\n... [truncated {truncated} bytes] ...\n{}",
+        &text[..head_end],
+        &text[tail_start..]
+    )
+}
+
 async fn run_cancellable_shell(
     command: &str,
     cwd: &Path,
+    timeout_ms: u64,
     cancel: &CancellationToken,
 ) -> Result<String, CoreError> {
     let mut cmd = if cfg!(windows) {
@@ -528,36 +648,86 @@ async fn run_cancellable_shell(
         .spawn()
         .map_err(|e| CoreError::Tool(format!("failed to spawn command: {e}")))?;
 
-    let mut stdout_pipe = child.stdout.take();
-    let mut stderr_pipe = child.stderr.take();
+    // Drain stdout/stderr concurrently so large outputs never deadlock the pipe buffer.
+    let stdout_task = child.stdout.take().map(|mut s| {
+        tokio::spawn(async move {
+            let mut buf = Vec::new();
+            let _ = tokio::io::AsyncReadExt::read_to_end(&mut s, &mut buf).await;
+            buf
+        })
+    });
+    let stderr_task = child.stderr.take().map(|mut s| {
+        tokio::spawn(async move {
+            let mut buf = Vec::new();
+            let _ = tokio::io::AsyncReadExt::read_to_end(&mut s, &mut buf).await;
+            buf
+        })
+    });
 
+    let timeout_dur = std::time::Duration::from_millis(timeout_ms);
+    let timed_out;
     let status = tokio::select! {
         _ = cancel.cancelled() => {
             let _ = kill_process_tree(&mut child).await;
+            if let Some(t) = stdout_task { t.abort(); }
+            if let Some(t) = stderr_task { t.abort(); }
             return Err(CoreError::Cancelled);
         }
+        _ = tokio::time::sleep(timeout_dur) => {
+            let _ = kill_process_tree(&mut child).await;
+            timed_out = true;
+            None
+        }
         res = child.wait() => {
-            res.map_err(|e| CoreError::Tool(format!("command wait failed: {e}")))?
+            timed_out = false;
+            Some(res.map_err(|e| CoreError::Tool(format!("command wait failed: {e}")))?)
         }
     };
 
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    if let Some(mut s) = stdout_pipe.take() {
-        let _ = tokio::io::AsyncReadExt::read_to_end(&mut s, &mut out).await;
-    }
-    if let Some(mut s) = stderr_pipe.take() {
-        let _ = tokio::io::AsyncReadExt::read_to_end(&mut s, &mut err).await;
-    }
+    let drain_timeout = std::time::Duration::from_millis(500);
+    let out = match stdout_task {
+        Some(t) => tokio::time::timeout(drain_timeout, t)
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let err = match stderr_task {
+        Some(t) => tokio::time::timeout(drain_timeout, t)
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or_default(),
+        None => Vec::new(),
+    };
 
     let stdout_str = String::from_utf8_lossy(&out);
     let stderr_str = String::from_utf8_lossy(&err);
-    let code = status.code().unwrap_or(-1);
 
-    if stderr_str.is_empty() {
-        Ok(format!("exit={code}\n{stdout_str}"))
+    let body = if stderr_str.is_empty() {
+        stdout_str.into_owned()
+    } else if stdout_str.is_empty() {
+        format!("stderr:\n{stderr_str}")
     } else {
-        Ok(format!("exit={code}\n{stdout_str}\nstderr:\n{stderr_str}"))
+        format!("{stdout_str}\nstderr:\n{stderr_str}")
+    };
+
+    let capped_body = truncate_head_tail(&body, SHELL_OUTPUT_HEAD_BYTES, SHELL_OUTPUT_TAIL_BYTES);
+
+    if timed_out {
+        if capped_body.is_empty() {
+            Ok(format!(
+                "exit=timeout\nCommand timed out after {timeout_ms}ms and its process group was terminated."
+            ))
+        } else {
+            Ok(format!(
+                "exit=timeout\nCommand timed out after {timeout_ms}ms and its process group was terminated.\n{capped_body}"
+            ))
+        }
+    } else {
+        let code = status.and_then(|s| s.code()).unwrap_or(-1);
+        Ok(format!("exit={code}\n{capped_body}"))
     }
 }
 
@@ -690,5 +860,88 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(glob_out.trim(), "src/lib.rs");
+    }
+
+    #[test]
+    fn truncate_head_tail_preserves_head_and_tail_safely() {
+        let short = "hello world";
+        assert_eq!(truncate_head_tail(short, 6 * 1024, 10 * 1024), short);
+
+        let head = "A".repeat(7_000);
+        let middle = "M".repeat(10_000);
+        let tail = "Z".repeat(11_000);
+        let full = format!("{head}{middle}{tail}");
+        let capped = truncate_head_tail(&full, 6 * 1024, 10 * 1024);
+        assert!(capped.starts_with(&"A".repeat(6 * 1024)));
+        assert!(capped.ends_with(&"Z".repeat(10 * 1024)));
+        assert!(capped.contains("[truncated "));
+        assert!(capped.len() < full.len());
+    }
+
+    #[tokio::test]
+    async fn run_command_times_out_and_kills_child() {
+        let tmp = tempfile::tempdir().unwrap();
+        let guard = PathGuard::new(tmp.path()).unwrap();
+        let cmd = if cfg!(windows) {
+            "ping -n 10 127.0.0.1 >nul"
+        } else {
+            "sleep 10"
+        };
+        let args = serde_json::json!({
+            "command": cmd,
+            "timeout_ms": 150
+        })
+        .to_string();
+        let out = execute_tool("run_command", &args, &guard, None, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(out.contains("exit=timeout"));
+        assert!(out.contains("150ms"));
+    }
+
+    #[tokio::test]
+    async fn delete_file_and_move_file_invoke_checkpoint_hooks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("old.txt");
+        fs::write(&src, "hello move").unwrap();
+        let guard = PathGuard::new(tmp.path()).unwrap();
+
+        let hook_hits = Arc::new(AtomicUsize::new(0));
+        let hits_clone = Arc::clone(&hook_hits);
+        let hook: BeforeWriteHook = Arc::new(move |_| {
+            hits_clone.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+
+        let mv_out = execute_tool(
+            "move_file",
+            r#"{"from":"old.txt","to":"nested/new.txt"}"#,
+            &guard,
+            Some(&hook),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(mv_out.contains("moved old.txt -> nested/new.txt"));
+        assert!(!src.exists());
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("nested/new.txt")).unwrap(),
+            "hello move"
+        );
+        // move_file snapshots both source and destination
+        assert_eq!(hook_hits.load(Ordering::SeqCst), 2);
+
+        let del_out = execute_tool(
+            "delete_file",
+            r#"{"path":"nested/new.txt"}"#,
+            &guard,
+            Some(&hook),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(del_out.contains("deleted nested/new.txt"));
+        assert!(!tmp.path().join("nested/new.txt").exists());
+        assert_eq!(hook_hits.load(Ordering::SeqCst), 3);
     }
 }

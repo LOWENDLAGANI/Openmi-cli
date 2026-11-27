@@ -32,10 +32,12 @@ use crate::session::{build_session_with_options, generate_starter_openmi_md};
 use crate::session_store::{SavedSession, SessionStore};
 use crate::settings::UserSettings;
 use crate::tui::app::{
-    resolve_folder_input, FolderPickerState, FullAccessModalState, ModelSelectorState,
-    ResumePickerState, SettingsModalState, TuiApp,
+    resolve_folder_input, AskUserModalState, FolderPickerState, FullAccessModalState,
+    ModelSelectorState, ResumePickerState, SettingsModalState, TuiApp,
 };
-use crate::tui::approval::{PendingApproval, TuiApprovalHandler};
+use crate::tui::approval::{
+    PendingApproval, PendingAskUser, TuiApprovalHandler, TuiAskUserHandler,
+};
 use crate::tui::render;
 use crate::tui::slash::{execute_slash, parse_slash, SlashOutcome, FULL_ACCESS_CONFIRM_PHRASE};
 
@@ -123,6 +125,8 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
     let checkpoints = Arc::new(Mutex::new(CheckpointStore::new()));
     let (approval_tx, mut approval_rx) = mpsc::channel::<PendingApproval>(8);
     let approval_handler = Arc::new(TuiApprovalHandler::new(approval_tx));
+    let (ask_user_tx, mut ask_user_rx) = mpsc::channel::<PendingAskUser>(8);
+    let ask_user_handler = Arc::new(TuiAskUserHandler::new(ask_user_tx));
 
     let mut raw_session = build_session_with_options(
         &workdir,
@@ -132,6 +136,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
         Arc::clone(&approval_handler) as Arc<dyn openmi_core::ApprovalHandler>,
         proxy_config.clone(),
     )?;
+    raw_session.set_ask_user_handler(Arc::clone(&ask_user_handler) as Arc<dyn openmi_core::AskUserHandler>);
     if let Some(ref saved) = resumed {
         raw_session.set_history(saved.messages.clone());
     }
@@ -263,6 +268,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                     &session,
                                     &checkpoints,
                                     &approval_handler,
+                                    &ask_user_handler,
                                     &proxy_config,
                                     &mut mcp_manager,
                                 )
@@ -299,6 +305,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                         &session,
                                         &checkpoints,
                                         &approval_handler,
+                                        &ask_user_handler,
                                         &proxy_config,
                                         &mut mcp_manager,
                                     )
@@ -312,7 +319,41 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                 app.push_system("Resumed your previous chat.");
                             }
                             KeyAction::Submit(input_text) => {
-                                if let Some(slash_cmd) = parse_slash(&input_text) {
+                                // Check if the user invoked a loaded slash-command skill (`/name [args]`).
+                                let matched_skill = input_text.trim().strip_prefix('/').and_then(|rest| {
+                                    let mut parts = rest.splitn(2, char::is_whitespace);
+                                    let name = parts.next()?.to_ascii_lowercase();
+                                    let trailing = parts.next().map(str::trim);
+                                    app.skills
+                                        .iter()
+                                        .find(|s| s.name.eq_ignore_ascii_case(&name))
+                                        .map(|s| (s.clone(), trailing.map(str::to_string)))
+                                });
+
+                                if let Some((skill, trailing_args)) = matched_skill {
+                                    let expanded = skill.expand_prompt(trailing_args.as_deref());
+                                    let skill_allowed = skill.allowed_tools.clone();
+                                    checkpoints.lock().expect("checkpoint mutex").begin_run();
+                                    app.push_user(input_text.clone());
+                                    let cancel = CancellationToken::new();
+                                    active_cancel = Some(cancel.clone());
+                                    let sess = Arc::clone(&session);
+                                    let tx = agent_tx.clone();
+                                    tokio::spawn(async move {
+                                        let mut s = sess.lock().await;
+                                        s.set_allowed_tools(skill_allowed);
+                                        let res = s.run_turn(&expanded, tx.clone(), cancel).await;
+                                        s.set_allowed_tools(None);
+                                        if let Err(err) = res {
+                                            let _ = tx
+                                                .send(AgentEvent::Error {
+                                                    code: "turn_error".to_string(),
+                                                    message: err.to_string(),
+                                                })
+                                                .await;
+                                        }
+                                    });
+                                } else if let Some(slash_cmd) = parse_slash(&input_text) {
                                     let outcome = {
                                         let cp = checkpoints.lock().expect("checkpoint mutex");
                                         execute_slash(slash_cmd, &app.model, app.mode, &cp, &workdir)
@@ -376,6 +417,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                                 &session,
                                                 &checkpoints,
                                                 &approval_handler,
+                                                &ask_user_handler,
                                                 &proxy_config,
                                                 &mut mcp_manager,
                                             )
@@ -475,6 +517,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                             session.lock().await.clear_history();
                                             app.transcript.clear();
                                             app.tools.clear();
+                                            app.todos.clear();
                                             app.status_hint.clear();
                                         }
                                         SlashOutcome::RefreshCredits => {
@@ -625,6 +668,10 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                 app.pending_approval = Some(pending);
                 dirty = true;
             }
+            Some(pending_ask) = ask_user_rx.recv() => {
+                app.ask_user_modal = Some(AskUserModalState::new(pending_ask));
+                dirty = true;
+            }
             _ = ticker.tick() => {
                 if app.is_busy() {
                     app.tick = app.tick.wrapping_add(1);
@@ -747,6 +794,7 @@ async fn switch_project_folder(
     session: &Arc<tokio::sync::Mutex<openmi_core::AgentSession>>,
     checkpoints: &Arc<Mutex<CheckpointStore>>,
     approval_handler: &Arc<TuiApprovalHandler>,
+    ask_user_handler: &Arc<TuiAskUserHandler>,
     proxy_config: &Option<ProxyConfig>,
     mcp_manager: &mut Option<openmi_core::McpManager>,
 ) {
@@ -769,6 +817,7 @@ async fn switch_project_folder(
             return;
         }
     };
+    new_session.set_ask_user_handler(Arc::clone(ask_user_handler) as Arc<dyn openmi_core::AskUserHandler>);
 
     if let Some(old_mgr) = mcp_manager.as_mut() {
         old_mgr.shutdown_all().await;
@@ -789,6 +838,7 @@ async fn switch_project_folder(
     }
 
     *workdir = canonical.clone();
+    app.skills = crate::skills::load_merged_skills(&canonical);
     app.set_cwd(canonical);
     if app.transcript.is_empty() {
         app.status_hint = format!("Project folder: {}", app.friendly_cwd());
@@ -870,6 +920,30 @@ fn handle_key_event(
             KeyCode::Char('n') | KeyCode::Char('N') => {
                 app.resolve_approval(ApprovalDecision::Deny);
             }
+            _ => {}
+        }
+        return KeyAction::None;
+    }
+
+    // 1.5. Interactive `ask_user` clarification modal.
+    if let Some(modal) = app.ask_user_modal.as_mut() {
+        match key.code {
+            KeyCode::Up => modal.move_up(),
+            KeyCode::Down => modal.move_down(),
+            KeyCode::Enter => {
+                let answer = modal.current_answer();
+                if answer.is_some() {
+                    app.resolve_ask_user(answer);
+                }
+            }
+            KeyCode::Backspace if modal.editing_custom => {
+                modal.custom_input.pop();
+            }
+            KeyCode::Char(c) if modal.editing_custom => {
+                modal.custom_input.push(c);
+            }
+            KeyCode::Char('k') if !modal.editing_custom => modal.move_up(),
+            KeyCode::Char('j') if !modal.editing_custom => modal.move_down(),
             _ => {}
         }
         return KeyAction::None;

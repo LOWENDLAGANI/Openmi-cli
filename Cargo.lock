@@ -1031,6 +1031,7 @@ name = "openmi-platform"
 version = "0.1.8"
 dependencies = [
  "libc",
+ "sha2",
  "tempfile",
  "thiserror",
  "tokio",

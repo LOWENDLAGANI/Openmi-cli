@@ -6,6 +6,7 @@ mod output;
 mod session;
 mod session_store;
 mod settings;
+mod skills;
 mod tui;
 
 use std::path::PathBuf;

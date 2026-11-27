@@ -149,7 +149,7 @@ pub fn generate_starter_openmi_md(workspace_root: &Path) -> String {
 
 /// Construct an `AgentSession` wired with a shared `CheckpointStore` before-write hook,
 /// optional proxy configuration, project instructions (`OPENMI.md` / `CLAUDE.md` / `AGENTS.md`),
-/// and approval handler.
+/// persistent external project `memory.md`, merged permission rules, and approval handler.
 pub fn build_session_with_options(
     cwd: &Path,
     model: &str,
@@ -163,8 +163,29 @@ pub fn build_session_with_options(
     session.set_approval_handler(approval_handler);
     session.set_proxy_config(proxy_config);
 
+    let merged_settings = crate::settings::UserSettings::load_merged(session.workspace_root());
+    session.set_permission_rules(merged_settings.permissions);
+    session.set_hooks(merged_settings.hooks);
+
+    let memory_path = openmi_platform::AppPaths::resolve()
+        .ok()
+        .map(|paths| paths.project_memory_file(session.workspace_root()));
+    let project_memory = memory_path
+        .as_ref()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    session.set_memory_file(memory_path);
+
+    let mut prompt_sections = Vec::new();
     if let Some(instructions) = load_project_instructions(session.workspace_root()) {
-        session.set_system_prompt(Some(instructions));
+        prompt_sections.push(instructions);
+    }
+    if let Some(mem) = project_memory {
+        prompt_sections.push(format!("## Persistent Project Memory\n{mem}"));
+    }
+    if !prompt_sections.is_empty() {
+        session.set_system_prompt(Some(prompt_sections.join("\n\n")));
     }
 
     let cp = Arc::clone(&checkpoints);

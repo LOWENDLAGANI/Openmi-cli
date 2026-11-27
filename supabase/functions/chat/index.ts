@@ -134,14 +134,167 @@ const BUILTIN_TOOLS = [
   {
     type: "function",
     function: {
+      name: "delete_file",
+      description:
+        "Delete an existing file inside the user's workspace (checkpointed so /undo can restore it). Prefer this over `rm` in run_command.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Relative path to the file to delete." },
+        },
+        required: ["path"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "move_file",
+      description:
+        "Move or rename a file inside the user's workspace (checkpointed so /undo and /diff track the rename). Prefer this over `mv` in run_command.",
+      parameters: {
+        type: "object",
+        properties: {
+          from: { type: "string", description: "Current relative path of the file." },
+          to: { type: "string", description: "New relative destination path." },
+        },
+        required: ["from", "to"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "run_command",
-      description: "Run a shell command in the user's workspace root.",
+      description:
+        "Run a shell command in the user's workspace root. Output is capped at 16 KB (head+tail).",
       parameters: {
         type: "object",
         properties: {
           command: { type: "string", description: "Shell command line to execute." },
+          timeout_ms: {
+            type: "integer",
+            description:
+              "Optional timeout in milliseconds (default 120000, max 600000). Kills process group on expiry.",
+          },
         },
         required: ["command"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "spawn_agent",
+      description:
+        "Launch an isolated sub-agent with its own clean message history. Use `explore` (read-only) for verbose codebase searches so only the concise summary enters the main conversation, or `worker` for delegated edits.",
+      parameters: {
+        type: "object",
+        properties: {
+          prompt: { type: "string", description: "Self-contained task prompt for the sub-agent." },
+          subagent_type: {
+            type: "string",
+            enum: ["explore", "worker"],
+            description: "Sub-agent role: `explore` (read-only tools only) or `worker` (full workspace tools).",
+          },
+          max_turns: {
+            type: "integer",
+            description: "Optional maximum steps for the sub-agent (default 12, max 30).",
+          },
+        },
+        required: ["prompt"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "todo_write",
+      description:
+        "Update the structured task checklist displayed live in the TUI and preserved across context compactions.",
+      parameters: {
+        type: "object",
+        properties: {
+          todos: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string", description: "Short unique task identifier." },
+                content: { type: "string", description: "Concise task description." },
+                status: {
+                  type: "string",
+                  enum: ["pending", "in_progress", "completed"],
+                },
+              },
+              required: ["id", "content", "status"],
+            },
+          },
+        },
+        required: ["todos"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "memory_write",
+      description:
+        "Persist concise project-specific preferences, build quirks, or architectural notes to external per-repo memory.md (does not dirty git status).",
+      parameters: {
+        type: "object",
+        properties: {
+          content: { type: "string", description: "Markdown notes to save." },
+          mode: {
+            type: "string",
+            enum: ["append", "replace"],
+            description: "Whether to append to or replace existing memory (default `append`).",
+          },
+        },
+        required: ["content"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "ask_user",
+      description:
+        "Pause and present an interactive multiple-choice question to the user in the TUI when requirements are ambiguous or a design choice is needed.",
+      parameters: {
+        type: "object",
+        properties: {
+          question: { type: "string", description: "Clear, concise question to ask the user." },
+          options: {
+            type: "array",
+            items: { type: "string" },
+            description: "List of selectable option labels.",
+          },
+          allow_custom: {
+            type: "boolean",
+            description: "Whether to allow a custom write-in answer (default true).",
+          },
+        },
+        required: ["question", "options"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "web_fetch",
+      description:
+        "Fetch an HTTP(S) web page (read-only), strip HTML tags/scripts into clean Markdown/text, and return up to 16 KB.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "HTTP or HTTPS URL to fetch." },
+          max_chars: {
+            type: "integer",
+            description: "Optional character cap (default 16384, max 16384).",
+          },
+        },
+        required: ["url"],
       },
     },
   },
@@ -482,7 +635,15 @@ Deno.serve(async (req: Request) => {
           },
         }))
     : [];
-  const allTools = [...BUILTIN_TOOLS, ...extraTools];
+  const allowedSet = Array.isArray(body?.allowed_tools)
+    ? new Set(
+        body.allowed_tools.filter((t: unknown): t is string => typeof t === "string"),
+      )
+    : null;
+  const filteredBuiltins = allowedSet
+    ? BUILTIN_TOOLS.filter((t) => allowedSet.has(t.function.name))
+    : BUILTIN_TOOLS;
+  const allTools = [...filteredBuiltins, ...extraTools];
 
   // Estimate input characters for fallback token counting when upstream omits `usage`.
   const inputChars =

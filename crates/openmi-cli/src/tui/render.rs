@@ -1,4 +1,4 @@
-use openmi_core::{PermissionMode, Role};
+use openmi_core::{PermissionMode, Role, TodoStatus};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -7,7 +7,7 @@ use ratatui::Frame;
 
 use crate::auth::store::now_unix_secs;
 use crate::tui::app::{
-    format_friendly_path, friendly_tool_title, FolderEntry, FolderPickerState,
+    format_friendly_path, friendly_tool_title, AskUserModalState, FolderEntry, FolderPickerState,
     FullAccessModalState, ModelSelectorState, ResumePickerState, SettingsModalState,
     TranscriptKind, TuiApp,
 };
@@ -36,6 +36,11 @@ pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
 
     let header_height: u16 = if area.height >= 10 { 2 } else { 1 };
     let activity_height: u16 = if app.is_busy() { 1 } else { 0 };
+    let todo_height: u16 = if app.todos.is_empty() || area.height < 14 {
+        0
+    } else {
+        (app.todos.len() as u16 + 2).min(6)
+    };
     let popup_height: u16 = if !app.slash_suggestions.is_empty() {
         (app.slash_suggestions.len() as u16 + 2).min(8)
     } else if !app.mention_suggestions.is_empty() {
@@ -51,7 +56,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
     };
     let max_input_height = area
         .height
-        .saturating_sub(header_height + activity_height + popup_height + 3)
+        .saturating_sub(header_height + activity_height + todo_height + popup_height + 3)
         .max(3);
     let input_height = (wrapped_input_lines + 2).min(max_input_height);
 
@@ -61,6 +66,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
             Constraint::Length(header_height),
             Constraint::Min(2),
             Constraint::Length(activity_height),
+            Constraint::Length(todo_height),
             Constraint::Length(popup_height),
             Constraint::Length(input_height),
             Constraint::Length(1),
@@ -72,15 +78,18 @@ pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
     if activity_height > 0 {
         render_activity_line(frame, app, root[2]);
     }
+    if todo_height > 0 {
+        render_todo_panel(frame, app, root[3]);
+    }
     if popup_height > 0 {
         if !app.slash_suggestions.is_empty() {
-            render_slash_suggestions(frame, app, root[3]);
+            render_slash_suggestions(frame, app, root[4]);
         } else {
-            render_mention_suggestions(frame, app, root[3]);
+            render_mention_suggestions(frame, app, root[4]);
         }
     }
-    render_input(frame, app, root[4]);
-    render_footer(frame, app, root[5]);
+    render_input(frame, app, root[5]);
+    render_footer(frame, app, root[6]);
 
     if let Some(pending) = &app.pending_approval {
         render_approval_popup(
@@ -89,6 +98,8 @@ pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
             &pending.request.tool_name,
             &pending.request.summary,
         );
+    } else if let Some(ask_modal) = &app.ask_user_modal {
+        render_ask_user_modal(frame, ask_modal);
     } else if let Some(modal) = &app.full_access_modal {
         render_full_access_modal(frame, modal);
     } else if let Some(selector) = &app.model_selector {
@@ -100,6 +111,124 @@ pub fn draw(frame: &mut Frame<'_>, app: &TuiApp) {
     } else if let Some(settings) = &app.settings_modal {
         render_settings_modal(frame, app, settings);
     }
+}
+
+fn render_ask_user_modal(frame: &mut Frame<'_>, modal: &AskUserModalState) {
+    let area = frame.area();
+    let width = area.width.saturating_sub(6).clamp(36, 72);
+    let rows = modal.total_rows() as u16;
+    let height = (rows + 8).min(area.height.saturating_sub(2)).max(9);
+    let popup = Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    };
+
+    let mut lines: Vec<Line<'_>> = vec![
+        Line::from(Span::styled(
+            modal.pending.request.question.as_str(),
+            Style::default()
+                .fg(Color::Reset)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+
+    for (idx, opt) in modal.pending.request.options.iter().enumerate() {
+        let is_sel = idx == modal.selected;
+        let prefix = if is_sel { "▸ " } else { "  " };
+        let style = if is_sel {
+            Style::default().fg(USER_COLOR).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(CHROME)
+        };
+        lines.push(Line::from(Span::styled(format!("{prefix}{opt}"), style)));
+    }
+
+    if modal.pending.request.allow_custom {
+        let is_sel = modal.is_custom_row();
+        let prefix = if is_sel { "▸ " } else { "  " };
+        let display = if modal.custom_input.is_empty() {
+            "Other (type custom answer...)".to_string()
+        } else {
+            format!("Other: {}_", modal.custom_input)
+        };
+        let style = if is_sel {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(MUTED)
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{prefix}{display}"),
+            style,
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "↑/↓ Select  ·  Enter Confirm  ·  Esc Dismiss",
+        Style::default().fg(MUTED),
+    )));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(
+            " Question from Openmi ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ))
+        .padding(Padding::uniform(1));
+
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
+fn render_todo_panel(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    let completed = app
+        .todos
+        .iter()
+        .filter(|t| t.status == TodoStatus::Completed)
+        .count();
+    let title = format!(" Tasks ({completed}/{}) ", app.todos.len());
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(BORDER_SUBTLE))
+        .title(Span::styled(
+            title,
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ))
+        .padding(Padding::horizontal(1));
+
+    let max_rows = area.height.saturating_sub(2) as usize;
+    let mut lines: Vec<Line<'_>> = Vec::new();
+    for item in app.todos.iter().take(max_rows) {
+        let (icon, style) = match item.status {
+            TodoStatus::Completed => ("✓ ", Style::default().fg(SUCCESS)),
+            TodoStatus::InProgress => (
+                "◐ ",
+                Style::default().fg(WARNING).add_modifier(Modifier::BOLD),
+            ),
+            TodoStatus::Pending => ("○ ", Style::default().fg(MUTED)),
+        };
+        let text_style = match item.status {
+            TodoStatus::Completed => Style::default().fg(MUTED),
+            TodoStatus::InProgress => Style::default().fg(Color::Reset),
+            TodoStatus::Pending => Style::default().fg(CHROME),
+        };
+        lines.push(Line::from(vec![
+            Span::styled(icon, style),
+            Span::styled(item.content.as_str(), text_style),
+        ]));
+    }
+
+    let widget = Paragraph::new(lines).block(block);
+    frame.render_widget(widget, area);
 }
 
 fn render_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
@@ -505,7 +634,7 @@ fn render_slash_suggestions(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     let lines: Vec<Line<'_>> = (start..end)
         .map(|i| {
-            let item = app.slash_suggestions[i];
+            let item = &app.slash_suggestions[i];
             let is_sel = i == app.slash_selected;
             let prefix = if is_sel { "▸ " } else { "  " };
             Line::from(vec![
@@ -518,7 +647,7 @@ fn render_slash_suggestions(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                     },
                 ),
                 Span::styled(
-                    item.description,
+                    item.description.as_str(),
                     if is_sel {
                         Style::default().fg(Color::Reset)
                     } else {

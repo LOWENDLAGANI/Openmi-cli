@@ -68,7 +68,12 @@ impl<W: Write + Send> EventRenderer for TextRenderer<W> {
                 self.break_text_line()?;
                 writeln!(self.out, "[error:{code}] {message}")?;
             }
-            AgentEvent::StepStarted { .. }
+            AgentEvent::UserInputRequired { question, .. } => {
+                self.break_text_line()?;
+                writeln!(self.out, "[ask_user] {question}")?;
+            }
+            AgentEvent::TodosUpdated { .. }
+            | AgentEvent::StepStarted { .. }
             | AgentEvent::ControlStateChanged { .. }
             | AgentEvent::TurnCompleted { .. } => {}
         }

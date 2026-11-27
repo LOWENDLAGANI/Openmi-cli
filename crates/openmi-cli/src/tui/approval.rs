@@ -1,5 +1,7 @@
 use async_trait::async_trait;
-use openmi_core::{ApprovalDecision, ApprovalHandler, ApprovalRequest};
+use openmi_core::{
+    ApprovalDecision, ApprovalHandler, ApprovalRequest, AskUserHandler, AskUserRequest,
+};
 use tokio::sync::{mpsc, oneshot};
 
 /// An approval request awaiting a user decision in the TUI modal popup.
@@ -37,6 +39,44 @@ impl ApprovalHandler for TuiApprovalHandler {
             return ApprovalDecision::Deny;
         }
         resp_rx.await.unwrap_or(ApprovalDecision::Deny)
+    }
+}
+
+/// An interactive `ask_user` clarification prompt awaiting user selection in the TUI modal.
+#[derive(Debug)]
+pub struct PendingAskUser {
+    pub request: AskUserRequest,
+    pub responder: oneshot::Sender<Option<String>>,
+}
+
+/// `AskUserHandler` bridging `AgentSession::exec_ask_user` to the ratatui event loop via oneshot.
+#[derive(Clone)]
+pub struct TuiAskUserHandler {
+    tx: mpsc::Sender<PendingAskUser>,
+}
+
+impl TuiAskUserHandler {
+    pub fn new(tx: mpsc::Sender<PendingAskUser>) -> Self {
+        Self { tx }
+    }
+}
+
+#[async_trait]
+impl AskUserHandler for TuiAskUserHandler {
+    async fn ask_user(&self, req: AskUserRequest) -> Option<String> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        if self
+            .tx
+            .send(PendingAskUser {
+                request: req,
+                responder: resp_tx,
+            })
+            .await
+            .is_err()
+        {
+            return None;
+        }
+        resp_rx.await.ok().flatten()
     }
 }
 

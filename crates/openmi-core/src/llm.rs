@@ -66,6 +66,7 @@ pub async fn stream_step(
     model: &str,
     messages: &[Message],
     extra_tools: &[DynamicToolSpec],
+    allowed_tools: Option<&[String]>,
     event_tx: &mpsc::Sender<AgentEvent>,
     cancel: &CancellationToken,
 ) -> Result<StepResponse, CoreError> {
@@ -78,6 +79,9 @@ pub async fn stream_step(
         "stream": true,
         "messages": messages,
     });
+    if let Some(allowed) = allowed_tools {
+        payload["allowed_tools"] = serde_json::json!(allowed);
+    }
     if !extra_tools.is_empty() {
         let tools_json: Vec<serde_json::Value> = extra_tools
             .iter()

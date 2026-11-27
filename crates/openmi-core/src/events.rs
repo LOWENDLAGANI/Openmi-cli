@@ -7,7 +7,25 @@ pub enum ControlState {
     Idle,
     Running,
     WaitingForApproval,
+    WaitingForUserInput,
     Cancelling,
+}
+
+/// Status of an item in the agent's structured task checklist (`todo_write`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TodoStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+/// A single structured task item managed via `todo_write`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TodoItem {
+    pub id: String,
+    pub content: String,
+    pub status: TodoStatus,
 }
 
 /// UI-agnostic event stream emitted by `AgentSession::run_turn`.
@@ -30,6 +48,12 @@ pub enum AgentEvent {
         tool_name: String,
         summary: String,
     },
+    UserInputRequired {
+        call_id: String,
+        question: String,
+        options: Vec<String>,
+        allow_custom: bool,
+    },
     ToolStarted {
         call_id: String,
         tool_name: String,
@@ -39,6 +63,9 @@ pub enum AgentEvent {
         tool_name: String,
         ok: bool,
         output: String,
+    },
+    TodosUpdated {
+        items: Vec<TodoItem>,
     },
     ControlStateChanged {
         state: ControlState,

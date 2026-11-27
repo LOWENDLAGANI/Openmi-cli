@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use openmi_core::PermissionMode;
+use openmi_core::{HooksConfig, PermissionMode, PermissionRules};
 use openmi_platform::{atomic_write, AppPaths};
 use serde::{Deserialize, Serialize};
 
@@ -10,7 +10,8 @@ fn default_true() -> bool {
     true
 }
 
-/// Persistent user preferences saved to `~/.config/openmi/settings.json`.
+/// Persistent user preferences saved to `~/.config/openmi/settings.json`
+/// and optionally extended by project `.openmi/settings.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserSettings {
     /// Auto-approve workspace file edits and commands (`PermissionMode::Trusted`).
@@ -25,6 +26,14 @@ pub struct UserSettings {
     /// Show compact inline tool activity lines (`✓ Read ...`) in the chat stream.
     #[serde(default = "default_true")]
     pub show_tool_activity: bool,
+
+    /// Granular glob-based permission rules (`allow`, `ask`, `deny`).
+    #[serde(default)]
+    pub permissions: PermissionRules,
+
+    /// Shell lifecycle hooks (`PreToolUse`, `PostToolUse`, `Stop`).
+    #[serde(default)]
+    pub hooks: HooksConfig,
 }
 
 impl Default for UserSettings {
@@ -33,8 +42,21 @@ impl Default for UserSettings {
             auto_approve: true,
             read_only: false,
             show_tool_activity: true,
+            permissions: PermissionRules::default(),
+            hooks: HooksConfig::default(),
         }
     }
+}
+
+/// Partial project-level `.openmi/settings.json` overlay.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct ProjectSettingsOverlay {
+    #[serde(default)]
+    read_only: Option<bool>,
+    #[serde(default)]
+    permissions: PermissionRules,
+    #[serde(default)]
+    hooks: HooksConfig,
 }
 
 impl UserSettings {
@@ -70,6 +92,27 @@ impl UserSettings {
             .unwrap_or_default()
     }
 
+    /// Load global settings and merge project-level `.openmi/settings.json` rules & hooks.
+    pub fn load_merged(workspace_root: &Path) -> Self {
+        let global = Self::load_default();
+        Self::merge_project_file(global, &workspace_root.join(".openmi").join("settings.json"))
+    }
+
+    /// Merge a project `.openmi/settings.json` overlay onto `base` settings.
+    pub fn merge_project_file(mut base: Self, project_settings_path: &Path) -> Self {
+        if let Some(overlay) = fs::read(project_settings_path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<ProjectSettingsOverlay>(&bytes).ok())
+        {
+            if overlay.read_only == Some(true) {
+                base.read_only = true;
+            }
+            base.permissions = base.permissions.merge(&overlay.permissions);
+            base.hooks = base.hooks.merge(&overlay.hooks);
+        }
+        base
+    }
+
     /// Persist settings atomically to `path`.
     pub fn save_to(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
@@ -100,6 +143,7 @@ mod tests {
         assert!(defaults.auto_approve);
         assert!(!defaults.read_only);
         assert!(defaults.show_tool_activity);
+        assert!(defaults.permissions.is_empty());
         assert_eq!(
             defaults.effective_permission_mode(),
             PermissionMode::Trusted
@@ -109,6 +153,12 @@ mod tests {
             auto_approve: false,
             read_only: false,
             show_tool_activity: false,
+            permissions: PermissionRules {
+                allow: vec!["Bash(cargo test *)".into()],
+                ask: vec![],
+                deny: vec!["Bash(rm -rf *)".into()],
+            },
+            hooks: HooksConfig::default(),
         };
         updated.save_to(&path).unwrap();
 
@@ -123,7 +173,42 @@ mod tests {
             auto_approve: true,
             read_only: true,
             show_tool_activity: true,
+            permissions: PermissionRules::default(),
+            hooks: HooksConfig::default(),
         };
         assert_eq!(s.effective_permission_mode(), PermissionMode::ReadOnly);
+    }
+
+    #[test]
+    fn merges_project_settings_overlay() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_cfg = tmp.path().join(".openmi/settings.json");
+        fs::create_dir_all(project_cfg.parent().unwrap()).unwrap();
+        fs::write(
+            &project_cfg,
+            r#"{"permissions":{"allow":["Bash(git status *)"],"deny":["Edit(.env*)"]}}"#,
+        )
+        .unwrap();
+
+        let base = UserSettings {
+            permissions: PermissionRules {
+                deny: vec!["Bash(rm -rf *)".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let merged = UserSettings::merge_project_file(base, &project_cfg);
+        assert!(merged
+            .permissions
+            .allow
+            .contains(&"Bash(git status *)".to_string()));
+        assert!(merged
+            .permissions
+            .deny
+            .contains(&"Bash(rm -rf *)".to_string()));
+        assert!(merged
+            .permissions
+            .deny
+            .contains(&"Edit(.env*)".to_string()));
     }
 }

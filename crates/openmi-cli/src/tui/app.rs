@@ -3,16 +3,17 @@ use std::path::{Path, PathBuf};
 
 use openmi_core::{
     AgentEvent, ApprovalDecision, ControlState, CreditStatus, Message, ModelInfo, PermissionMode,
-    Role,
+    Role, TodoItem,
 };
 use similar::TextDiff;
 
 use crate::session_store::SavedSession;
 use crate::settings::UserSettings;
-use crate::tui::approval::PendingApproval;
+use crate::skills::{load_merged_skills, SkillDef};
+use crate::tui::approval::{PendingApproval, PendingAskUser};
 use crate::tui::input::InputState;
 use crate::tui::mention::{active_mention_query, collect_workspace_files, fuzzy_match_paths};
-use crate::tui::slash::{filter_slash_suggestions, SlashSuggestion};
+use crate::tui::slash::{filter_slash_suggestions_with_skills, SlashSuggestion};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TranscriptKind {
@@ -315,12 +316,83 @@ pub struct TuiApp {
     pub armed_quit: bool,
     /// Model ID -> user-facing display name (from the live catalog).
     pub model_names: std::collections::HashMap<String, String>,
+    /// Live structured task checklist managed via `todo_write`.
+    pub todos: Vec<TodoItem>,
+    /// Active interactive `ask_user` clarification modal.
+    pub ask_user_modal: Option<AskUserModalState>,
+    /// Loaded slash-command skills from global & project `skills/*.md`.
+    pub skills: Vec<SkillDef>,
+}
+
+/// Interactive modal state for the `ask_user` tool.
+#[derive(Debug)]
+pub struct AskUserModalState {
+    pub pending: PendingAskUser,
+    pub selected: usize,
+    pub custom_input: String,
+    pub editing_custom: bool,
+}
+
+impl AskUserModalState {
+    pub fn new(pending: PendingAskUser) -> Self {
+        let editing_custom = pending.request.options.is_empty() && pending.request.allow_custom;
+        Self {
+            pending,
+            selected: 0,
+            custom_input: String::new(),
+            editing_custom,
+        }
+    }
+
+    pub fn total_rows(&self) -> usize {
+        self.pending.request.options.len() + usize::from(self.pending.request.allow_custom)
+    }
+
+    pub fn is_custom_row(&self) -> bool {
+        self.pending.request.allow_custom && self.selected == self.pending.request.options.len()
+    }
+
+    pub fn move_up(&mut self) {
+        let total = self.total_rows();
+        if total == 0 {
+            return;
+        }
+        self.selected = if self.selected == 0 {
+            total - 1
+        } else {
+            self.selected - 1
+        };
+        self.editing_custom = self.is_custom_row();
+    }
+
+    pub fn move_down(&mut self) {
+        let total = self.total_rows();
+        if total == 0 {
+            return;
+        }
+        self.selected = (self.selected + 1) % total;
+        self.editing_custom = self.is_custom_row();
+    }
+
+    pub fn current_answer(&self) -> Option<String> {
+        if self.is_custom_row() {
+            let trimmed = self.custom_input.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        } else {
+            self.pending.request.options.get(self.selected).cloned()
+        }
+    }
 }
 
 impl TuiApp {
     pub fn new(model: String, mode: PermissionMode, cwd: PathBuf) -> Self {
         let canonical = fs::canonicalize(&cwd).unwrap_or(cwd);
         let workspace_files = collect_workspace_files(&canonical, 2000);
+        let skills = load_merged_skills(&canonical);
         Self {
             model,
             mode,
@@ -350,7 +422,22 @@ impl TuiApp {
             tick: 0,
             armed_quit: false,
             model_names: std::collections::HashMap::new(),
+            todos: Vec::new(),
+            ask_user_modal: None,
+            skills,
         }
+    }
+
+    pub fn resolve_ask_user(&mut self, answer: Option<String>) -> bool {
+        if let Some(modal) = self.ask_user_modal.take() {
+            self.status_hint = match &answer {
+                Some(a) => format!("Answered: {a}"),
+                None => "Dismissed question".to_string(),
+            };
+            let _ = modal.pending.responder.send(answer);
+            return true;
+        }
+        false
     }
 
     /// Toggle the currently highlighted item in `/settings` and return the new `PermissionMode`
@@ -591,9 +678,10 @@ impl TuiApp {
         false
     }
 
-    /// Recompute live `/` slash command suggestions from the current input.
+    /// Recompute live `/` slash command suggestions from the current input (built-ins + skills).
     pub fn refresh_slash_suggestions(&mut self) {
-        self.slash_suggestions = filter_slash_suggestions(self.input.text());
+        self.slash_suggestions =
+            filter_slash_suggestions_with_skills(self.input.text(), &self.skills);
         if self.slash_suggestions.is_empty() || self.slash_selected >= self.slash_suggestions.len()
         {
             self.slash_selected = 0;
@@ -620,22 +708,22 @@ impl TuiApp {
 
     /// Replace the input box with the highlighted slash command on `Tab`.
     pub fn apply_selected_slash_completion(&mut self) -> bool {
-        let Some(chosen) = self.slash_suggestions.get(self.slash_selected).copied() else {
+        let Some(chosen) = self.slash_suggestions.get(self.slash_selected).cloned() else {
             return false;
         };
         let len = self.input.text().len();
-        self.input.replace_range(0, len, chosen.command);
+        self.input.replace_range(0, len, &chosen.command);
         self.refresh_slash_suggestions();
         true
     }
 
     /// Consume and return the highlighted slash command when pressing `Enter` in the palette.
     pub fn take_selected_slash_command(&mut self) -> Option<String> {
-        let chosen = self.slash_suggestions.get(self.slash_selected).copied()?;
+        let chosen = self.slash_suggestions.get(self.slash_selected).cloned()?;
         self.slash_suggestions.clear();
         self.slash_selected = 0;
         let _ = self.input.take_submission();
-        Some(chosen.command.to_string())
+        Some(chosen.command)
     }
 
     pub fn scroll_up(&mut self, lines: u16) {
@@ -753,6 +841,12 @@ impl TuiApp {
                     self.scroll_from_bottom = 0;
                 }
             }
+            AgentEvent::UserInputRequired { question, .. } => {
+                self.status_hint = format!("Waiting for input: {question}");
+            }
+            AgentEvent::TodosUpdated { items } => {
+                self.todos = items;
+            }
             AgentEvent::TurnCompleted { .. } => {
                 self.status_hint.clear();
             }
@@ -803,6 +897,11 @@ impl TuiApp {
     /// Handle Esc or Ctrl-C: closes modals, cancels active turn, or quits on 2nd press.
     /// Returns `true` if the active turn should be cancelled now.
     pub fn handle_interrupt(&mut self) -> bool {
+        if self.ask_user_modal.is_some() {
+            self.resolve_ask_user(None);
+            return false;
+        }
+
         if self.settings_modal.is_some() {
             self.settings_modal = None;
             return false;
@@ -898,7 +997,14 @@ pub fn friendly_tool_progress(tool_name: &str) -> String {
         "list_dir" => "Looking at your files...".to_string(),
         "grep" => "Searching code...".to_string(),
         "glob" => "Finding files...".to_string(),
+        "web_fetch" => "Fetching web page...".to_string(),
+        "ask_user" => "Waiting for your answer...".to_string(),
         "edit_file" | "write_file" => "Editing a file...".to_string(),
+        "delete_file" => "Deleting a file...".to_string(),
+        "move_file" => "Moving a file...".to_string(),
+        "spawn_agent" => "Running sub-agent...".to_string(),
+        "todo_write" => "Updating task list...".to_string(),
+        "memory_write" => "Saving project memory...".to_string(),
         "run_command" => "Running a command...".to_string(),
         other => format!("Using {other}..."),
     }
@@ -911,8 +1017,15 @@ pub fn friendly_tool_title(tool_name: &str) -> String {
         "list_dir" => "View a folder".to_string(),
         "grep" => "Search code".to_string(),
         "glob" => "Find files".to_string(),
+        "web_fetch" => "Fetch a web page".to_string(),
+        "ask_user" => "Ask a question".to_string(),
         "edit_file" => "Edit a file".to_string(),
         "write_file" => "Write a file".to_string(),
+        "delete_file" => "Delete a file".to_string(),
+        "move_file" => "Move a file".to_string(),
+        "spawn_agent" => "Spawn a sub-agent".to_string(),
+        "todo_write" => "Update task list".to_string(),
+        "memory_write" => "Update project memory".to_string(),
         "run_command" => "Run a command".to_string(),
         other => format!("Use `{other}`"),
     }
@@ -923,11 +1036,26 @@ pub fn extract_tool_target(tool_name: &str, arguments_json: &str) -> String {
     let Ok(val) = serde_json::from_str::<serde_json::Value>(arguments_json) else {
         return String::new();
     };
+    let owned_move;
     let raw = match tool_name {
-        "read_file" | "edit_file" | "write_file" | "list_dir" => val
+        "read_file" | "edit_file" | "write_file" | "delete_file" | "list_dir" => val
             .get("path")
             .or_else(|| val.get("file_path"))
             .and_then(|v| v.as_str()),
+        "move_file" => {
+            if let (Some(from), Some(to)) = (
+                val.get("from").and_then(|v| v.as_str()),
+                val.get("to").and_then(|v| v.as_str()),
+            ) {
+                owned_move = format!("{from} -> {to}");
+                Some(owned_move.as_str())
+            } else {
+                None
+            }
+        }
+        "web_fetch" => val.get("url").and_then(|v| v.as_str()),
+        "ask_user" => val.get("question").and_then(|v| v.as_str()),
+        "spawn_agent" => val.get("subagent_type").and_then(|v| v.as_str()),
         "grep" | "glob" => val.get("pattern").and_then(|v| v.as_str()),
         "run_command" => val
             .get("command")
@@ -954,7 +1082,14 @@ pub fn format_inline_tool_summary(tool_name: &str, target: &str, ok: bool) -> St
         "list_dir" => "Listed",
         "grep" => "Searched",
         "glob" => "Found",
+        "web_fetch" => "Fetched",
+        "ask_user" => "Asked",
         "edit_file" | "write_file" => "Edited",
+        "delete_file" => "Deleted",
+        "move_file" => "Moved",
+        "spawn_agent" => "Sub-agent",
+        "todo_write" => "Updated tasks",
+        "memory_write" => "Saved memory",
         "run_command" => "Ran",
         other => other,
     };

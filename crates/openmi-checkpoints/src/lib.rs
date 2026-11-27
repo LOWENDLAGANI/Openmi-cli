@@ -159,4 +159,24 @@ mod tests {
         store.undo_file(&file).unwrap();
         assert!(!file.exists());
     }
+
+    #[test]
+    fn undo_restores_deleted_and_moved_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("a.txt");
+        let dst = tmp.path().join("b.txt");
+        fs::write(&src, b"original-a").unwrap();
+
+        let mut store = CheckpointStore::new();
+        store.begin_run();
+        store.snapshot_before_write(&src).unwrap();
+        store.snapshot_before_write(&dst).unwrap();
+        fs::rename(&src, &dst).unwrap();
+        assert!(!src.exists());
+        assert!(dst.exists());
+
+        store.undo_run(None).unwrap();
+        assert_eq!(fs::read(&src).unwrap(), b"original-a");
+        assert!(!dst.exists());
+    }
 }
