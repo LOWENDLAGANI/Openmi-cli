@@ -28,7 +28,7 @@ const PLANS: PlanDef[] = [
   {
     id: "pass-15",
     name: "15-day pass",
-    price_myr: 18,
+    price_myr: 14.99,
     days: 15,
     upfront_credit: 2,
     daily_credits: 15,
@@ -36,7 +36,7 @@ const PLANS: PlanDef[] = [
   {
     id: "pass-30",
     name: "30-day pass",
-    price_myr: 36,
+    price_myr: 29,
     days: 30,
     upfront_credit: 3,
     daily_credits: 15,
