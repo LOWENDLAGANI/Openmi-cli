@@ -29,6 +29,20 @@ function safeHttpUrl(raw: unknown, fallback: string): string {
   return fallback;
 }
 
+function derivePayUrl(): string {
+  const explicit = safeHttpUrl(Deno.env.get("OPENMI_PAY_URL"), "");
+  if (explicit) return explicit;
+  const verifyUrl = safeHttpUrl(Deno.env.get("OPENMI_CLI_VERIFY_URL"), "");
+  if (verifyUrl) {
+    try {
+      return new URL("/pay", verifyUrl).toString();
+    } catch (_) {
+      // ignore invalid URL
+    }
+  }
+  return "";
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return jsonResponse({ ok: true }, 200);
@@ -55,7 +69,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const userId = userData.user.id;
-  const envPayUrl = safeHttpUrl(Deno.env.get("OPENMI_PAY_URL"), "");
+  const envPayUrl = derivePayUrl();
 
   // Preferred path: atomic UTC daily-reset + active pass sync RPC.
   const { data: synced, error: rpcErr } = await admin.rpc("sync_user_daily_credits", {

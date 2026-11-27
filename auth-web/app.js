@@ -48,10 +48,33 @@ $("device-code").addEventListener("input", (e) => {
   if (val) sessionStorage.setItem(CODE_STORAGE_KEY, val);
 });
 
+const NEXT_STORAGE_KEY = "openmi_post_login_next";
+
+function getSafeNextPath() {
+  const params = new URLSearchParams(window.location.search);
+  const fromUrl = (params.get("next") || "").trim();
+  if (fromUrl && fromUrl.startsWith("/") && !fromUrl.startsWith("//")) {
+    sessionStorage.setItem(NEXT_STORAGE_KEY, fromUrl);
+    return fromUrl;
+  }
+  const saved = (sessionStorage.getItem(NEXT_STORAGE_KEY) || "").trim();
+  if (saved && saved.startsWith("/") && !saved.startsWith("//")) {
+    return saved;
+  }
+  return "";
+}
+
 function renderView(session) {
   currentSession = session;
   $("done-view").classList.add("hidden");
   if (session?.user) {
+    const code = $("device-code").value.trim();
+    const nextPath = getSafeNextPath();
+    if (nextPath && !code) {
+      sessionStorage.removeItem(NEXT_STORAGE_KEY);
+      window.location.replace(nextPath);
+      return;
+    }
     $("auth-view").classList.add("hidden");
     $("approve-view").classList.remove("hidden");
     $("signed-in-email").textContent = session.user.email || session.user.id;
@@ -68,7 +91,10 @@ async function startOAuth(provider) {
   const code = $("device-code").value.trim().toUpperCase();
   if (code) sessionStorage.setItem(CODE_STORAGE_KEY, code);
 
-  const redirectUrl = new URL("/verify", window.location.origin);
+  const nextPath = getSafeNextPath();
+  const redirectUrl = code
+    ? new URL("/verify", window.location.origin)
+    : new URL(nextPath || "/verify", window.location.origin);
   if (code) redirectUrl.searchParams.set("code", code);
 
   const { error } = await supabase.auth.signInWithOAuth({

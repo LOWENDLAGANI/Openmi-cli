@@ -38,12 +38,17 @@
 <body>
   <main class="pay-page">
     <div class="card">
+      <nav class="top-nav" aria-label="Primary navigation">
+        <a href="/" class="nav-link">CLI Login</a>
+        <a href="/pay" class="nav-link is-active">Passes &amp; Billing</a>
+      </nav>
+
       <div class="pay-header">
         <div class="brand">
           <span class="brand-mark" aria-hidden="true">O</span>
           <div>
             <h1>Openmi Passes</h1>
-            <p class="subtitle">Pay via Sociabuzz, upload your receipt, and unlock 15 Credits/day + Paid models.</p>
+            <p class="subtitle">Pay via Sociabuzz, upload your receipt, and unlock 15 Credits/day, 7M tokens/day, 70 turns/prompt &amp; Paid models.</p>
           </div>
         </div>
         <div id="account-bar" class="hidden">
@@ -55,7 +60,7 @@
       <!-- Signed-out gate -->
       <section id="signed-out-view" class="section hidden">
         <p class="muted">Sign in with your Openmi account to view your balance, buy a pass, and upload receipts.</p>
-        <a href="/login" class="btn btn-primary" style="text-align:center;text-decoration:none;">Sign in to Openmi</a>
+        <a href="/login?next=/pay" class="btn btn-primary" style="text-align:center;text-decoration:none;">Sign in to Openmi</a>
       </section>
 
       <!-- Signed-in view -->

@@ -255,7 +255,18 @@ Deno.serve(async (req: Request) => {
   );
   const defaultModel =
     (dbDefaultModel || Deno.env.get("LLM_DEFAULT_MODEL") || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
-  const upgradeLink = (Deno.env.get("OPENMI_PAY_URL") || dbPaymentLink || DEFAULT_PAYMENT_LINK).trim();
+  let derivedPayUrl = (Deno.env.get("OPENMI_PAY_URL") ?? "").trim();
+  if (!derivedPayUrl) {
+    const verifyUrl = (Deno.env.get("OPENMI_CLI_VERIFY_URL") ?? "").trim();
+    if (/^https?:\/\//i.test(verifyUrl)) {
+      try {
+        derivedPayUrl = new URL("/pay", verifyUrl).toString();
+      } catch (_) {
+        // ignore invalid URL
+      }
+    }
+  }
+  const upgradeLink = (derivedPayUrl || dbPaymentLink || DEFAULT_PAYMENT_LINK).trim();
 
   // 3. Parse request body
   const body = await req.json().catch(() => null);

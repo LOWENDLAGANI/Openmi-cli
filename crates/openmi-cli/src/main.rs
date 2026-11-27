@@ -1,4 +1,5 @@
 mod auth;
+mod browser;
 mod cmd;
 mod exit_codes;
 mod output;
@@ -121,6 +122,10 @@ enum Commands {
         /// Override the managed Openmi API base URL.
         #[arg(long)]
         api_url: Option<String>,
+
+        /// Print the sign-in URL instead of automatically opening a browser.
+        #[arg(long)]
+        no_browser: bool,
     },
 
     /// Clear locally stored authentication credentials.
@@ -153,6 +158,17 @@ enum Commands {
         /// Override the managed Openmi API base URL.
         #[arg(long)]
         api_url: Option<String>,
+    },
+
+    /// Open the Openmi Paid Pass upgrade page (/pay) in your browser.
+    Upgrade {
+        /// Override the managed Openmi API base URL.
+        #[arg(long)]
+        api_url: Option<String>,
+
+        /// Print the upgrade URL instead of automatically opening a browser.
+        #[arg(long)]
+        no_browser: bool,
     },
 
     /// Manage and inspect configured stdio MCP servers.
@@ -279,7 +295,8 @@ async fn main() -> ExitCode {
             token,
             refresh_token,
             api_url,
-        }) => cmd::login::execute(token, refresh_token, api_url)
+            no_browser,
+        }) => cmd::login::execute(token, refresh_token, api_url, no_browser)
             .await
             .map_err(map_anyhow_auth),
         Some(Commands::Logout) => cmd::logout::execute().await.map_err(CliError::Other),
@@ -288,6 +305,10 @@ async fn main() -> ExitCode {
         }
         Some(Commands::Models { json, api_url }) => cmd::models::execute(json, api_url).await,
         Some(Commands::Credits { json, api_url }) => cmd::credits::execute(json, api_url).await,
+        Some(Commands::Upgrade {
+            api_url,
+            no_browser,
+        }) => cmd::upgrade::execute(api_url, no_browser).await,
         Some(Commands::Mcp { command }) => match command {
             McpCommands::List { cwd, json } => cmd::mcp::list(cwd, json).await,
         },

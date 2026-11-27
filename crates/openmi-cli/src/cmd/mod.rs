@@ -7,4 +7,5 @@ pub mod run;
 pub mod smoke;
 pub mod tui;
 pub mod update;
+pub mod upgrade;
 pub mod whoami;

@@ -57,6 +57,7 @@ function renderPlans(plans, paymentLink, paused) {
           <div class="plan-price">RM ${p.price_myr}</div>
           <ul class="plan-perks">
             <li><strong>${p.daily_credits} Credits/day</strong> for ${p.days} days (resets 00:00 UTC)</li>
+            <li><strong>7M tokens/day</strong> cap &amp; <strong>70 turns/prompt</strong> (vs 2M / 40 on Free)</li>
             <li><strong>+${p.upfront_credit} wallet Credits</strong> (never expire)</li>
             <li>Unlocks all <strong>Paid-only</strong> models</li>
             <li>Stacks onto any active pass — no auto-renewal</li>

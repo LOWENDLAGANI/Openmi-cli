@@ -62,7 +62,11 @@ pub const SLASH_PALETTE: &[SlashSuggestion] = &[
     },
     SlashSuggestion {
         command: "/credits",
-        description: "Check remaining credits",
+        description: "Check remaining credits & daily token cap",
+    },
+    SlashSuggestion {
+        command: "/upgrade",
+        description: "Open the /pay page in your browser to upgrade",
     },
     SlashSuggestion {
         command: "/mcp",
@@ -107,6 +111,7 @@ pub enum SlashCommand {
     Diff,
     Clear,
     Credits,
+    Upgrade,
     Mcp(Option<String>),
     Help(Option<String>),
     Version,
@@ -130,6 +135,7 @@ pub enum SlashOutcome {
     RequireFullAccessConfirm,
     ClearHistory,
     RefreshCredits,
+    OpenUpgrade,
     McpStatus,
     McpRestart(Option<String>),
     Quit,
@@ -161,6 +167,7 @@ pub fn parse_slash(input: &str) -> Option<SlashCommand> {
         "/diff" => SlashCommand::Diff,
         "/clear" | "/new" => SlashCommand::Clear,
         "/credits" => SlashCommand::Credits,
+        "/upgrade" | "/pay" => SlashCommand::Upgrade,
         "/mcp" => SlashCommand::Mcp(arg),
         "/help" => SlashCommand::Help(arg),
         "/version" => SlashCommand::Version,
@@ -200,6 +207,7 @@ pub fn execute_slash(
         SlashCommand::Diff => SlashOutcome::Diff(render_latest_checkpoint_diff(checkpoints, cwd)),
         SlashCommand::Clear => SlashOutcome::ClearHistory,
         SlashCommand::Credits => SlashOutcome::RefreshCredits,
+        SlashCommand::Upgrade => SlashOutcome::OpenUpgrade,
         SlashCommand::Mcp(arg) => match arg.as_deref() {
             None | Some("status") => SlashOutcome::McpStatus,
             Some("restart") => SlashOutcome::McpRestart(None),

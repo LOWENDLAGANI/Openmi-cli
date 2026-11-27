@@ -444,6 +444,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                                 let ep = format!("{base}/functions/v1/credits");
                                                 match fetch_credit_status(&ep, tok).await {
                                                     Ok(status) => {
+                                                        session.lock().await.set_max_steps(status.effective_max_steps());
                                                         let summary = format_credit_summary(&status);
                                                         app.apply_credit_status(status);
                                                         app.push_system(summary);
@@ -452,6 +453,27 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                                 }
                                             } else {
                                                 app.push_system("Not logged in — run `openmi login` to check credits.");
+                                            }
+                                        }
+                                        SlashOutcome::OpenUpgrade => {
+                                            let mut url = app
+                                                .credit_status
+                                                .as_ref()
+                                                .map(|cs| cs.effective_upgrade_url().to_string());
+                                            if url.is_none() {
+                                                if let (Some(base), Some(tok)) = (base_url_for_credits.as_deref(), bearer_for_credits.as_deref()) {
+                                                    let ep = format!("{base}/functions/v1/credits");
+                                                    if let Ok(status) = fetch_credit_status(&ep, tok).await {
+                                                        url = Some(status.effective_upgrade_url().to_string());
+                                                        app.apply_credit_status(status);
+                                                    }
+                                                }
+                                            }
+                                            let target = url.unwrap_or_else(|| "https://sociabuzz.com/minetallestmc/tribe".to_string());
+                                            if crate::browser::open_url(&target) {
+                                                app.push_system(format!("Opened upgrade page in your browser: {target}"));
+                                            } else {
+                                                app.push_system(format!("Open this URL in your browser to upgrade: {target}"));
                                             }
                                         }
                                         SlashOutcome::McpStatus => {
