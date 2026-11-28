@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#FFB5D8" />
+  <meta name="description" content="Contact Openmi Support via email (support@openmi.space) or join our Discord server for CLI help, billing questions, and bug reports." />
+  <title>Contact Support — Openmi</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:opsz,wght@6..72,600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/site.css" />
+  <style>
+    .support-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      margin-bottom: 24px;
+    }
+
+    .support-card {
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 16px;
+      padding: 26px 24px;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      transition: border-color 0.15s ease;
+    }
+
+    .support-card:hover {
+      border-color: var(--pink-border);
+    }
+
+    .support-card.is-featured {
+      border: 1.5px solid var(--pink-border);
+    }
+
+    .support-card h2 {
+      margin: 0;
+      font-size: 19px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+      color: var(--ink);
+    }
+
+    .support-card p {
+      margin: 0;
+      color: var(--ink-secondary);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .support-detail {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      overflow-wrap: anywhere;
+    }
+
+    .support-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: auto;
+      padding-top: 4px;
+    }
+
+    @media (max-width: 760px) {
+      .support-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .support-card {
+        padding: 20px 18px;
+      }
+      .support-actions .btn,
+      .support-actions .copy-btn {
+        flex: 1 1 auto;
+        justify-content: center;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="container site-header-inner">
+      <a href="/" class="brand-link">
+        <span class="brand-mark" aria-hidden="true">O</span>
+        <span>Openmi</span>
+      </a>
+
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a href="/download" class="nav-link">Download</a>
+        <a href="/pay" class="nav-link">Passes</a>
+        <a href="/provider" class="nav-link">BYOK</a>
+        <a href="/dashboard" class="nav-link">Dashboard</a>
+        <a href="/support" class="nav-link is-active">Support</a>
+      </nav>
+
+      <div class="header-cta">
+        <a href="/login?next=/dashboard" class="btn btn-secondary btn-sm">Sign in</a>
+        <a href="/download" class="btn btn-primary btn-sm">Get Started</a>
+      </div>
+
+      <button
+        type="button"
+        class="menu-toggle"
+        id="menu-toggle"
+        aria-label="Toggle navigation menu"
+        aria-expanded="false"
+        aria-controls="mobile-drawer"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <line x1="4" y1="7" x2="20" y2="7" />
+          <line x1="4" y1="12" x2="20" y2="12" />
+          <line x1="4" y1="17" x2="20" y2="17" />
+        </svg>
+      </button>
+    </div>
+
+    <div class="mobile-drawer" id="mobile-drawer">
+      <div class="mobile-drawer-links">
+        <a href="/download" class="nav-link">Download CLI</a>
+        <a href="/pay" class="nav-link">Passes &amp; Billing</a>
+        <a href="/provider" class="nav-link">Providers (BYOK)</a>
+        <a href="/dashboard" class="nav-link">Dashboard</a>
+        <a href="/support" class="nav-link is-active">Support</a>
+      </div>
+      <div class="mobile-drawer-actions">
+        <a href="/login?next=/dashboard" class="btn btn-secondary" style="flex:1;">Sign in</a>
+        <a href="/download" class="btn btn-primary" style="flex:1;">Get Started</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="legal-hero">
+      <div class="container">
+        <div class="section-kicker">Help &amp; Support</div>
+        <h1>Contact Openmi Support</h1>
+        <p class="legal-meta">Need help with Openmi CLI, Paid Pass verification, or your account? Reach us via Email or Discord.</p>
+      </div>
+    </section>
+
+    <section class="legal-body">
+      <div class="container" style="max-width:860px;">
+        <div class="support-grid">
+          <article class="support-card is-featured">
+            <span class="feature-tag is-pink">Email Support</span>
+            <h2>Email Us Directly</h2>
+            <p>
+              Best for Sociabuzz payment verification, account or billing questions, privacy requests, and private reports.
+            </p>
+            <div class="support-detail">support@openmi.space</div>
+            <div class="support-actions">
+              <a href="mailto:support@openmi.space" class="btn btn-primary btn-sm">Send Email</a>
+              <button
+                type="button"
+                class="copy-btn"
+                data-copy="support@openmi.space"
+                aria-label="Copy support email address"
+              >
+                <span data-copy-label>Copy Email</span>
+              </button>
+            </div>
+          </article>
+
+          <article class="support-card">
+            <span class="feature-tag is-lime">Discord Server</span>
+            <h2>Join Our Discord</h2>
+            <p>
+              Best for fast CLI troubleshooting (Windows, Linux, macOS, Termux), BYOK setup help, bug reports, and community updates.
+            </p>
+            <div class="support-detail">https://discord.gg/wa8KH3wtW</div>
+            <div class="support-actions">
+              <a
+                href="https://discord.gg/wa8KH3wtW"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="btn btn-primary btn-sm"
+              >
+                Join Discord Server &rarr;
+              </a>
+            </div>
+          </article>
+        </div>
+
+        <article class="legal-card" style="max-width:none;">
+          <h2>What to include for faster help</h2>
+          <ul>
+            <li><strong>Paid Pass / Sociabuzz billing:</strong> Your Openmi account email and Sociabuzz transaction reference.</li>
+            <li><strong>CLI or installation issues:</strong> Your OS/environment (Windows, Linux, macOS, or Android Termux), Openmi CLI version (<code>openmi --version</code>), and the error message.</li>
+            <li><strong>Account or privacy requests:</strong> Contact us from the email address associated with your Openmi account.</li>
+          </ul>
+
+          <h2>Policies &amp; Quick Links</h2>
+          <p>
+            Review our <a href="/refund-policy">No-Refund Policy</a>, <a href="/terms">Terms of Service</a>, and <a href="/privacy">Privacy Policy</a>, or manage your passes and quotas on the <a href="/dashboard">Dashboard</a>.
+          </p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <a href="/" class="brand-link" style="font-size:14px;">
+        <span class="brand-mark" style="width:28px;height:28px;font-size:13px;" aria-hidden="true">O</span>
+        <span>Openmi CLI</span>
+      </a>
+      <div class="footer-links">
+        <a href="/download">Download</a>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/pay">Passes</a>
+        <a href="/support">Support</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund-policy">Refund Policy</a>
+        <a href="https://discord.gg/wa8KH3wtW" target="_blank" rel="noopener noreferrer">Discord</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/site.js"></script>
+</body>
+</html>
