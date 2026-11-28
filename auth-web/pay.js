@@ -137,7 +137,7 @@ function renderPlans(plans, paymentLink, paused) {
               <div class="plan-feature-desc">Added to your append-only ledger immediately on top of your daily allowance.</div>
             </li>
             <li>
-              <div class="plan-feature-title">Stackable, never auto-renews</div>
+              <div class="plan-feature-title">Extendable pass, never auto-renews</div>
               <div class="plan-feature-desc">One-time ${p.days}-day pass that extends from your current end date.</div>
             </li>
           </ul>
