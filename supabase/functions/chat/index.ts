@@ -821,7 +821,7 @@ Deno.serve(async (req: Request) => {
 
     // 3c. If daily credits are insufficient and wallet Coins would be used, ask for confirmation first.
     if (!allowCoins && creditCost > 0) {
-      const { data: synced } = await admin.rpc("sync_user_credits", { p_user_id: userId });
+      const { data: synced } = await admin.rpc("sync_user_daily_credits", { p_user_id: userId });
       if (synced && typeof synced === "object") {
         const s = synced as Record<string, unknown>;
         const activeModel = typeof s.active_model === "string" ? s.active_model : null;

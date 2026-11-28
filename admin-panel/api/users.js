@@ -210,6 +210,7 @@ export default async function handler(req, res) {
           body: JSON.stringify({
             user_id: userId,
             plan: "paid",
+            has_paid: true,
             paid_until: targetIso,
             balance: nextBalance,
             wallet_credit: Number(existing?.wallet_credit ?? 0),
@@ -227,7 +228,9 @@ export default async function handler(req, res) {
             reference: "admin-panel",
             note: String(body.note || `Admin granted Paid pass (${label})`).trim(),
           }),
-        }).catch(() => {});
+        }).catch((err) => {
+          console.error("Failed to record admin_pass ledger entry:", err?.message || err);
+        });
 
         return sendJson(res, 200, { ok: true, paid_until: targetIso, label });
       }

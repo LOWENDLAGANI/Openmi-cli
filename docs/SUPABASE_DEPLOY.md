@@ -7,9 +7,19 @@ Project ref: `umjlmqeghfrfpduhkits` (`https://umjlmqeghfrfpduhkits.supabase.co`)
 Run all migrations in order (via `supabase db push` or the SQL editor / Management API):
 
 1. `20261126000001_create_device_codes.sql` — device pairing table for `openmi login`
-2. `20261126000002_create_user_credits.sql` — per-user plan, credit balance, and atomic `deduct_user_credits` RPC
+2. `20261126000002_create_user_credits.sql` — per-user plan and credit balance
 3. `20261126000003_create_app_settings.sql` — singleton `app_settings` row (AI on/off, LLM base URL/key/default model, credit cost, model list) edited from the admin panel
 4. `20261126000004_subscription_passes_and_payments.sql` — daily + wallet credit buckets, time-limited passes, hourly model passes, and the manual payment receipt review queue
+5. `20261126000005_daily_token_cap_and_turn_limits.sql` — daily token cap and per-turn limits
+6. `20261126000006_lifetime_token_usage.sql` — lifetime token usage tracking in `sync_user_daily_credits`
+7. `20261126000007_update_pass_prices.sql` — pass price updates
+8. `20261127000001_rate_limits.sql` — rate-limit settings
+9. `20261127000002_user_byok_providers.sql` — BYOK `user_providers` table and RLS
+10. `20261127000003_grant_user_providers_service_role.sql` — service-role grants for `user_providers`
+11. `20261127000004_coin_redeem_codes.sql` — giveaway coin redeem codes and `redeem_coin_code` RPC
+12. `20261127000005_referral_invites.sql` — referral invite codes and paid-upgrade settlement trigger
+13. `20261128000001_windows_waitlist.sql` — Windows app waitlist table
+14. `20261128000002_fix_credit_ledger_and_sync_alias.sql` — `credit_ledger.kind` constraint fix, `sync_user_credits` alias, and `windows_waitlist` privilege lockdown
 
 ## 2. Configure Edge Function secrets
 
@@ -30,9 +40,10 @@ Set secrets in Supabase Dashboard → Edge Functions → Secrets (or `supabase s
 | `OPENMI_CLI_VERIFY_URL` | `cli-auth` | `https://www.openmi.space/verify` | Custom web approval URL shown during `openmi login` |
 | `PAYMENT_LINK` | `payments` | built-in link | Payment page link |
 | `TOPUP_PAUSED` | `payments` | off | Pause new top-up submissions |
-| `RESEND_API_KEY` | `payments` | — | Send receipt emails via Resend (optional) |
-| `RECEIPT_FROM_EMAIL` | `payments` | `Openmi Billing <billing@openmi.space>` | Sender address for receipt emails |
+| `RESEND_API_KEY` | `payments`, `waitlist` | — | Send receipt and waitlist confirmation emails via Resend (optional) |
+| `RECEIPT_FROM_EMAIL` | `payments`, `waitlist` | `Openmi Billing <billing@openmi.space>` | Sender address for receipt emails (and fallback for waitlist) |
 | `RECEIPT_NOTIFY_EMAIL` | `payments` | — | Admin address notified of new receipts |
+| `WAITLIST_FROM_EMAIL` | `waitlist` | `Openmi <noreply@openmi.space>` | Sender address for Windows waitlist confirmation emails |
 
 Credit costs and daily allowances are configured in `app_settings` (`credit_cost`, per-model `credit_cost` in `models`, `free_daily_credits`, `paid_daily_credits`, `pass_duration_minutes`), not via env vars. New users start with the `user_credits.balance` column default (6 after migration 4).
 
@@ -40,7 +51,7 @@ Credit costs and daily allowances are configured in `app_settings` (`credit_cost
 
 ## 3. Deploy Edge Functions
 
-Deploy all six functions with `verify_jwt = false` (matching `supabase/config.toml`; protected endpoints validate the user's bearer token via `admin.auth.getUser`):
+Deploy all nine functions with `verify_jwt = false` (matching `supabase/config.toml`; protected endpoints validate the user's bearer token via `admin.auth.getUser`):
 
 ```sh
 supabase functions deploy cli-auth  --no-verify-jwt
@@ -49,6 +60,9 @@ supabase functions deploy credits   --no-verify-jwt
 supabase functions deploy chat      --no-verify-jwt
 supabase functions deploy payments  --no-verify-jwt
 supabase functions deploy providers --no-verify-jwt
+supabase functions deploy redeem    --no-verify-jwt
+supabase functions deploy referrals --no-verify-jwt
+supabase functions deploy waitlist  --no-verify-jwt
 ```
 
 ## 4. Smoke test

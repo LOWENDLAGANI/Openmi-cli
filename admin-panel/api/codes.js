@@ -1,5 +1,5 @@
-const crypto = require("crypto");
-const { requireAdmin, readJsonBody, sendJson, supabaseFetch } = require("./_supabase");
+import crypto from "node:crypto";
+import { requireAdminAuth, readBody, sendJson, supabaseFetch } from "./_supabase.js";
 
 function generateCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -14,8 +14,8 @@ function generateCode() {
   return `OPENMI-${part(4)}-${part(4)}`;
 }
 
-module.exports = async function handler(req, res) {
-  if (!requireAdmin(req, res)) return;
+export default async function handler(req, res) {
+  if (!requireAdminAuth(req, res)) return;
 
   try {
     if (req.method === "GET") {
@@ -26,7 +26,7 @@ module.exports = async function handler(req, res) {
     }
 
     if (req.method === "POST") {
-      const body = await readJsonBody(req);
+      const body = await readBody(req);
       const action = String(body.action || "create").trim();
 
       if (action === "create") {

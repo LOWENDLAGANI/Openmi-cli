@@ -1,7 +1,7 @@
-const { requireAdmin, readJsonBody, sendJson, supabaseFetch } = require("./_supabase");
+import { requireAdminAuth, readBody, sendJson, supabaseFetch } from "./_supabase.js";
 
-module.exports = async function handler(req, res) {
-  if (!requireAdmin(req, res)) return;
+export default async function handler(req, res) {
+  if (!requireAdminAuth(req, res)) return;
 
   try {
     if (req.method === "GET") {
@@ -12,7 +12,7 @@ module.exports = async function handler(req, res) {
     }
 
     if (req.method === "POST") {
-      const body = await readJsonBody(req);
+      const body = await readBody(req);
       const id = String(body.id || "").trim();
       const action = String(body.action || "cancel").trim();
       if (!id) {

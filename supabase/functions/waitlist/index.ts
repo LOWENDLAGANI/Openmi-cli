@@ -150,6 +150,14 @@ Deno.serve(async (req: Request) => {
       .insert({ email: rawEmail, source, status: "active" });
 
     if (insertErr) {
+      if (insertErr.code === "23505") {
+        return jsonResponse({
+          ok: true,
+          already_registered: true,
+          email: rawEmail,
+          message: "You're already on the Windows App waitlist! We'll notify you as soon as it launches.",
+        });
+      }
       return jsonResponse({ error: "db_error", message: "Could not save your signup right now. Please try again." }, 500);
     }
   }

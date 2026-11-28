@@ -89,64 +89,6 @@ async function sha256Hex(value: string): Promise<string> {
   return Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function renderVerifyHtml(prefillCode: string, approveUrl: string): string {
-  const safeCode = prefillCode.replace(/[^A-Za-z0-9-]/g, "").toUpperCase();
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Authorize Openmi CLI</title>
-  <style>
-    body { font-family: system-ui, -apple-system, sans-serif; max-width: 440px; margin: 48px auto; padding: 0 16px; color: #111; }
-    .card { border: 1px solid #ddd; border-radius: 10px; padding: 24px; }
-    input, button { width: 100%; box-sizing: border-box; padding: 10px 12px; margin-top: 10px; font-size: 16px; }
-    button { background: #111; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
-    button.deny { background: #eee; color: #111; }
-    #status { margin-top: 14px; font-size: 14px; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h2>Authorize Openmi CLI</h2>
-    <p>Confirm the code shown in your terminal to sign in.</p>
-    <label for="code">Device Code</label>
-    <input id="code" value="${safeCode}" placeholder="ABCD-EFGH" autocomplete="off" />
-    <label for="token">Supabase Access Token (from your signed-in Openmi session)</label>
-    <input id="token" type="password" placeholder="Paste session access token" />
-    <label for="refresh">Refresh Token (optional, keeps the CLI signed in past 1 hour)</label>
-    <input id="refresh" type="password" placeholder="Paste session refresh token" />
-    <button id="approve">Approve Device</button>
-    <button id="deny" class="deny">Deny</button>
-    <div id="status"></div>
-  </div>
-  <script>
-    async function submitDecision(action) {
-      const code = document.getElementById("code").value.trim().toUpperCase();
-      const token = document.getElementById("token").value.trim();
-      const refresh = document.getElementById("refresh").value.trim();
-      const status = document.getElementById("status");
-      status.textContent = "Submitting...";
-      const res = await fetch(${JSON.stringify(approveUrl)}, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": "Bearer " + token
-        },
-        body: JSON.stringify(refresh ? { user_code: code, action, refresh_token: refresh } : { user_code: code, action })
-      });
-      const data = await res.json().catch(() => ({}));
-      status.textContent = res.ok
-        ? (action === "approve" ? "Approved! You can return to your terminal." : "Request denied.")
-        : ("Error: " + (data.error || res.statusText));
-    }
-    document.getElementById("approve").onclick = () => submitDecision("approve");
-    document.getElementById("deny").onclick = () => submitDecision("deny");
-  </script>
-</body>
-</html>`;
-}
-
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return jsonResponse({ ok: true }, 200);
@@ -165,19 +107,15 @@ Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/+$/, "");
 
-  // GET /verify?code=XXXX-XXXX
+  // GET /verify?code=XXXX-XXXX -> redirect to the web approval page
   if (req.method === "GET" && path.endsWith("/verify")) {
-    const prefill = url.searchParams.get("code") ?? "";
-    const approveUrl = `${url.origin}${path.replace(/\/verify$/, "/approve")}`;
-    return new Response(renderVerifyHtml(prefill, approveUrl), {
-      status: 200,
+    const prefill = (url.searchParams.get("code") ?? "").replace(/[^A-Za-z0-9-]/g, "").toUpperCase();
+    const target = prefill ? `${publicVerifyBase}?code=${encodeURIComponent(prefill)}` : publicVerifyBase;
+    return new Response(null, {
+      status: 302,
       headers: {
-        "Content-Type": "text/html; charset=utf-8",
+        Location: target,
         "Cache-Control": "no-store",
-        "X-Frame-Options": "DENY",
-        "X-Content-Type-Options": "nosniff",
-        "Referrer-Policy": "no-referrer",
-        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
       },
     });
   }

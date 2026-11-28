@@ -230,7 +230,7 @@ Deno.serve(async (req: Request) => {
   const plans = PLANS.map((p) => ({ ...p, daily_credits: paidDailyCredits }));
 
   if (req.method === "GET") {
-    const [{ data: credits }, { data: requests, error: reqErr }] = await Promise.all([
+    const [{ data: credits, error: creditsErr }, { data: requests, error: reqErr }] = await Promise.all([
       admin.rpc("sync_user_daily_credits", { p_user_id: userId }),
       admin
         .from("payment_requests")
@@ -240,6 +240,9 @@ Deno.serve(async (req: Request) => {
         .limit(20),
     ]);
 
+    if (creditsErr) {
+      return jsonResponse({ error: "db_error", message: creditsErr.message }, 500);
+    }
     if (reqErr) {
       return jsonResponse({ error: "db_error", message: reqErr.message }, 500);
     }
