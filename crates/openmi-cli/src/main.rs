@@ -167,7 +167,8 @@ enum Commands {
         api_url: Option<String>,
     },
 
-    /// Show current Openmi credit balance and plan.
+    /// Show current Openmi credit balance, Wallet Coins, and plan.
+    #[command(alias = "balance")]
     Credits {
         /// Emit raw JSON instead of human-readable text.
         #[arg(long)]
