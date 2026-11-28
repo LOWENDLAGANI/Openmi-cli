@@ -155,7 +155,7 @@ function renderPlans(plans, paymentLink, paused) {
         <span class="plan-price">${escapeHtml(freePrice.text)}</span>
         <span class="plan-period">/ forever</span>
       </div>
-      <a href="/" class="btn btn-secondary">Open dashboard</a>
+      <a href="/dashboard" class="btn btn-secondary">Open dashboard</a>
       <div class="plan-divider" aria-hidden="true"></div>
       <ul class="plan-features">
         <li>

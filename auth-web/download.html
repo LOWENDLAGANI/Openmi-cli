@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#FFB5D8" />
+  <meta name="description" content="Download and install Openmi CLI via npm, curl (Linux, macOS, Termux), PowerShell (Windows), or Cargo." />
+  <title>Download — Openmi CLI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:opsz,wght@6..72,600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/site.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container site-header-inner">
+      <a href="/" class="brand-link">
+        <span class="brand-mark" aria-hidden="true">O</span>
+        <span>Openmi</span>
+      </a>
+
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a href="/#features" class="nav-link">Features</a>
+        <a href="/download" class="nav-link is-active">Download</a>
+        <a href="/pay" class="nav-link">Passes</a>
+        <a href="/provider" class="nav-link">BYOK</a>
+        <a href="/dashboard" class="nav-link">Dashboard</a>
+      </nav>
+
+      <div class="header-cta">
+        <a href="/login?next=/dashboard" class="btn btn-secondary btn-sm">Sign in</a>
+        <a href="/dashboard" class="btn btn-primary btn-sm">Console</a>
+      </div>
+
+      <button
+        type="button"
+        class="menu-toggle"
+        id="menu-toggle"
+        aria-label="Toggle navigation menu"
+        aria-expanded="false"
+        aria-controls="mobile-drawer"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <line x1="4" y1="7" x2="20" y2="7" />
+          <line x1="4" y1="12" x2="20" y2="12" />
+          <line x1="4" y1="17" x2="20" y2="17" />
+        </svg>
+      </button>
+    </div>
+
+    <div class="mobile-drawer" id="mobile-drawer">
+      <div class="mobile-drawer-links">
+        <a href="/" class="nav-link">Home</a>
+        <a href="/download" class="nav-link is-active">Download CLI</a>
+        <a href="/pay" class="nav-link">Passes &amp; Billing</a>
+        <a href="/provider" class="nav-link">Providers (BYOK)</a>
+        <a href="/dashboard" class="nav-link">Dashboard</a>
+      </div>
+      <div class="mobile-drawer-actions">
+        <a href="/login?next=/dashboard" class="btn btn-secondary" style="flex:1;">Sign in</a>
+        <a href="/dashboard" class="btn btn-primary" style="flex:1;">Dashboard</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="download-hero">
+      <div class="container-narrow">
+        <div class="hero-eyebrow">CLI Installation</div>
+        <h1>Get started with Openmi</h1>
+        <p>
+          Install the Openmi CLI in seconds on Windows, Linux, macOS, or Android Termux. No IDE plugin required.
+        </p>
+      </div>
+    </section>
+
+    <section style="padding-bottom:56px;">
+      <div class="container-narrow">
+        <div class="setup-card">
+          <!-- Step 1 -->
+          <div class="setup-step">
+            <h2 class="setup-step-title">
+              <span class="setup-step-badge" aria-hidden="true">1</span>
+              <span>Open your terminal</span>
+            </h2>
+            <div class="ide-grid" role="group" aria-label="Choose your terminal or editor">
+              <button type="button" class="ide-btn is-active" data-ide="vscode" aria-pressed="true">
+                <span class="ide-glyph">VS</span>
+                <span>VS Code</span>
+              </button>
+              <button type="button" class="ide-btn" data-ide="cursor" aria-pressed="false">
+                <span class="ide-glyph">CU</span>
+                <span>Cursor</span>
+              </button>
+              <button type="button" class="ide-btn" data-ide="termux" aria-pressed="false">
+                <span class="ide-glyph">$_</span>
+                <span>Termux</span>
+              </button>
+              <button type="button" class="ide-btn" data-ide="wt" aria-pressed="false">
+                <span class="ide-glyph">PS</span>
+                <span>Windows Terminal</span>
+              </button>
+              <button type="button" class="ide-btn" data-ide="shell" aria-pressed="false">
+                <span class="ide-glyph">SH</span>
+                <span>macOS / Linux</span>
+              </button>
+              <button type="button" class="ide-btn" data-ide="intellij" aria-pressed="false">
+                <span class="ide-glyph">IJ</span>
+                <span>IntelliJ / JetBrains</span>
+              </button>
+            </div>
+            <div class="ide-tip" id="ide-tip-box">
+              Press <kbd>Ctrl</kbd> + <kbd>`</kbd> (or <kbd>Cmd</kbd> + <kbd>J</kbd> on macOS) to open the integrated terminal in VS Code.
+            </div>
+          </div>
+
+          <!-- Step 2 -->
+          <div class="setup-step">
+            <h2 class="setup-step-title">
+              <span class="setup-step-badge" aria-hidden="true">2</span>
+              <span>Navigate to your project directory</span>
+            </h2>
+            <div class="cmd-box">
+              <div class="cmd-text">
+                <span class="cmd-prompt" aria-hidden="true">&gt;_</span>
+                <span>cd /path/to/your-repo</span>
+              </div>
+              <button type="button" class="copy-btn" data-copy="cd /path/to/your-repo" aria-label="Copy cd command">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+                <span data-copy-label>Copy</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Step 3 -->
+          <div class="setup-step">
+            <h2 class="setup-step-title">
+              <span class="setup-step-badge" aria-hidden="true">3</span>
+              <span>Install Openmi</span>
+            </h2>
+
+            <div class="method-tabs" role="tablist" aria-label="Install method">
+              <button type="button" class="method-tab is-active" role="tab" aria-selected="true" data-method-tab="npm">
+                npm (Recommended)
+              </button>
+              <button type="button" class="method-tab" role="tab" aria-selected="false" data-method-tab="unix">
+                Linux / macOS / Termux
+              </button>
+              <button type="button" class="method-tab" role="tab" aria-selected="false" data-method-tab="windows">
+                Windows PowerShell
+              </button>
+              <button type="button" class="method-tab" role="tab" aria-selected="false" data-method-tab="source">
+                Build from source
+              </button>
+            </div>
+
+            <div class="method-panel is-active" data-method-panel="npm" role="tabpanel">
+              <div class="cmd-box">
+                <div class="cmd-text">
+                  <span class="cmd-prompt" aria-hidden="true">&gt;_</span>
+                  <span>npm install -g openmi</span>
+                </div>
+                <button type="button" class="copy-btn" data-copy="npm install -g openmi" aria-label="Copy npm install command">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                  <span data-copy-label>Copy</span>
+                </button>
+              </div>
+              <p class="method-note">Requires Node.js &ge; 16. Automatically selects the native binary for your platform.</p>
+            </div>
+
+            <div class="method-panel" data-method-panel="unix" role="tabpanel">
+              <div class="cmd-box">
+                <div class="cmd-text">
+                  <span class="cmd-prompt" aria-hidden="true">&gt;_</span>
+                  <span>curl -fsSL https://raw.githubusercontent.com/LOWENDLAGANI/Openmi-cli/main/install.sh | sh</span>
+                </div>
+                <button
+                  type="button"
+                  class="copy-btn"
+                  data-copy="curl -fsSL https://raw.githubusercontent.com/LOWENDLAGANI/Openmi-cli/main/install.sh | sh"
+                  aria-label="Copy curl install command"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                  <span data-copy-label>Copy</span>
+                </button>
+              </div>
+              <p class="method-note">Installs the native binary on Linux (<code>x64</code> / <code>arm64</code>), macOS (Apple Silicon), and Android Termux (<code>aarch64</code>).</p>
+            </div>
+
+            <div class="method-panel" data-method-panel="windows" role="tabpanel">
+              <div class="cmd-box">
+                <div class="cmd-text">
+                  <span class="cmd-prompt" aria-hidden="true">PS&gt;</span>
+                  <span>irm https://raw.githubusercontent.com/LOWENDLAGANI/Openmi-cli/main/install.ps1 | iex</span>
+                </div>
+                <button
+                  type="button"
+                  class="copy-btn"
+                  data-copy="irm https://raw.githubusercontent.com/LOWENDLAGANI/Openmi-cli/main/install.ps1 | iex"
+                  aria-label="Copy PowerShell install command"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                  <span data-copy-label>Copy</span>
+                </button>
+              </div>
+              <p class="method-note">Run in PowerShell on Windows <code>x64</code>. Downloads and adds <code>openmi.exe</code> to your user PATH.</p>
+            </div>
+
+            <div class="method-panel" data-method-panel="source" role="tabpanel">
+              <div class="cmd-box">
+                <div class="cmd-text">
+                  <span class="cmd-prompt" aria-hidden="true">&gt;_</span>
+                  <span>cargo build -p openmi-cli --release</span>
+                </div>
+                <button type="button" class="copy-btn" data-copy="cargo build -p openmi-cli --release" aria-label="Copy cargo build command">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                  <span data-copy-label>Copy</span>
+                </button>
+              </div>
+              <p class="method-note">Clone <a href="https://github.com/LOWENDLAGANI/Openmi-cli" target="_blank" rel="noopener noreferrer" style="text-decoration:underline;">LOWENDLAGANI/Openmi-cli</a> and run <code>./target/release/openmi smoke-test</code> to verify.</p>
+            </div>
+          </div>
+
+          <!-- Step 4 -->
+          <div class="setup-step">
+            <h2 class="setup-step-title">
+              <span class="setup-step-badge" aria-hidden="true">4</span>
+              <span>Sign in &amp; run Openmi</span>
+            </h2>
+            <div class="dual-cmds">
+              <div class="cmd-box">
+                <div class="cmd-text">
+                  <span class="cmd-prompt" aria-hidden="true">&gt;_</span>
+                  <span>openmi login</span>
+                </div>
+                <button type="button" class="copy-btn" data-copy="openmi login" aria-label="Copy openmi login command">
+                  <span data-copy-label>Copy</span>
+                </button>
+              </div>
+              <div class="cmd-box">
+                <div class="cmd-text">
+                  <span class="cmd-prompt" aria-hidden="true">&gt;_</span>
+                  <span>openmi</span>
+                </div>
+                <button type="button" class="copy-btn" data-copy="openmi" aria-label="Copy openmi command">
+                  <span data-copy-label>Copy</span>
+                </button>
+              </div>
+            </div>
+            <p class="method-note">
+              <code>openmi login</code> uses device-code pairing (works over SSH and headless boxes). Approve the code at <a href="/verify" style="text-decoration:underline;">/verify</a>, then run <code>openmi</code>.
+            </p>
+          </div>
+        </div>
+
+        <!-- Secondary Info Cards -->
+        <div class="platform-grid">
+          <article class="info-card">
+            <h2>Automatic updates</h2>
+            <p>
+              On launch, Openmi checks GitHub Releases with a 3-second timeout, verifies the SHA-256 checksum, and updates seamlessly.
+            </p>
+            <ul>
+              <li>Check manually: <code>openmi update --check</code></li>
+              <li>Disable auto-check: <code>OPENMI_NO_AUTO_UPDATE=1</code></li>
+            </ul>
+          </article>
+
+          <article class="info-card">
+            <h2>Handy first commands</h2>
+            <p>
+              Once installed, you can run interactively or script Openmi from your shell.
+            </p>
+            <ul>
+              <li><code>openmi --resume</code> — continue your latest repo session</li>
+              <li><code>openmi run "explain src/main.rs" --permission read-only</code></li>
+              <li><code>openmi credits</code> &middot; <code>openmi models</code> &middot; <code>openmi whoami</code></li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <a href="/" class="brand-link" style="font-size:14px;">
+        <span class="brand-mark" style="width:28px;height:28px;font-size:13px;" aria-hidden="true">O</span>
+        <span>Openmi CLI</span>
+      </a>
+      <div class="footer-links">
+        <a href="/">Home</a>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/pay">Passes</a>
+        <a href="/provider">BYOK</a>
+        <a href="/settings">Settings</a>
+        <a href="https://github.com/LOWENDLAGANI/Openmi-cli" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/site.js"></script>
+</body>
+</html>

@@ -94,7 +94,7 @@ function renderView(session) {
   $("done-view").classList.add("hidden");
   if (session?.user) {
     if (!isCliFlow) {
-      const nextPath = getSafeNextPath() || "/";
+      const nextPath = getSafeNextPath() || "/dashboard";
       sessionStorage.removeItem(NEXT_STORAGE_KEY);
       window.location.replace(nextPath);
       return;
@@ -120,7 +120,7 @@ async function startOAuth(provider) {
   const nextPath = getSafeNextPath();
   const redirectUrl = code
     ? new URL("/verify", window.location.origin)
-    : new URL(nextPath || "/", window.location.origin);
+    : new URL(nextPath || "/dashboard", window.location.origin);
   if (code) redirectUrl.searchParams.set("code", code);
 
   const { error } = await supabase.auth.signInWithOAuth({

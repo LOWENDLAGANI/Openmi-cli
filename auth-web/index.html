@@ -4,306 +4,343 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#FFB5D8" />
-  <meta name="description" content="Openmi Console — view your daily credits, token usage, active hourly pass, model availability, and CLI activity." />
-  <title>Dashboard — Openmi</title>
+  <meta name="description" content="Openmi CLI — a fast, CLI-first coding agent with an interactive ratatui TUI, headless CI mode, exact-byte undo checkpoints, and managed credits or BYOK." />
+  <title>Openmi — Coding agent for your terminal</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/dashboard.css" />
-  <link rel="stylesheet" href="/currency.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:opsz,wght@6..72,600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/site.css" />
 </head>
 <body>
-  <header class="mobile-bar">
-    <a href="/" class="brand-link" style="padding:0;">
-      <span class="brand-mark" aria-hidden="true">O</span>
-      <span class="brand-title">Openmi</span>
-    </a>
-    <nav class="mobile-nav" aria-label="Mobile navigation">
-      <a href="/" class="btn btn-sm btn-primary">Dashboard</a>
-      <a href="/provider" class="btn btn-sm btn-secondary">BYOK</a>
-      <a href="/pay" class="btn btn-sm btn-secondary">Passes</a>
-      <a href="/settings" class="btn btn-sm btn-secondary">Settings</a>
-    </nav>
+  <header class="site-header">
+    <div class="container site-header-inner">
+      <a href="/" class="brand-link">
+        <span class="brand-mark" aria-hidden="true">O</span>
+        <span>Openmi</span>
+      </a>
+
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a href="#features" class="nav-link">Features</a>
+        <a href="/download" class="nav-link">Download</a>
+        <a href="/pay" class="nav-link">Passes</a>
+        <a href="/provider" class="nav-link">BYOK</a>
+        <a href="/dashboard" class="nav-link">Dashboard</a>
+      </nav>
+
+      <div class="header-cta">
+        <a href="/login?next=/dashboard" class="btn btn-secondary btn-sm">Sign in</a>
+        <a href="/download" class="btn btn-primary btn-sm">Get Started</a>
+      </div>
+
+      <button
+        type="button"
+        class="menu-toggle"
+        id="menu-toggle"
+        aria-label="Toggle navigation menu"
+        aria-expanded="false"
+        aria-controls="mobile-drawer"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <line x1="4" y1="7" x2="20" y2="7" />
+          <line x1="4" y1="12" x2="20" y2="12" />
+          <line x1="4" y1="17" x2="20" y2="17" />
+        </svg>
+      </button>
+    </div>
+
+    <div class="mobile-drawer" id="mobile-drawer">
+      <div class="mobile-drawer-links">
+        <a href="#features" class="nav-link">Features</a>
+        <a href="/download" class="nav-link">Download CLI</a>
+        <a href="/pay" class="nav-link">Passes &amp; Billing</a>
+        <a href="/provider" class="nav-link">Providers (BYOK)</a>
+        <a href="/dashboard" class="nav-link">Dashboard</a>
+      </div>
+      <div class="mobile-drawer-actions">
+        <a href="/login?next=/dashboard" class="btn btn-secondary" style="flex:1;">Sign in</a>
+        <a href="/download" class="btn btn-primary" style="flex:1;">Get Started</a>
+      </div>
+    </div>
   </header>
 
-  <div class="app-shell">
-    <aside class="sidebar" aria-label="Console navigation">
-      <div class="sidebar-top">
-        <a href="/" class="brand-link">
-          <span class="brand-mark" aria-hidden="true">O</span>
-          <div>
-            <div class="brand-title">Openmi</div>
-            <div class="brand-sub">Developer Console</div>
+  <main>
+    <!-- Hero -->
+    <section class="hero">
+      <div class="container">
+        <div class="hero-eyebrow">CLI-First · Windows · Linux · macOS · Termux</div>
+        <h1 class="hero-title">Better agents.<br />Right in your terminal.</h1>
+        <p class="hero-subtitle">
+          <strong>Openmi</strong> is a native Rust coding agent with an interactive <code>ratatui</code> TUI,
+          scriptable headless mode, exact-byte undo checkpoints, and managed credits or BYOK.
+        </p>
+
+        <div class="hero-actions">
+          <a href="/download" class="btn btn-hero">Get Started</a>
+          <a href="/dashboard" class="btn btn-secondary" style="padding:14px 22px;">Open Dashboard</a>
+        </div>
+
+        <div class="cmd-box cmd-box-hero">
+          <div class="cmd-text">
+            <span class="cmd-prompt" aria-hidden="true">&gt;_</span>
+            <span>npm install -g openmi</span>
           </div>
-        </a>
+          <button
+            type="button"
+            class="copy-btn"
+            data-copy="npm install -g openmi"
+            aria-label="Copy npm install command"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+            <span data-copy-label>Copy</span>
+          </button>
+        </div>
 
-        <nav class="side-nav">
-          <div class="side-nav-label">Console</div>
-          <a href="/" class="side-link is-active">Overview</a>
-          <a href="#models" class="side-link">Model Availability</a>
-          <a href="#activity" class="side-link">Usage &amp; Ledger</a>
-
-          <div class="side-nav-label" style="margin-top:8px;">Account</div>
-          <a href="/provider" class="side-link">Providers (BYOK)</a>
-          <a href="/pay" class="side-link">Passes &amp; Billing</a>
-          <a href="/settings" class="side-link">Settings</a>
-        </nav>
+        <p class="hero-install-alt">
+          Prefer curl, PowerShell, or Termux? <a href="/download">See all install options &rarr;</a>
+        </p>
       </div>
+    </section>
 
-      <div class="sidebar-footer">
-        <div id="sidebar-account" class="account-card hidden">
-          <div class="account-row">
-            <span class="account-email" id="sidebar-email">—</span>
-            <span class="badge badge-free" id="sidebar-tier">FREE</span>
-          </div>
-          <div class="account-row">
-            <span class="brand-sub" id="sidebar-paid-until">Daily reset 00:00 UTC</span>
-            <button type="button" class="link-btn" id="btn-signout">Sign out</button>
-          </div>
-        </div>
-        <a id="sidebar-signin-btn" href="/login?next=/" class="btn btn-primary hidden">Sign in</a>
-      </div>
-    </aside>
-
-    <main class="main-area">
-      <div class="page-header">
-        <div>
-          <h1>Overview</h1>
-          <p class="page-desc">Live usage, daily quotas, model availability, and CLI activity for your Openmi account.</p>
-        </div>
-        <div class="header-actions">
-          <span class="status-chip" id="service-status-chip">
-            <span class="status-dot" aria-hidden="true"></span>
-            <span id="service-status-label">Checking service…</span>
-          </span>
-          <div id="country-selector-slot"></div>
-          <button type="button" class="btn btn-secondary" id="btn-refresh">Refresh</button>
-          <a href="/pay" class="btn btn-primary" id="btn-upgrade-cta">Upgrade Pass</a>
-        </div>
-      </div>
-
-      <div id="global-error" class="alert alert-error hidden" role="alert"></div>
-
-      <!-- Signed-out prompt (models still visible below) -->
-      <section id="signed-out-section" class="signed-out-card hidden">
-        <div>
-          <h2>Sign in to view your usage &amp; quotas</h2>
-          <p>Check your daily credits, 2M / 7M daily token usage, lifetime AI tokens, active hourly model pass, and credit ledger.</p>
-        </div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;">
-          <a href="/login?next=/" class="btn btn-primary">Sign in to Console</a>
-        </div>
-      </section>
-
-      <!-- Signed-in usage metrics -->
-      <section id="usage-section" class="hidden" style="display:flex;flex-direction:column;gap:16px;">
-        <div class="metrics-grid">
-          <article class="metric-card">
-            <div class="metric-head">
-              <span class="metric-label">Daily Credits</span>
-              <span class="badge badge-free" id="metric-tier-badge">FREE</span>
-            </div>
-            <div class="metric-value mono" id="metric-daily-credits">—</div>
-            <div class="progress-track"><div class="progress-fill" id="bar-daily-credits" style="width:0%"></div></div>
-            <div class="metric-sub" id="metric-reset-countdown">Resets at 00:00 UTC</div>
-          </article>
-
-          <article class="metric-card">
-            <div class="metric-head">
-              <span class="metric-label">Daily Tokens (In + Out)</span>
-              <span class="metric-label mono" id="metric-token-pct">0%</span>
-            </div>
-            <div class="metric-value mono" id="metric-daily-tokens">—</div>
-            <div class="progress-track"><div class="progress-fill" id="bar-daily-tokens" style="width:0%"></div></div>
-            <div class="metric-sub" id="metric-token-sub">Hard cap across the day</div>
-          </article>
-
-          <article class="metric-card">
-            <div class="metric-head">
-              <span class="metric-label">Lifetime AI Tokens</span>
-              <span class="metric-label">All time</span>
-            </div>
-            <div class="metric-value mono" id="metric-lifetime-tokens">—</div>
-            <div class="metric-sub" id="metric-lifetime-sub">Total input + output since account creation</div>
-          </article>
-
-          <article class="metric-card">
-            <div class="metric-head">
-              <span class="metric-label">Coins Wallet &amp; Max Turns</span>
-              <span class="metric-label" id="metric-pass-duration">60m pass</span>
-            </div>
-            <div class="metric-value mono" id="metric-max-steps">—</div>
-            <div class="metric-sub" id="metric-wallet-line">Wallet: 0 Coins (no expiry · 1 Coin = 1 Credit)</div>
-          </article>
+    <!-- Interactive Terminal Preview -->
+    <section class="preview-section" aria-label="Openmi CLI preview">
+      <div class="container">
+        <div class="preview-tabs" role="tablist" aria-label="CLI workflow examples">
+          <button type="button" class="preview-tab is-active" role="tab" aria-selected="true" data-preview-tab="tui">
+            Interactive TUI
+          </button>
+          <button type="button" class="preview-tab" role="tab" aria-selected="false" data-preview-tab="undo">
+            Diff &amp; Exact Undo
+          </button>
+          <button type="button" class="preview-tab" role="tab" aria-selected="false" data-preview-tab="headless">
+            Headless CI
+          </button>
         </div>
 
-        <div class="pass-strip" id="active-pass-strip">
-          <div class="pass-strip-left">
-            <div class="pass-strip-title">
-              <span>Active Hourly Pass</span>
-              <span class="badge badge-free" id="pass-status-badge">Idle</span>
+        <div class="terminal-frame-wrap">
+          <div class="terminal-window">
+            <div class="terminal-chrome">
+              <div class="terminal-dots" aria-hidden="true">
+                <span class="terminal-dot is-pink"></span>
+                <span class="terminal-dot is-lime"></span>
+                <span class="terminal-dot"></span>
+              </div>
+              <div class="terminal-title">openmi — ~/projects/api-server</div>
+              <span class="terminal-badge">trusted</span>
             </div>
-            <div class="pass-strip-sub" id="pass-status-desc">Starts automatically on your first CLI prompt.</div>
-          </div>
-          <a href="/pay" class="btn btn-secondary btn-sm">Manage Passes</a>
-        </div>
 
-        <form class="pass-strip" id="redeem-form" style="border-color:var(--border-strong);" autocomplete="off">
-          <div class="pass-strip-left">
-            <div class="pass-strip-title">
-              <span>Redeem Coin Code</span>
-              <span class="badge badge-free">Giveaway</span>
-            </div>
-            <div class="pass-strip-sub" id="redeem-status-msg">Have a promo or giveaway code? Enter it to claim Wallet Coins.</div>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <input type="text" id="redeem-code-input" class="search-input mono" style="min-width:190px;text-transform:uppercase;" maxlength="64" placeholder="OPENMI-XXXX-XXXX" required />
-            <button type="submit" class="btn btn-primary btn-sm" id="btn-redeem-code">Redeem</button>
-          </div>
-        </form>
-
-        <!-- Invite & Earn Coins (Referral Commission) -->
-        <section class="panel" id="referral-panel" aria-labelledby="referral-heading">
-          <div class="panel-head">
-            <div>
-              <h2 id="referral-heading">Invite Friends &amp; Earn Coins</h2>
-              <p class="panel-desc" id="referral-rule-desc">Share your link or code. Both you and your friend earn +3 Coins once they upgrade to a Paid pass for the first time.</p>
-            </div>
-            <span class="badge badge-paid" id="referral-earned-badge">0 Coins earned</span>
-          </div>
-          <div style="padding:16px 20px;display:flex;flex-direction:column;gap:14px;">
-            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between;">
-              <div style="display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 260px;">
-                <span class="metric-label">Your Personal Invite Link &amp; Code</span>
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                  <span class="cli-code" id="referral-code-text">—</span>
-                  <button type="button" class="btn btn-secondary btn-sm" id="btn-copy-ref-code">Copy Code</button>
-                  <button type="button" class="btn btn-primary btn-sm" id="btn-copy-ref-link">Copy Invite Link</button>
+            <div class="terminal-body">
+              <!-- Panel 1: Interactive TUI -->
+              <div class="term-panel is-active" data-preview-panel="tui" role="tabpanel">
+                <div class="tui-bar">
+                  <span><span class="tui-brand">&#10022; Openmi</span> <span class="tui-meta">&middot; openmi-default &middot; api-server</span></span>
+                  <span class="tui-credits">142 credits &middot; PathGuard on</span>
+                </div>
+                <p class="tui-line tui-user">Add rate limiting to @src/routes/auth.ts and run tests</p>
+                <div class="tui-tool"><span class="ok">&#10003;</span> read_file <span class="path">src/routes/auth.ts</span> (118 lines)</div>
+                <div class="tui-tool"><span class="ok">&#10003;</span> edit_file <span class="path">src/routes/auth.ts</span> (+14 / -2) &middot; checkpoint #4 saved</div>
+                <div class="tui-tool"><span class="ok">&#10003;</span> run_command <span>npm test -- auth.spec.ts</span> (6 passed in 0.8s)</div>
+                <p class="tui-line" style="margin-top:12px;">
+                  Added a 10 req/min sliding window limiter to <code>POST /login</code> and verified all 6 auth tests pass. Run <code>/diff</code> to inspect or <code>/undo</code> to restore exact pre-edit bytes.
+                </p>
+                <div class="tui-prompt-bar">
+                  <span><kbd>Enter</kbd> send &middot; <kbd>Shift+Tab</kbd> mode &middot; <kbd>Tab</kbd> /cmd or @path</span>
+                  <span>/plan &middot; /diff &middot; /undo &middot; /model</span>
                 </div>
               </div>
-              <div style="display:flex;gap:16px;flex-wrap:wrap;">
-                <div>
-                  <div class="metric-label">Invited</div>
-                  <div class="mono" style="font-size:16px;font-weight:700;" id="ref-stat-total">0</div>
+
+              <!-- Panel 2: Diff & Exact Undo -->
+              <div class="term-panel" data-preview-panel="undo" role="tabpanel">
+                <div class="tui-bar">
+                  <span><span class="tui-brand">&#10022; Openmi</span> <span class="tui-meta">&middot; checkpoint #4 &middot; exact-byte snapshot</span></span>
+                  <span class="tui-credits">UTF-8 BOM / CRLF safe</span>
                 </div>
-                <div>
-                  <div class="metric-label">Pending Paid</div>
-                  <div class="mono" style="font-size:16px;font-weight:700;" id="ref-stat-pending">0</div>
+                <p class="tui-line tui-user">/diff</p>
+                <div class="tui-diff">
+                  <span class="diff-ctx">--- a/src/routes/auth.ts</span>
+                  <span class="diff-ctx">+++ b/src/routes/auth.ts</span>
+                  <span class="diff-ctx">@@ -18,4 +18,7 @@ export function registerAuth(app: Router) {</span>
+                  <span class="diff-del">-  app.post("/login", handleLogin);</span>
+                  <span class="diff-add">+  app.post("/login", rateLimit({ max: 10, windowMs: 60_000 }), handleLogin);</span>
                 </div>
-                <div>
-                  <div class="metric-label">Rewarded</div>
-                  <div class="mono" style="font-size:16px;font-weight:700;color:var(--ok);" id="ref-stat-rewarded">0</div>
+                <p class="tui-line tui-user">/undo src/routes/auth.ts</p>
+                <div class="tui-tool"><span class="ok">&#10003;</span> Restored <span class="path">src/routes/auth.ts</span> from checkpoint #4 (exact byte match)</div>
+                <div class="tui-prompt-bar">
+                  <span>Every write is snapshotted before touching disk</span>
+                  <span>/undo [file|run_id]</span>
+                </div>
+              </div>
+
+              <!-- Panel 3: Headless CI -->
+              <div class="term-panel" data-preview-panel="headless" role="tabpanel">
+                <div class="tui-bar">
+                  <span><span class="tui-brand">$ openmi run</span> <span class="tui-meta">"fix compiler warnings" --json --yes</span></span>
+                  <span class="tui-credits">exit code 0</span>
+                </div>
+                <p class="tui-line" style="color:#9898a6;">{"type":"session_started","model":"openmi-default","permission":"trusted"}</p>
+                <p class="tui-line" style="color:#9898a6;">{"type":"tool_call","tool":"run_command","args":{"cmd":"cargo check"}}</p>
+                <p class="tui-line" style="color:#FFB5D8;">{"type":"tool_call","tool":"edit_file","args":{"path":"crates/core/src/lib.rs"}}</p>
+                <p class="tui-line" style="color:#C6FF4D;">{"type":"completed","steps":3,"exit_code":0,"summary":"Resolved 2 unused import warnings."}</p>
+                <div class="tui-prompt-bar">
+                  <span>Structured JSONL stream &middot; deterministic exit codes (0, 2, 3, 4, 5, 130)</span>
+                  <span>--permission read-only</span>
                 </div>
               </div>
             </div>
-
-            <div id="referral-referred-status" class="metric-sub hidden"></div>
-
-            <form id="apply-ref-form" class="hidden" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border);" autocomplete="off">
-              <span class="metric-label" style="margin-right:4px;">Invited by someone?</span>
-              <input type="text" id="apply-ref-input" class="search-input mono" style="min-width:170px;height:32px;text-transform:uppercase;" maxlength="32" placeholder="INV-XXXXXXXX" required />
-              <button type="submit" class="btn btn-secondary btn-sm" id="btn-apply-ref">Apply Invite Code</button>
-              <span class="metric-sub" id="apply-ref-msg"></span>
-            </form>
-          </div>
-        </section>
-      </section>
-
-      <!-- Live Model Availability -->
-      <section class="panel" id="models" aria-labelledby="models-heading">
-        <div class="panel-head">
-          <div>
-            <h2 id="models-heading">Model Availability</h2>
-            <p class="panel-desc">Live catalog from Openmi. Paid passes unlock Paid-only models, 15 cr/day, 7M tokens/day, and 70 turns/prompt.</p>
-          </div>
-          <input type="search" id="model-search" class="search-input" placeholder="Filter models…" aria-label="Filter models" />
-        </div>
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Model</th>
-                <th>Context</th>
-                <th>Hourly Cost</th>
-                <th>Availability</th>
-              </tr>
-            </thead>
-            <tbody id="models-tbody">
-              <tr><td colspan="4" class="empty-cell">Loading model catalog…</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- Activity & Credit Ledger (signed-in) -->
-      <section class="panel hidden" id="activity" aria-labelledby="activity-heading">
-        <div class="panel-head">
-          <div>
-            <h2 id="activity-heading">Recent Activity &amp; Credit Ledger</h2>
-            <p class="panel-desc">Latest hourly passes, automatic refunds, top-ups, and credit grants.</p>
-          </div>
-          <a href="/pay" class="btn btn-secondary btn-sm">View Receipts</a>
-        </div>
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Event</th>
-                <th>Daily Δ</th>
-                <th>Coins Δ</th>
-                <th>Details</th>
-              </tr>
-            </thead>
-            <tbody id="ledger-tbody">
-              <tr><td colspan="5" class="empty-cell">Loading activity…</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- CLI Quick Reference -->
-      <section class="panel" aria-labelledby="cli-heading">
-        <div class="panel-head">
-          <div>
-            <h2 id="cli-heading">CLI Quick Commands</h2>
-            <p class="panel-desc">Run these from your terminal to sign in, check quotas, or open billing directly.</p>
           </div>
         </div>
-        <div class="cli-grid">
-          <div class="cli-item">
-            <div class="cli-cmd-row">
-              <span class="cli-code">openmi login</span>
-              <button type="button" class="btn btn-secondary btn-sm" data-copy="openmi login">Copy</button>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section class="section" id="features">
+      <div class="container">
+        <div class="section-head">
+          <div class="section-kicker">Built for the CLI</div>
+          <h2 class="section-title">Everything you need in one fast native binary.</h2>
+          <p class="section-desc">
+            No bloated editor lock-in. Openmi runs directly in your shell with strict workspace safety, instant rollbacks, and flexible billing.
+          </p>
+        </div>
+
+        <div class="features-grid">
+          <article class="feature-card">
+            <span class="feature-tag is-pink">TUI + Headless</span>
+            <h3>Interactive TUI &amp; scriptable CI</h3>
+            <p>
+              Work interactively in a crisp <code>ratatui</code> interface with <code>/plan</code>, <code>@path</code> completion, and session resume, or run headlessly with <code>openmi run --json</code>.
+            </p>
+          </article>
+
+          <article class="feature-card">
+            <span class="feature-tag is-lime">Checkpoints</span>
+            <h3>Exact-byte <code>/diff</code> &amp; <code>/undo</code></h3>
+            <p>
+              Pre-write snapshots preserve exact bytes including UTF-8 BOM and CRLF endings. Inspect changes inline and roll back any file or run instantly.
+            </p>
+          </article>
+
+          <article class="feature-card">
+            <span class="feature-tag">PathGuard</span>
+            <h3>Workspace sandboxing &amp; modes</h3>
+            <p>
+              Cycle between <code>read-only</code>, <code>ask</code>, and <code>trusted</code> modes with <code>Shift+Tab</code>. Symlink and <code>O_NOFOLLOW</code> guards keep edits inside your repo.
+            </p>
+          </article>
+
+          <article class="feature-card">
+            <span class="feature-tag">Cross-Platform</span>
+            <h3>Desktop, SSH &amp; Android Termux</h3>
+            <p>
+              Ships for Windows, Linux, macOS, and Termux (<code>aarch64</code>) with <code>rustls</code>-only TLS (zero OpenSSL) and SHA-256 verified auto-updates.
+            </p>
+          </article>
+
+          <article class="feature-card">
+            <span class="feature-tag is-pink">Extensible</span>
+            <h3>MCP servers &amp; project guides</h3>
+            <p>
+              Connect stdio MCP tools globally or per-repo in <code>.openmi/mcp.json</code>, and load instructions automatically from <code>OPENMI.md</code>, <code>CLAUDE.md</code>, or <code>AGENTS.md</code>.
+            </p>
+          </article>
+
+          <article class="feature-card">
+            <span class="feature-tag is-lime">Flexible Access</span>
+            <h3>Managed credits or BYOK</h3>
+            <p>
+              Start immediately with free daily credits, grab an hourly pass when shipping hard, or connect your own provider API keys on <a href="/provider" style="text-decoration:underline;">Providers (BYOK)</a>.
+            </p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3-Step Quickstart -->
+    <section class="section">
+      <div class="container">
+        <div class="section-head">
+          <div class="section-kicker">Quickstart</div>
+          <h2 class="section-title">From zero to coding in 30 seconds.</h2>
+        </div>
+
+        <div class="steps-strip">
+          <div class="step-card">
+            <span class="step-num">01</span>
+            <h3>Install the CLI</h3>
+            <p>Install globally with npm, or use our one-line shell / PowerShell installers.</p>
+            <div class="cmd-box">
+              <div class="cmd-text"><span>npm install -g openmi</span></div>
+              <button type="button" class="copy-btn" data-copy="npm install -g openmi" aria-label="Copy install command">
+                <span data-copy-label>Copy</span>
+              </button>
             </div>
-            <div class="cli-note">Opens browser automatically to sign in</div>
           </div>
-          <div class="cli-item">
-            <div class="cli-cmd-row">
-              <span class="cli-code">openmi</span>
-              <button type="button" class="btn btn-secondary btn-sm" data-copy="openmi">Copy</button>
+
+          <div class="step-card">
+            <span class="step-num">02</span>
+            <h3>Pair your terminal</h3>
+            <p>Device-code login works locally, over SSH, and inside Termux with zero API key setup.</p>
+            <div class="cmd-box">
+              <div class="cmd-text"><span>openmi login</span></div>
+              <button type="button" class="copy-btn" data-copy="openmi login" aria-label="Copy login command">
+                <span data-copy-label>Copy</span>
+              </button>
             </div>
-            <div class="cli-note">Launch interactive AI coding TUI</div>
           </div>
-          <div class="cli-item">
-            <div class="cli-cmd-row">
-              <span class="cli-code">openmi credits</span>
-              <button type="button" class="btn btn-secondary btn-sm" data-copy="openmi credits">Copy</button>
+
+          <div class="step-card">
+            <span class="step-num">03</span>
+            <h3>Launch in your repo</h3>
+            <p>Open any project directory and start prompting. Resume anytime with <code>--resume</code>.</p>
+            <div class="cmd-box">
+              <div class="cmd-text"><span>openmi</span></div>
+              <button type="button" class="copy-btn" data-copy="openmi" aria-label="Copy run command">
+                <span data-copy-label>Copy</span>
+              </button>
             </div>
-            <div class="cli-note">Check daily credits, tokens &amp; turns</div>
-          </div>
-          <div class="cli-item">
-            <div class="cli-cmd-row">
-              <span class="cli-code">openmi upgrade</span>
-              <button type="button" class="btn btn-secondary btn-sm" data-copy="openmi upgrade">Copy</button>
-            </div>
-            <div class="cli-note">Jump straight to /pay in your browser</div>
           </div>
         </div>
-      </section>
-    </main>
-  </div>
+      </div>
+    </section>
 
-  <script type="module" src="/dashboard.js"></script>
+    <!-- Passes & Console Callout -->
+    <section class="section">
+      <div class="container">
+        <div class="callout-band">
+          <div class="callout-copy">
+            <h2>Start free. Scale with hourly passes or BYOK.</h2>
+            <p>
+              Every account includes daily credits that reset at 00:00 UTC. Track usage, activate passes, or plug in your own API keys from the Openmi Console.
+            </p>
+          </div>
+          <div class="callout-actions">
+            <a href="/download" class="btn btn-hero">Download CLI</a>
+            <a href="/pay" class="btn btn-secondary" style="padding:14px 20px;">View Passes</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <a href="/" class="brand-link" style="font-size:14px;">
+        <span class="brand-mark" style="width:28px;height:28px;font-size:13px;" aria-hidden="true">O</span>
+        <span>Openmi CLI</span>
+      </a>
+      <div class="footer-links">
+        <a href="/download">Download</a>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/pay">Passes</a>
+        <a href="/provider">BYOK</a>
+        <a href="/settings">Settings</a>
+        <a href="https://github.com/LOWENDLAGANI/Openmi-cli" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/site.js"></script>
 </body>
 </html>
