@@ -1,4 +1,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  initCurrency,
+  getCurrencyState,
+  formatFromMyr,
+  mountCountrySelector,
+} from "./currency.js";
 
 const SUPABASE_URL = "https://umjlmqeghfrfpduhkits.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_5VfWWlMRio4X-dCfq8IZnw_oYPbh6db";
@@ -559,6 +565,18 @@ document.querySelectorAll("[data-copy]").forEach((btn) => {
 setInterval(() => {
   if (currentCredits) renderCredits(currentCredits);
 }, 30_000);
+
+function updateUpgradeCtaCurrency() {
+  const cta = $("btn-upgrade-cta");
+  if (!cta) return;
+  const info = getCurrencyState();
+  const starting = formatFromMyr(14.99, info.currency);
+  cta.textContent = `Upgrade Pass · from ${starting.text}`;
+}
+
+initCurrency();
+mountCountrySelector($("country-selector-slot"), updateUpgradeCtaCurrency);
+updateUpgradeCtaCurrency();
 
 supabase.auth.onAuthStateChange((_event, session) => {
   applyAuth(session);

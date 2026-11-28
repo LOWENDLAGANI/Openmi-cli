@@ -1,4 +1,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  initCurrency,
+  getCurrencyState,
+  formatFromMyr,
+  mountCountrySelector,
+} from "./currency.js";
 
 const SUPABASE_URL = "https://umjlmqeghfrfpduhkits.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_5VfWWlMRio4X-dCfq8IZnw_oYPbh6db";
@@ -36,6 +42,8 @@ const $ = (id) => document.getElementById(id);
 
 let currentSession = null;
 let loadedPlans = [...DEFAULT_PLANS];
+let lastPaymentLink = DEFAULT_PAYMENT_LINK;
+let lastPaused = false;
 
 function showStatus(msg, kind = "") {
   const el = $("status-msg");
@@ -75,12 +83,20 @@ function renderPlans(plans, paymentLink, paused) {
   const source = Array.isArray(plans) && plans.length > 0 ? plans : DEFAULT_PLANS;
   const ordered = [...source].sort((a, b) => Number(b.days || 0) - Number(a.days || 0));
   loadedPlans = ordered;
+  lastPaymentLink = paymentLink;
+  lastPaused = paused;
+
+  const currState = getCurrencyState();
+  const freePrice = formatFromMyr(0, currState.currency);
 
   const paidCards = ordered
     .map((p) => {
       const isPopular = p.id === "pass-30" || Number(p.days) >= 30;
       const tag = isPopular ? "Most popular" : "Fixed term";
-      const priceText = `MYR ${Number(p.price_myr).toFixed(2)}`;
+      const priceInfo = formatFromMyr(p.price_myr, currState.currency);
+      const priceNote = priceInfo.isMyr
+        ? ""
+        : `<p class="plan-price-note">≈ MYR ${Number(p.price_myr).toFixed(2)} · approx. billed via Sociabuzz</p>`;
       const btnCls = isPopular ? "btn btn-primary" : "btn btn-secondary";
       const ctaLabel = isPopular ? `Get ${escapeHtml(p.name)} →` : `Get ${escapeHtml(p.name)}`;
       const cta = paused
@@ -95,9 +111,10 @@ function renderPlans(plans, paymentLink, paused) {
           </div>
           <p class="plan-submeta">${p.daily_credits} Credit/day · +${p.upfront_credit} Wallet Coins</p>
           <div class="plan-price-row">
-            <span class="plan-price">${priceText}</span>
+            <span class="plan-price">${escapeHtml(priceInfo.text)}</span>
             <span class="plan-period">/ ${p.days} days</span>
           </div>
+          ${priceNote}
           ${cta}
           <div class="plan-divider" aria-hidden="true"></div>
           <ul class="plan-features">
@@ -135,7 +152,7 @@ function renderPlans(plans, paymentLink, paused) {
       </div>
       <p class="plan-submeta">6 Credit/day · 2M tokens/day</p>
       <div class="plan-price-row">
-        <span class="plan-price">MYR 0.00</span>
+        <span class="plan-price">${escapeHtml(freePrice.text)}</span>
         <span class="plan-period">/ forever</span>
       </div>
       <a href="/" class="btn btn-secondary">Open dashboard</a>
@@ -159,6 +176,24 @@ function renderPlans(plans, paymentLink, paused) {
 
   const grid = $("plans-grid");
   grid.innerHTML = paidCards + freeCard;
+
+  // Keep receipt form's plan dropdown labels synced with the selected currency
+  const planSelect = $("plan-select");
+  if (planSelect) {
+    const prevVal = planSelect.value;
+    planSelect.innerHTML = ordered
+      .map((p) => {
+        const info = formatFromMyr(p.price_myr, currState.currency);
+        const priceLabel = info.isMyr
+          ? `MYR ${Number(p.price_myr).toFixed(2)}`
+          : `≈ ${info.text} · MYR ${Number(p.price_myr).toFixed(2)}`;
+        return `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${escapeHtml(priceLabel)} · +${p.upfront_credit} Wallet Coins)</option>`;
+      })
+      .join("");
+    if (prevVal && ordered.some((p) => p.id === prevVal)) {
+      planSelect.value = prevVal;
+    }
+  }
 
   // Clicking a pass button pre-selects that plan and opens the 3-second Sociabuzz confirmation modal
   grid.querySelectorAll("[data-select-plan]").forEach((el) => {
@@ -411,6 +446,12 @@ function renderAuth(session) {
     renderPlans(DEFAULT_PLANS, DEFAULT_PAYMENT_LINK, false);
   }
 }
+
+// Initialize country/currency detection & mount topbar selector
+initCurrency();
+mountCountrySelector($("country-selector-slot"), () => {
+  renderPlans(loadedPlans, lastPaymentLink, lastPaused);
+});
 
 // Render default plans immediately so the page never flashes empty
 renderPlans(DEFAULT_PLANS, DEFAULT_PAYMENT_LINK, false);
