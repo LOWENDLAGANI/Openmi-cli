@@ -307,9 +307,13 @@ mod tests {
     #[tokio::test]
     async fn pre_tool_hook_blocks_on_nonzero_exit_with_stderr() {
         let tmp = tempfile::tempdir().unwrap();
+        #[cfg(windows)]
+        let cmd = "echo blocked by policy 1>&2 & exit /b 2";
+        #[cfg(not(windows))]
+        let cmd = "echo 'blocked by policy' >&2; exit 2";
         let hooks = vec![HookRule {
             matcher: "run_command".into(),
-            command: "echo 'blocked by policy' >&2; exit 2".into(),
+            command: cmd.into(),
             timeout_ms: Some(5000),
         }];
         let out = run_pre_tool_hooks(
@@ -332,9 +336,13 @@ mod tests {
     #[tokio::test]
     async fn post_tool_hook_runs_and_reports_warning_on_failure() {
         let tmp = tempfile::tempdir().unwrap();
+        #[cfg(windows)]
+        let cmd = "echo format failed 1>&2 & exit /b 1";
+        #[cfg(not(windows))]
+        let cmd = "echo 'format failed' >&2; exit 1";
         let hooks = vec![HookRule {
             matcher: "edit_file|write_file".into(),
-            command: "echo 'format failed' >&2; exit 1".into(),
+            command: cmd.into(),
             timeout_ms: Some(5000),
         }];
         let note = run_post_tool_hooks(
