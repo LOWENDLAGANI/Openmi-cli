@@ -555,20 +555,20 @@
       <form id="receipt-form" class="pay-card">
         <div>
           <h2>Upload Proof of Payment</h2>
-          <p class="muted" style="margin:4px 0 0;">After paying on Sociabuzz (charged in MYR), submit your transaction reference and receipt (PNG, JPEG, WEBP, or PDF up to 5 MB). Your pass activates once approved.</p>
+          <p class="muted" style="margin:4px 0 0;">After paying on Sociabuzz, submit your transaction reference and receipt (PNG, JPEG, WEBP, or PDF up to 5 MB). Your pass activates once approved.</p>
         </div>
 
         <div class="form-row">
           <div class="field">
             <label for="plan-select">Plan</label>
             <select id="plan-select" class="input" required>
-              <option value="pass-30">30-day pass (MYR 29.00 · +3 Wallet Coins)</option>
-              <option value="pass-15">15-day pass (MYR 14.99 · +2 Wallet Coins)</option>
+              <option value="pass-30">30-day pass (+3 Wallet Coins)</option>
+              <option value="pass-15">15-day pass (+2 Wallet Coins)</option>
             </select>
           </div>
           <div class="field">
-            <label for="amount-input">Amount Paid (MYR)</label>
-            <input id="amount-input" type="number" step="0.01" min="14.99" class="input mono" placeholder="29.00" required />
+            <label for="amount-input" id="amount-label">Amount Paid</label>
+            <input id="amount-input" type="number" step="0.01" min="0.01" class="input mono" placeholder="0.00" required />
           </div>
         </div>
 

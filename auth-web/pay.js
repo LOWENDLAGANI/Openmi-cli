@@ -2,7 +2,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   initCurrency,
   getCurrencyState,
+  convertFromMyr,
+  convertToMyr,
+  formatMoney,
   formatFromMyr,
+  isZeroDecimalCurrency,
   mountCountrySelector,
 } from "./currency.js";
 
@@ -94,9 +98,7 @@ function renderPlans(plans, paymentLink, paused) {
       const isPopular = p.id === "pass-30" || Number(p.days) >= 30;
       const tag = isPopular ? "Most popular" : "Fixed term";
       const priceInfo = formatFromMyr(p.price_myr, currState.currency);
-      const priceNote = priceInfo.isMyr
-        ? ""
-        : `<p class="plan-price-note">≈ MYR ${Number(p.price_myr).toFixed(2)} · approx. billed via Sociabuzz</p>`;
+      const priceNote = `<p class="plan-price-note">One-time payment via Sociabuzz · no auto-renewal</p>`;
       const btnCls = isPopular ? "btn btn-primary" : "btn btn-secondary";
       const ctaLabel = isPopular ? `Get ${escapeHtml(p.name)} →` : `Get ${escapeHtml(p.name)}`;
       const cta = paused
@@ -184,9 +186,7 @@ function renderPlans(plans, paymentLink, paused) {
     planSelect.innerHTML = ordered
       .map((p) => {
         const info = formatFromMyr(p.price_myr, currState.currency);
-        const priceLabel = info.isMyr
-          ? `MYR ${Number(p.price_myr).toFixed(2)}`
-          : `≈ ${info.text} · MYR ${Number(p.price_myr).toFixed(2)}`;
+        const priceLabel = info.text;
         return `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${escapeHtml(priceLabel)} · +${p.upfront_credit} Wallet Coins)</option>`;
       })
       .join("");
@@ -299,10 +299,12 @@ function renderRequests(requests) {
       const noteLine = r.decision_note
         ? `<div class="muted">Operator note: ${escapeHtml(r.decision_note)}</div>`
         : "";
+      const currState = getCurrencyState();
+      const amountLabel = formatFromMyr(r.amount_myr, currState.currency).text;
       return `
         <div class="req-row">
           <div>
-            <div><strong>${escapeHtml(r.plan_id)}</strong> · <span class="mono">MYR ${Number(r.amount_myr).toFixed(2)}</span> · <span class="mono">${escapeHtml(r.reference)}</span></div>
+            <div><strong>${escapeHtml(r.plan_id)}</strong> · <span class="mono">${escapeHtml(amountLabel)}</span> · <span class="mono">${escapeHtml(r.reference)}</span></div>
             <div class="muted">Submitted ${escapeHtml(fmtDate(r.created_at))}${r.credit_granted ? ` · +${r.credit_granted} Coins` : ""}</div>
             ${noteLine}
           </div>
@@ -315,6 +317,8 @@ function renderRequests(requests) {
     })
     .join("");
 }
+
+let lastRequests = [];
 
 async function loadPayments() {
   if (!currentSession?.access_token) return;
@@ -353,9 +357,10 @@ async function loadPayments() {
     $("paused-banner").classList.toggle("hidden", !paused);
     $("receipt-form").classList.toggle("hidden", paused);
 
+    lastRequests = data.requests || [];
     renderPlans(data.plans || DEFAULT_PLANS, data.payment_link || DEFAULT_PAYMENT_LINK, paused);
-    renderRequests(data.requests || []);
-    syncAmountWithPlan();
+    renderRequests(lastRequests);
+    syncAmountWithPlan(true);
   } catch (err) {
     showStatus(err.message || "Network error loading billing data.", "error");
   }
@@ -365,11 +370,22 @@ function syncAmountWithPlan(force = false) {
   const planId = $("plan-select").value;
   const plan = loadedPlans.find((p) => p.id === planId);
   if (!plan) return;
+  const currState = getCurrencyState();
+  const conv = convertFromMyr(plan.price_myr, currState.currency);
+  const curr = conv.currency;
+  const isZeroDec = isZeroDecimalCurrency(curr);
+  const formattedVal = isZeroDec ? String(Math.round(conv.amount)) : conv.amount.toFixed(2);
+  const minVal = isZeroDec ? String(Math.max(1, Math.floor(conv.amount * 0.95))) : Math.max(0.01, conv.amount * 0.95).toFixed(2);
+
+  const labelEl = $("amount-label");
+  if (labelEl) labelEl.textContent = `Amount Paid (${curr})`;
+
   const input = $("amount-input");
-  input.min = String(plan.price_myr);
-  input.placeholder = plan.price_myr.toFixed(2);
-  if (force || !input.value || Number(input.value) < plan.price_myr) {
-    input.value = plan.price_myr.toFixed(2);
+  input.step = isZeroDec ? "1" : "0.01";
+  input.min = minVal;
+  input.placeholder = formattedVal;
+  if (force || !input.value) {
+    input.value = formattedVal;
   }
 }
 
@@ -391,11 +407,21 @@ $("receipt-form").addEventListener("submit", async (e) => {
     return;
   }
 
+  const currState = getCurrencyState();
+  const localAmount = Number($("amount-input").value.trim());
+  const conv = convertFromMyr(1, currState.currency);
+  const activeCurr = conv.currency;
+  const amountMyr = Math.round(convertToMyr(localAmount, activeCurr) * 100) / 100;
+  const rawNote = $("note-input").value.trim();
+  const noteWithCurrency = activeCurr === "MYR"
+    ? rawNote
+    : `[Paid ${formatMoney(localAmount, activeCurr)}]${rawNote ? " " + rawNote : ""}`;
+
   const fd = new FormData();
   fd.append("plan_id", $("plan-select").value);
-  fd.append("amount_myr", $("amount-input").value.trim());
+  fd.append("amount_myr", String(amountMyr));
   fd.append("reference", $("ref-input").value.trim());
-  fd.append("note", $("note-input").value.trim());
+  fd.append("note", noteWithCurrency.slice(0, 500));
   fd.append("receipt", file);
 
   const btn = $("submit-btn");
@@ -451,6 +477,8 @@ function renderAuth(session) {
 initCurrency();
 mountCountrySelector($("country-selector-slot"), () => {
   renderPlans(loadedPlans, lastPaymentLink, lastPaused);
+  if (lastRequests.length > 0) renderRequests(lastRequests);
+  syncAmountWithPlan(true);
 });
 
 // Render default plans immediately so the page never flashes empty

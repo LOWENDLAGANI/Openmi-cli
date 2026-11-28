@@ -323,11 +323,12 @@ Deno.serve(async (req: Request) => {
 
     const rawAmount = String(form.get("amount_myr") ?? "").trim();
     const amountMyr = rawAmount ? Math.round(Number(rawAmount) * 100) / 100 : plan.price_myr;
-    if (!Number.isFinite(amountMyr) || amountMyr < plan.price_myr || amountMyr > 100000) {
+    const minAcceptable = Math.round(plan.price_myr * 0.95 * 100) / 100;
+    if (!Number.isFinite(amountMyr) || amountMyr < minAcceptable || amountMyr > 100000) {
       return jsonResponse(
         {
           error: "invalid_amount",
-          message: `Amount must be at least RM ${plan.price_myr.toFixed(2)} for ${plan.name}.`,
+          message: `Amount is below the minimum required for ${plan.name}.`,
         },
         400,
       );

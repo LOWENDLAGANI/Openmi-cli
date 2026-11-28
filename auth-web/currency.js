@@ -566,6 +566,18 @@ export function convertFromMyr(amountMyr, currencyCode) {
   return { amount: num * usdRate, currency: "USD", fallbackToUsd: true };
 }
 
+export function convertToMyr(amountLocal, currencyCode) {
+  const num = Number(amountLocal || 0);
+  const curr = String(currencyCode || "MYR").toUpperCase();
+  if (curr === "MYR") return num;
+  const rate = state.rates[curr] || state.rates.USD || FALLBACK_RATES_MYR.USD;
+  return rate > 0 ? num / rate : num;
+}
+
+export function isZeroDecimalCurrency(currencyCode) {
+  return ZERO_DECIMAL_CURRENCIES.has(String(currencyCode || "").toUpperCase());
+}
+
 export function formatMoney(amount, currencyCode) {
   const curr = String(currencyCode || "MYR").toUpperCase();
   const isZeroDec = ZERO_DECIMAL_CURRENCIES.has(curr);
