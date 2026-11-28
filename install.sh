@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-REPO="${OPENMI_REPO:-LOWENDLAGANI/openmi-release}"
+REPO="${OPENMI_REPO:-LOWENDLAGANI/Openmi-cli}"
 VERSION="${OPENMI_VERSION:-latest}"
 
 detect_target() {

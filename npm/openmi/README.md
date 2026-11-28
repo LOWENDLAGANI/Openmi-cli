@@ -22,4 +22,4 @@ Prebuilt binaries are automatically installed for:
 - macOS Apple Silicon (`arm64`)
 - Windows (`x64`)
 
-For shell/PowerShell installers or manual downloads, see [openmi-release](https://github.com/LOWENDLAGANI/openmi-release).
+For shell/PowerShell installers or manual downloads, see [Openmi-cli](https://github.com/LOWENDLAGANI/Openmi-cli).

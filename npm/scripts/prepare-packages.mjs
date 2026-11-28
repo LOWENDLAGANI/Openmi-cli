@@ -93,10 +93,10 @@ for (const t of TARGETS) {
     name: t.pkgName,
     version,
     description: `Prebuilt Openmi CLI binary for ${t.dirName}`,
-    homepage: "https://github.com/LOWENDLAGANI/openmi-release",
+    homepage: "https://github.com/LOWENDLAGANI/Openmi-cli",
     repository: {
       type: "git",
-      url: "https://github.com/LOWENDLAGANI/openmi-release.git",
+      url: "https://github.com/LOWENDLAGANI/Openmi-cli.git",
     },
     license: "MIT",
     os: t.os,

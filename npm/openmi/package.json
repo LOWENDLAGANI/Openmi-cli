@@ -9,13 +9,13 @@
     "coding-assistant",
     "terminal"
   ],
-  "homepage": "https://github.com/LOWENDLAGANI/openmi-release",
+  "homepage": "https://github.com/LOWENDLAGANI/Openmi-cli",
   "repository": {
     "type": "git",
-    "url": "https://github.com/LOWENDLAGANI/openmi-release.git"
+    "url": "https://github.com/LOWENDLAGANI/Openmi-cli.git"
   },
   "bugs": {
-    "url": "https://github.com/LOWENDLAGANI/openmi-release/issues"
+    "url": "https://github.com/LOWENDLAGANI/Openmi-cli/issues"
   },
   "license": "MIT",
   "bin": {

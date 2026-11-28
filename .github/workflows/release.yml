@@ -17,7 +17,7 @@ on:
         type: boolean
 
 env:
-  RELEASE_REPO: LOWENDLAGANI/openmi-release
+  RELEASE_REPO: LOWENDLAGANI/Openmi-cli
 
 jobs:
   meta:
@@ -113,6 +113,8 @@ jobs:
   publish-github-release:
     needs: [meta, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -127,24 +129,9 @@ jobs:
         working-directory: release-assets
         run: sha256sum * > SHA256SUMS.txt
 
-      - name: Sync install.sh and install.ps1 to public openmi-release repo
+      - name: Publish GitHub Release
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
-        run: |
-          git clone "https://x-access-token:${GH_TOKEN}@github.com/${RELEASE_REPO}.git" public-release-repo
-          cp install.sh install.ps1 public-release-repo/
-          cd public-release-repo
-          git config user.name "openmi-release-bot"
-          git config user.email "bot@openmi.local"
-          if [ -n "$(git status --porcelain)" ]; then
-            git add install.sh install.ps1
-            git commit -m "chore: sync installers for ${{ needs.meta.outputs.tag }}"
-            git push origin HEAD
-          fi
-
-      - name: Publish GitHub Release to public openmi-release repo
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ needs.meta.outputs.tag }}"
           if gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then

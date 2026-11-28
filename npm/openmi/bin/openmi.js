@@ -17,7 +17,7 @@ if (!target) {
   console.error(
     `openmi: unsupported platform "${key}".\n` +
       `Supported npm platforms: ${Object.keys(PLATFORMS).join(", ")}.\n` +
-      `See https://github.com/LOWENDLAGANI/openmi-release for other installation options.`
+      `See https://github.com/LOWENDLAGANI/Openmi-cli for other installation options.`
   );
   process.exit(1);
 }

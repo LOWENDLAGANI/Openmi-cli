@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use crate::exit_codes::CliError;
 
 pub const DEFAULT_RELEASE_API_URL: &str =
-    "https://api.github.com/repos/LOWENDLAGANI/openmi-release/releases/latest";
+    "https://api.github.com/repos/LOWENDLAGANI/Openmi-cli/releases/latest";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReleaseInfo {
