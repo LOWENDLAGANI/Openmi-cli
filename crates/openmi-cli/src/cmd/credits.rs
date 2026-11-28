@@ -61,7 +61,10 @@ pub async fn execute(json: bool, api_url: Option<String>) -> Result<(), CliError
             "Max Turns:     {} steps/prompt",
             status.effective_max_steps()
         );
-        println!("Wallet Coins:  {} (never expires · 1 Coin = 1 Credit)", status.wallet_credit);
+        println!(
+            "Wallet Coins:  {} (never expires · 1 Coin = 1 Credit)",
+            status.wallet_credit
+        );
         if let Some((model, mins)) = status.active_pass_remaining() {
             println!("Active Pass:   {} ({}m remaining)", model, mins);
         } else {

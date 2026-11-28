@@ -498,12 +498,10 @@ mod tests {
         assert!(!is_newer_version("0.2.0", "v0.1.9"));
     }
 
-    #[test]
-    fn extracts_deflated_openmi_exe_from_zip() {
+    fn build_test_zip(name: &[u8], payload: &[u8]) -> Vec<u8> {
         use flate2::write::DeflateEncoder;
         use std::io::Write;
 
-        let payload = b"MZ-fake-windows-openmi-binary-payload-0.2.0";
         let mut crc = flate2::Crc::new();
         crc.update(payload);
         let crc32 = crc.sum();
@@ -512,7 +510,6 @@ mod tests {
         encoder.write_all(payload).unwrap();
         let compressed = encoder.finish().unwrap();
 
-        let name = b"openmi.exe";
         let mut zip = Vec::new();
         // Local File Header
         zip.extend_from_slice(&[0x50, 0x4b, 0x03, 0x04]);
@@ -560,14 +557,20 @@ mod tests {
         zip.extend_from_slice(&cd_size.to_le_bytes());
         zip.extend_from_slice(&cd_offset.to_le_bytes());
         zip.extend_from_slice(&0u16.to_le_bytes()); // comment len
+        zip
+    }
 
+    #[test]
+    fn extracts_deflated_openmi_exe_from_zip() {
+        let payload = b"MZ-fake-windows-openmi-binary-payload-0.2.0";
+        let zip = build_test_zip(b"openmi.exe", payload);
         let extracted = extract_binary_from_zip(&zip).unwrap();
         assert_eq!(extracted, payload);
     }
 
     #[tokio::test]
     async fn updates_and_verifies_sha256_against_mock_release_server() {
-        // Build an in-memory `.tar.gz` containing a fake `openmi` binary.
+        // Build an in-memory `.tar.gz` or `.zip` containing a fake `openmi` binary.
         let new_bin = b"#!/bin/sh\necho openmi-0.2.0\n";
         let asset_name = current_target_asset_name().to_string();
         let archive_bytes = if asset_name.ends_with(".tar.gz") {
@@ -585,6 +588,8 @@ mod tests {
                 builder.into_inner().unwrap().finish().unwrap();
             }
             Arc::new(tar_buf)
+        } else if asset_name.ends_with(".zip") {
+            Arc::new(build_test_zip(b"openmi.exe", new_bin))
         } else {
             Arc::new(new_bin.to_vec())
         };

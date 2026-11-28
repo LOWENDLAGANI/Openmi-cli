@@ -33,8 +33,7 @@ use crate::session_store::{SavedSession, SessionStore};
 use crate::settings::UserSettings;
 use crate::tui::app::{
     resolve_folder_input, AskUserModalState, EffortSelectorState, FolderPickerState,
-    FullAccessModalState,
-    ModelSelectorState, ResumePickerState, SettingsModalState, TuiApp,
+    FullAccessModalState, ModelSelectorState, ResumePickerState, SettingsModalState, TuiApp,
 };
 use crate::tui::approval::{
     PendingApproval, PendingAskUser, TuiApprovalHandler, TuiAskUserHandler,

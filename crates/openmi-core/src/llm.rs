@@ -280,7 +280,10 @@ pub async fn stream_step(
 
             if is_transient && attempt < MAX_RATE_LIMIT_RETRIES {
                 attempt += 1;
-                let wait_secs = retry_after_hdr.or(retry_after_body).unwrap_or(3).clamp(1, 15);
+                let wait_secs = retry_after_hdr
+                    .or(retry_after_body)
+                    .unwrap_or(3)
+                    .clamp(1, 15);
                 tokio::select! {
                     _ = cancel.cancelled() => return Err(CoreError::Cancelled),
                     _ = tokio::time::sleep(std::time::Duration::from_secs(wait_secs)) => {}

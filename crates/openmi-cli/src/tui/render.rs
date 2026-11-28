@@ -382,7 +382,9 @@ fn render_chat(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             TranscriptKind::Thinking => {
                 lines.push(Line::from(Span::styled(
                     "Thinking",
-                    Style::default().fg(MUTED).add_modifier(Modifier::ITALIC | Modifier::BOLD),
+                    Style::default()
+                        .fg(MUTED)
+                        .add_modifier(Modifier::ITALIC | Modifier::BOLD),
                 )));
                 for line_text in entry.text.lines() {
                     lines.push(Line::from(vec![
@@ -1134,7 +1136,10 @@ fn render_model_selector_modal(frame: &mut Frame<'_>, app: &TuiApp, selector: &M
                 Style::default().fg(ACCENT)
             },
         ),
-        Span::styled("  ·  opens /provider in browser", Style::default().fg(MUTED)),
+        Span::styled(
+            "  ·  opens /provider in browser",
+            Style::default().fg(MUTED),
+        ),
     ]));
 
     lines.push(Line::from(""));

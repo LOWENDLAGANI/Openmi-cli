@@ -346,9 +346,10 @@ mod tests {
         assert_eq!(byok_model.credit_cost, 0);
         assert_eq!(byok_model.provider_name.as_deref(), Some("OpenAI"));
 
-        let legacy_credit: CreditStatus =
-            serde_json::from_str(r#"{"balance":6,"plan":"free","pay_url":"https://www.openmi.space/pay"}"#)
-                .unwrap();
+        let legacy_credit: CreditStatus = serde_json::from_str(
+            r#"{"balance":6,"plan":"free","pay_url":"https://www.openmi.space/pay"}"#,
+        )
+        .unwrap();
         assert_eq!(legacy_credit.wallet_credit, 0);
         assert!(!legacy_credit.is_paid);
         assert_eq!(legacy_credit.effective_max_steps(), 40);
