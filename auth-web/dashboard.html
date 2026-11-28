@@ -161,7 +161,7 @@
             </div>
             <div class="pass-strip-sub" id="redeem-status-msg">Have a promo or giveaway code? Enter it to claim Wallet Coins.</div>
           </div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <div class="redeem-controls" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <input type="text" id="redeem-code-input" class="search-input mono" style="min-width:190px;text-transform:uppercase;" maxlength="64" placeholder="OPENMI-XXXX-XXXX" required />
             <button type="submit" class="btn btn-primary btn-sm" id="btn-redeem-code">Redeem</button>
           </div>
@@ -178,7 +178,7 @@
           </div>
           <div style="padding:16px 20px;display:flex;flex-direction:column;gap:14px;">
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between;">
-              <div style="display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 260px;">
+              <div style="display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 220px;">
                 <span class="metric-label">Your Personal Invite Link &amp; Code</span>
                 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                   <span class="cli-code" id="referral-code-text">—</span>
@@ -206,7 +206,7 @@
 
             <form id="apply-ref-form" class="hidden" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border);" autocomplete="off">
               <span class="metric-label" style="margin-right:4px;">Invited by someone?</span>
-              <input type="text" id="apply-ref-input" class="search-input mono" style="min-width:170px;height:32px;text-transform:uppercase;" maxlength="32" placeholder="INV-XXXXXXXX" required />
+              <input type="text" id="apply-ref-input" class="search-input mono" style="flex:1 1 140px;min-width:0;height:36px;text-transform:uppercase;" maxlength="32" placeholder="INV-XXXXXXXX" required />
               <button type="submit" class="btn btn-secondary btn-sm" id="btn-apply-ref">Apply Invite Code</button>
               <span class="metric-sub" id="apply-ref-msg"></span>
             </form>

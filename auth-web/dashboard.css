@@ -55,6 +55,8 @@ body {
   margin: 0;
   padding: 0;
   min-height: 100%;
+  max-width: 100%;
+  overflow-x: clip;
   background: var(--bg);
   color: var(--ink);
   font-family: var(--font-sans);
@@ -209,6 +211,7 @@ body {
   padding: 28px 36px 56px;
   max-width: 1160px;
   width: 100%;
+  min-width: 0;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -580,7 +583,9 @@ body {
 
 .table-wrap {
   width: 100%;
+  max-width: 100%;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .data-table {
@@ -713,31 +718,148 @@ body {
 
 @media (max-width: 760px) {
   .app-shell {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 100dvh;
   }
   .sidebar {
     display: none;
   }
   .mobile-bar {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
+    align-items: stretch;
     gap: 10px;
-    padding: 12px 16px;
+    padding: 10px 14px;
     background: var(--surface);
     border-bottom: 1px solid var(--border-strong);
-    flex-wrap: wrap;
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    max-width: 100%;
   }
   .mobile-nav {
     display: flex;
     gap: 6px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .mobile-nav::-webkit-scrollbar {
+    display: none;
+  }
+  .mobile-nav .btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
   .main-area {
-    padding: 20px 16px 40px;
+    padding: 16px 14px 40px;
+    gap: 16px;
+  }
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .page-header h1 {
+    font-size: 21px;
+  }
+  .page-desc {
+    font-size: 13px;
+  }
+  .header-actions {
+    width: 100%;
+    gap: 8px;
+  }
+  .header-actions .status-chip {
+    max-width: 100%;
+    font-size: 12px;
+    padding: 5px 10px;
+  }
+  .header-actions .btn {
+    flex: 1 1 auto;
+    min-width: 0;
   }
   .metrics-grid,
   .cli-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .metric-card {
+    padding: 14px 16px;
+    min-width: 0;
+  }
+  .metric-value {
+    font-size: 20px;
+    overflow-wrap: anywhere;
+  }
+  .pass-strip {
+    padding: 14px 16px;
+    gap: 12px;
+    align-items: stretch;
+  }
+  .pass-strip-left {
+    min-width: 0;
+  }
+  .pass-strip > .btn {
+    width: 100%;
+  }
+  .redeem-controls {
+    width: 100%;
+  }
+  .redeem-controls .search-input {
+    flex: 1 1 0;
+    min-width: 0 !important;
+    width: 100%;
+  }
+  .panel {
+    max-width: 100%;
+    min-width: 0;
+  }
+  .panel-head {
+    padding: 14px 16px;
+    align-items: stretch;
+  }
+  .panel-head > .btn,
+  .panel-head > .search-input {
+    width: 100%;
+    min-width: 0;
+  }
+  .search-input {
+    min-width: 0;
+    width: 100%;
+    font-size: 16px;
+  }
+  .data-table {
+    font-size: 12.5px;
+  }
+  .data-table th {
+    padding: 9px 12px;
+    font-size: 11px;
+  }
+  .data-table td {
+    padding: 10px 12px;
+  }
+  .model-name,
+  .model-id,
+  .model-desc {
+    overflow-wrap: anywhere;
+  }
+  .cli-grid {
+    padding: 14px 16px;
+  }
+  .cli-item {
+    min-width: 0;
+  }
+  .cli-code {
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+  .signed-out-card {
+    padding: 20px 16px;
+    gap: 14px;
+  }
+  .signed-out-card .btn {
+    width: 100%;
   }
 }
