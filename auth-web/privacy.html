@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#FFB5D8" />
+  <meta name="description" content="Privacy Policy for Openmi CLI and the Openmi Console (www.openmi.space)." />
+  <title>Privacy Policy — Openmi</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:opsz,wght@6..72,600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/site.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container site-header-inner">
+      <a href="/" class="brand-link">
+        <span class="brand-mark" aria-hidden="true">O</span>
+        <span>Openmi</span>
+      </a>
+
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a href="/download" class="nav-link">Download</a>
+        <a href="/pay" class="nav-link">Passes</a>
+        <a href="/provider" class="nav-link">BYOK</a>
+        <a href="/dashboard" class="nav-link">Dashboard</a>
+      </nav>
+
+      <div class="header-cta">
+        <a href="/login?next=/dashboard" class="btn btn-secondary btn-sm">Sign in</a>
+        <a href="/download" class="btn btn-primary btn-sm">Get Started</a>
+      </div>
+
+      <button
+        type="button"
+        class="menu-toggle"
+        id="menu-toggle"
+        aria-label="Toggle navigation menu"
+        aria-expanded="false"
+        aria-controls="mobile-drawer"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <line x1="4" y1="7" x2="20" y2="7" />
+          <line x1="4" y1="12" x2="20" y2="12" />
+          <line x1="4" y1="17" x2="20" y2="17" />
+        </svg>
+      </button>
+    </div>
+
+    <div class="mobile-drawer" id="mobile-drawer">
+      <div class="mobile-drawer-links">
+        <a href="/download" class="nav-link">Download CLI</a>
+        <a href="/pay" class="nav-link">Passes &amp; Billing</a>
+        <a href="/provider" class="nav-link">Providers (BYOK)</a>
+        <a href="/dashboard" class="nav-link">Dashboard</a>
+      </div>
+      <div class="mobile-drawer-actions">
+        <a href="/login?next=/dashboard" class="btn btn-secondary" style="flex:1;">Sign in</a>
+        <a href="/download" class="btn btn-primary" style="flex:1;">Get Started</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="legal-hero">
+      <div class="container">
+        <div class="section-kicker">Legal</div>
+        <h1>Privacy Policy</h1>
+        <p class="legal-meta">Effective date: November 27, 2026 &middot; Applies to Openmi CLI and www.openmi.space</p>
+        <div class="legal-tabs">
+          <a href="/privacy" class="btn btn-primary btn-sm">Privacy Policy</a>
+          <a href="/terms" class="btn btn-secondary btn-sm">Terms of Service</a>
+          <a href="/refund-policy" class="btn btn-secondary btn-sm">No-Refund Policy</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="legal-body">
+      <div class="container">
+        <article class="legal-card">
+          <p>
+            This Privacy Policy explains how <strong>Openmi</strong> (&ldquo;we&rdquo;, &ldquo;our&rdquo;, or &ldquo;us&rdquo;) collects, uses, and protects information when you use the Openmi CLI application, website, and Developer Console at <strong>www.openmi.space</strong>.
+          </p>
+
+          <h2>1. Information We Collect</h2>
+          <ul>
+            <li><strong>Account &amp; Authentication Data:</strong> Your email address, authentication identifiers, and CLI device-login sessions managed through Supabase Auth.</li>
+            <li><strong>Usage &amp; Quota Telemetry:</strong> Daily credit balances, daily input/output token counts, lifetime AI token totals, active hourly pass windows, credit and Wallet Coin ledger entries, and referral/invite code activity.</li>
+            <li><strong>Payment Verification Records:</strong> Paid passes are processed externally through <strong>Sociabuzz</strong>. We do <em>not</em> collect or store your credit card numbers or banking credentials. When you submit payment proof on <code>/pay</code>, we store your Sociabuzz transaction reference, optional supporter note, and uploaded receipt file (PNG, JPEG, WEBP, or PDF up to 5 MB) solely to verify and activate your pass.</li>
+            <li><strong>BYOK (Bring Your Own Key) Configuration:</strong> If you configure your own third-party AI provider API keys via <code>/provider</code> or your local CLI configuration, those keys are used only to authenticate requests to your chosen provider.</li>
+            <li><strong>Browser Storage:</strong> We use essential authentication session storage and local preferences (such as your selected country/currency display preference in <code>localStorage</code>). We do not use third-party advertising trackers.</li>
+          </ul>
+
+          <h2>2. Local Files, Prompts &amp; AI Processing</h2>
+          <ul>
+            <li><strong>Local-First CLI:</strong> Openmi CLI runs locally on your machine (Windows, Linux, macOS, or Android Termux). Exact-byte undo checkpoints and workspace files remain on your device.</li>
+            <li><strong>Prompt &amp; Context Transmission:</strong> Only the prompts, file snippets, or tool outputs you explicitly send during a session are transmitted to AI model providers to generate responses.</li>
+            <li><strong>Managed vs. BYOK Routing:</strong> Requests using Openmi managed credits/passes are routed through Openmi&rsquo;s backend to upstream AI model providers. Requests using BYOK are sent to your configured third-party provider under that provider&rsquo;s own privacy policy.</li>
+          </ul>
+
+          <h2>3. How We Use Information</h2>
+          <ul>
+            <li>Authenticate your account and pair CLI devices via <code>openmi login</code>.</li>
+            <li>Enforce daily credit limits, daily token caps, hourly pass windows, and referral anti-abuse rules.</li>
+            <li>Verify Sociabuzz payment receipts and activate 15-day or 30-day Paid Passes and Wallet Coins.</li>
+            <li>Maintain service reliability, prevent fraud or abuse, and troubleshoot technical issues.</li>
+          </ul>
+
+          <h2>4. Third-Party Infrastructure &amp; Subprocessors</h2>
+          <p>We rely on trusted infrastructure providers to operate Openmi:</p>
+          <ul>
+            <li><strong>Supabase:</strong> Authentication, database storage, and backend edge functions.</li>
+            <li><strong>Vercel:</strong> Hosting for the Openmi web console and static assets.</li>
+            <li><strong>Sociabuzz:</strong> External payment processing for Paid Passes.</li>
+            <li><strong>Upstream AI Model Providers:</strong> Processing prompts for managed models available in the Openmi catalog.</li>
+          </ul>
+
+          <h2>5. Data Retention &amp; Deletion</h2>
+          <p>
+            We retain account, usage ledger, and payment verification records for as long as your account is active or as needed to prevent abuse, resolve billing disputes, and comply with legal obligations. You may manage your account or request deletion through <a href="/settings">Account Settings</a> or by contacting us via our official repository.
+          </p>
+
+          <h2>6. Security</h2>
+          <p>
+            All traffic between Openmi CLI, <code>www.openmi.space</code>, and our backend is encrypted in transit using TLS (<code>rustls</code> in the CLI). While we apply reasonable technical safeguards, no internet service can guarantee absolute security.
+          </p>
+
+          <h2>7. Changes to This Policy</h2>
+          <p>
+            We may update this Privacy Policy from time to time. Material updates will be reflected by the effective date at the top of this page. Continued use of Openmi after changes take effect constitutes acceptance of the updated policy.
+          </p>
+
+          <h2>8. Contact</h2>
+          <p>
+            For privacy questions or data requests, please open an issue or contact the maintainers via <a href="https://github.com/LOWENDLAGANI/Openmi-cli" target="_blank" rel="noopener noreferrer">github.com/LOWENDLAGANI/Openmi-cli</a>.
+          </p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <a href="/" class="brand-link" style="font-size:14px;">
+        <span class="brand-mark" style="width:28px;height:28px;font-size:13px;" aria-hidden="true">O</span>
+        <span>Openmi CLI</span>
+      </a>
+      <div class="footer-links">
+        <a href="/download">Download</a>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/pay">Passes</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund-policy">Refund Policy</a>
+        <a href="https://github.com/LOWENDLAGANI/Openmi-cli" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/site.js"></script>
+</body>
+</html>
