@@ -32,9 +32,9 @@
     "access": "public"
   },
   "optionalDependencies": {
-    "@openmi-cli/linux-x64": "0.1.0",
-    "@openmi-cli/linux-arm64": "0.1.0",
-    "@openmi-cli/darwin-arm64": "0.1.0",
-    "@openmi-cli/win32-x64": "0.1.0"
+    "@minetallestmc/linux-x64": "0.1.0",
+    "@minetallestmc/linux-arm64": "0.1.0",
+    "@minetallestmc/darwin-arm64": "0.1.0",
+    "@minetallestmc/win32-x64": "0.1.0"
   }
 }

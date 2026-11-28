@@ -4,10 +4,10 @@
 const { spawnSync } = require("child_process");
 
 const PLATFORMS = {
-  "linux-x64": { pkg: "@openmi-cli/linux-x64", bin: "bin/openmi" },
-  "linux-arm64": { pkg: "@openmi-cli/linux-arm64", bin: "bin/openmi" },
-  "darwin-arm64": { pkg: "@openmi-cli/darwin-arm64", bin: "bin/openmi" },
-  "win32-x64": { pkg: "@openmi-cli/win32-x64", bin: "bin/openmi.exe" },
+  "linux-x64": { pkg: "@minetallestmc/linux-x64", bin: "bin/openmi" },
+  "linux-arm64": { pkg: "@minetallestmc/linux-arm64", bin: "bin/openmi" },
+  "darwin-arm64": { pkg: "@minetallestmc/darwin-arm64", bin: "bin/openmi" },
+  "win32-x64": { pkg: "@minetallestmc/win32-x64", bin: "bin/openmi.exe" },
 };
 
 const key = `${process.platform}-${process.arch}`;

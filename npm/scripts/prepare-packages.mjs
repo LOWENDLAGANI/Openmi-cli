@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Prepares the main `openmi` npm package and the 4 `@openmi-cli/*` platform
+ * Prepares the main `openmi` npm package and the 4 `@minetallestmc/*` platform
  * packages inside `npm/dist/` using prebuilt binaries from CI artifacts.
  *
  * Usage:
@@ -17,7 +17,7 @@ const DIST_ROOT = path.join(NPM_ROOT, "dist");
 
 const TARGETS = [
   {
-    pkgName: "@openmi-cli/linux-x64",
+    pkgName: "@minetallestmc/linux-x64",
     dirName: "linux-x64",
     artifactDir: "bin-linux-x64",
     os: ["linux"],
@@ -25,7 +25,7 @@ const TARGETS = [
     binName: "openmi",
   },
   {
-    pkgName: "@openmi-cli/linux-arm64",
+    pkgName: "@minetallestmc/linux-arm64",
     dirName: "linux-arm64",
     artifactDir: "bin-linux-arm64",
     os: ["linux"],
@@ -33,7 +33,7 @@ const TARGETS = [
     binName: "openmi",
   },
   {
-    pkgName: "@openmi-cli/darwin-arm64",
+    pkgName: "@minetallestmc/darwin-arm64",
     dirName: "darwin-arm64",
     artifactDir: "bin-darwin-arm64",
     os: ["darwin"],
@@ -41,7 +41,7 @@ const TARGETS = [
     binName: "openmi",
   },
   {
-    pkgName: "@openmi-cli/win32-x64",
+    pkgName: "@minetallestmc/win32-x64",
     dirName: "win32-x64",
     artifactDir: "bin-win32-x64",
     os: ["win32"],
