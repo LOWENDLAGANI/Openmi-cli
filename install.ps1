@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 $ErrorActionPreference = "Stop"
 
-$Repo = if ($env:OPENMI_REPO) { $env:OPENMI_REPO } else { "LOWENDLAGANI/Openmi-cli" }
+$Repo = if ($env:OPENMI_REPO) { $env:OPENMI_REPO } else { "LOWENDLAGANI/openmi-release" }
 $Version = if ($env:OPENMI_VERSION) { $env:OPENMI_VERSION } else { "latest" }
 $Asset = "openmi-x86_64-pc-windows-msvc.zip"
 

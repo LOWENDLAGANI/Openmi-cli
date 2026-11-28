@@ -1,116 +1,192 @@
-name: Release
+name: Release Openmi CLI
 
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 0.1.0 — without leading v)"
+        required: true
+        type: string
+      publish_npm:
+        description: "Publish packages to npmjs.com"
+        required: false
+        default: true
+        type: boolean
 
-permissions:
-  contents: write
+env:
+  RELEASE_REPO: LOWENDLAGANI/openmi-release
 
 jobs:
-  build-matrix:
-    name: Build (${{ matrix.target }})
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      publish_npm: ${{ steps.ver.outputs.publish_npm }}
+    steps:
+      - name: Resolve release version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VER="${{ inputs.version }}"
+            VER="${VER#v}"
+            PUB="${{ inputs.publish_npm }}"
+          else
+            VER="${GITHUB_REF_NAME#v}"
+            PUB="true"
+          fi
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VER}" >> "$GITHUB_OUTPUT"
+          echo "publish_npm=${PUB}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: meta
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            bin: openmi.exe
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            npm_dir: linux-x64
+            ext: ""
+            archive: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            npm_dir: linux-arm64
+            ext: ""
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-14
+            npm_dir: darwin-arm64
+            ext: ""
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            npm_dir: win32-x64
+            ext: ".exe"
             archive: zip
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            bin: openmi
-            archive: tar.gz
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            bin: openmi
-            archive: tar.gz
-          # x86_64 macOS is cross-compiled on the arm64 runner (Intel runner images are retired).
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            bin: openmi
-            archive: tar.gz
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            bin: openmi
-            archive: tar.gz
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-      - name: Build release binary
-        run: cargo build -p openmi-cli --release --target ${{ matrix.target }}
-      - name: Package (Unix tar.gz)
+
+      - name: Build openmi-cli
+        run: cargo build --release --package openmi-cli --target ${{ matrix.target }}
+
+      - name: Package release archive (Unix)
         if: matrix.archive == 'tar.gz'
         shell: bash
         run: |
-          mkdir -p dist
-          ASSET="openmi-${{ matrix.target }}.tar.gz"
-          tar -C "target/${{ matrix.target }}/release" -czf "dist/$ASSET" "${{ matrix.bin }}"
-          (cd dist && shasum -a 256 "$ASSET" > "$ASSET.sha256" || sha256sum "$ASSET" > "$ASSET.sha256")
-      - name: Package (Windows zip)
+          mkdir -p dist-bin dist-archive
+          cp "target/${{ matrix.target }}/release/openmi" "dist-bin/openmi"
+          chmod +x "dist-bin/openmi"
+          tar -czf "dist-archive/openmi-${{ matrix.target }}.tar.gz" -C dist-bin openmi
+
+      - name: Package release archive (Windows)
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $asset = "openmi-${{ matrix.target }}.zip"
-          Compress-Archive -Path "target\${{ matrix.target }}\release\${{ matrix.bin }}" -DestinationPath "dist\$asset"
-          $hash = (Get-FileHash "dist\$asset" -Algorithm SHA256).Hash.ToLower()
-          "$hash  $asset" | Out-File -Encoding ascii "dist\$asset.sha256"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: openmi-${{ matrix.target }}
-          path: dist/*
+          New-Item -ItemType Directory -Force -Path dist-bin, dist-archive | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/openmi.exe" "dist-bin/openmi.exe"
+          Compress-Archive -Path "dist-bin/openmi.exe" -DestinationPath "dist-archive/openmi-${{ matrix.target }}.zip" -Force
 
-  build-termux-aarch64:
-    name: Build Android/Termux (aarch64-linux-android)
+      - name: Upload raw binary for npm
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.npm_dir }}
+          path: dist-bin/openmi${{ matrix.ext }}
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.target }}
+          path: dist-archive/*
+
+  publish-github-release:
+    needs: [meta, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android
-      - name: Locate Android NDK linker
-        run: |
-          NDK_ROOT="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
-          TOOLCHAIN="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$TOOLCHAIN/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
-          echo "CC_aarch64_linux_android=$TOOLCHAIN/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
-          echo "AR_aarch64_linux_android=$TOOLCHAIN/llvm-ar" >> "$GITHUB_ENV"
-      - name: Build openmi for aarch64-linux-android
-        run: cargo build -p openmi-cli --release --target aarch64-linux-android
-      - name: Package Termux artifact
-        run: |
-          mkdir -p dist
-          ASSET="openmi-aarch64-linux-android.tar.gz"
-          tar -C target/aarch64-linux-android/release -czf "dist/$ASSET" openmi
-          (cd dist && sha256sum "$ASSET" > "$ASSET.sha256")
-      - uses: actions/upload-artifact@v7
-        with:
-          name: openmi-aarch64-linux-android
-          path: dist/*
+      - uses: actions/checkout@v4
 
-  publish:
-    name: Publish GitHub Release
-    needs: [build-matrix, build-termux-aarch64]
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v8
+      - name: Download release archives
+        uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          pattern: archive-*
+          path: release-assets
           merge-multiple: true
-      - name: Generate combined SHA256SUMS.txt
-        working-directory: artifacts
-        run: sha256sum openmi-*.tar.gz openmi-*.zip > SHA256SUMS.txt
-      - uses: softprops/action-gh-release@v3
+
+      - name: Generate SHA256SUMS.txt
+        working-directory: release-assets
+        run: sha256sum * > SHA256SUMS.txt
+
+      - name: Sync install.sh and install.ps1 to public openmi-release repo
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+        run: |
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${RELEASE_REPO}.git" public-release-repo
+          cp install.sh install.ps1 public-release-repo/
+          cd public-release-repo
+          git config user.name "openmi-release-bot"
+          git config user.email "bot@openmi.local"
+          if [ -n "$(git status --porcelain)" ]; then
+            git add install.sh install.ps1
+            git commit -m "chore: sync installers for ${{ needs.meta.outputs.tag }}"
+            git push origin HEAD
+          fi
+
+      - name: Publish GitHub Release to public openmi-release repo
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+        run: |
+          TAG="${{ needs.meta.outputs.tag }}"
+          if gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --repo "$RELEASE_REPO" --clobber
+          else
+            gh release create "$TAG" release-assets/* \
+              --repo "$RELEASE_REPO" \
+              --title "Openmi CLI ${TAG}" \
+              --notes "Prebuilt binaries for Openmi CLI ${TAG}. Install via \`npm install -g openmi\` or \`install.sh\` / \`install.ps1\`."
+          fi
+
+  publish-npm:
+    needs: [meta, build, publish-github-release]
+    if: needs.meta.outputs.publish_npm == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
-          files: artifacts/*
-          generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download raw binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bin-*
+          path: npm-artifacts
+
+      - name: Prepare npm packages
+        run: |
+          node npm/scripts/prepare-packages.mjs \
+            --version "${{ needs.meta.outputs.version }}" \
+            --artifacts npm-artifacts
+
+      - name: Publish platform packages and main openmi package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for dir in linux-x64 linux-arm64 darwin-arm64 win32-x64; do
+            echo "Publishing @openmi-cli/${dir}..."
+            (cd "npm/dist/${dir}" && npm publish --access public)
+          done
+          echo "Publishing openmi..."
+          (cd "npm/dist/openmi" && npm publish --access public)

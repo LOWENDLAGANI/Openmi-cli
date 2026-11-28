@@ -1,0 +1,40 @@
+{
+  "name": "openmi",
+  "version": "0.1.0",
+  "description": "Openmi CLI — AI coding assistant in your terminal",
+  "keywords": [
+    "openmi",
+    "ai",
+    "cli",
+    "coding-assistant",
+    "terminal"
+  ],
+  "homepage": "https://github.com/LOWENDLAGANI/openmi-release",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LOWENDLAGANI/openmi-release.git"
+  },
+  "bugs": {
+    "url": "https://github.com/LOWENDLAGANI/openmi-release/issues"
+  },
+  "license": "MIT",
+  "bin": {
+    "openmi": "./bin/openmi.js"
+  },
+  "files": [
+    "bin/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "optionalDependencies": {
+    "@openmi-cli/linux-x64": "0.1.0",
+    "@openmi-cli/linux-arm64": "0.1.0",
+    "@openmi-cli/darwin-arm64": "0.1.0",
+    "@openmi-cli/win32-x64": "0.1.0"
+  }
+}
