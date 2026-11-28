@@ -384,26 +384,34 @@ macro_rules! help_steps {
 macro_rules! help_commands {
     () => {
         concat!(
-            "=== SLASH COMMANDS (INSIDE TUI) ===\n",
-            "  /settings                       Toggle auto-approve, read-only, tool activity lines\n",
-            "  /folder [path]                  Pick a project folder (aliases: /project, /cd)\n",
-            "  /model [id]                     Open interactive model selector or switch directly\n",
-            "  /effort [off|low|medium|high]   Set AI reasoning effort (default: off)\n",
-            "  /resume                         Pick a previous chat to continue\n",
-            "  /new (or /clear)                Start a fresh chat (clears history)\n",
-            "  /compact [focus]                Summarize & compact conversation history\n",
-            "  /plan [on|off]                  Toggle read-only Plan Mode\n",
-            "  /init                           Create a starter OPENMI.md in the project folder\n",
-            "  /memory                         Show persistent project memory file path\n",
-            "  /mode [mode]                    Show or switch mode (read-only|ask|trusted|full-access)\n",
-            "  /diff                           Show colored unified diff for the latest run\n",
-            "  /undo [file|run]                Restore latest run, run ID, or file to pre-write bytes\n",
-            "  /credits, /balance              Refresh plan, daily credits, Wallet Coins, and pass status\n",
-            "  /upgrade                        Open the upgrade / Paid pass page in your browser\n",
-            "  /mcp [status|restart [server]]  Inspect or restart configured stdio MCP servers\n",
-            "  /help [topic]                   Show full guide or topic (steps|commands|modes|keys|mcp|cli)\n",
-            "  /version                        Show the running Openmi CLI version and platform\n",
-            "  /quit (or /exit)                Exit Openmi TUI (session is auto-saved)\n"
+            "Chat & Sessions\n",
+            "  /new (or /clear)                Start a fresh chat and clear current history\n",
+            "  /resume                         Pick a previous saved session to continue\n",
+            "  /compact [focus]                Summarize conversation history to free up context\n",
+            "\n",
+            "Model & Reasoning\n",
+            "  /model [id]                     Open the model picker or switch directly to a model ID\n",
+            "  /effort [off|low|medium|high]   Set AI reasoning effort level (default: off)\n",
+            "\n",
+            "Workspace & Files\n",
+            "  /folder [path]                  Switch project directory (aliases: /project, /cd)\n",
+            "  /diff                           Show colored unified diff of changes from the latest run\n",
+            "  /undo [file|run]                Restore the latest run, a specific run ID, or a file\n",
+            "  /init                           Create a starter OPENMI.md instructions file in this project\n",
+            "  /memory                         Show or inspect the persistent project memory file\n",
+            "\n",
+            "Safety & Settings\n",
+            "  /mode [mode]                    Show or switch permission mode (read-only|ask|trusted|full-access)\n",
+            "  /plan [on|off]                  Toggle read-only Plan Mode (inspect & plan without edits)\n",
+            "  /settings                       Toggle auto-approve, read-only, and tool activity lines\n",
+            "  /mcp [status|restart [server]]  Check status or restart configured MCP tool servers\n",
+            "\n",
+            "Account & Info\n",
+            "  /credits (or /balance)          Refresh plan tier, daily credits, Wallet Coins, and pass status\n",
+            "  /upgrade                        Open the Paid pass / billing page in your browser\n",
+            "  /version                        Show the installed Openmi CLI version and platform\n",
+            "  /help [topic]                   Show this command list (or /help steps|modes|keys|mcp|cli)\n",
+            "  /quit (or /exit)                Exit Openmi TUI (current session is auto-saved)\n"
         )
     };
 }
@@ -479,21 +487,11 @@ const HELP_CLI: &str = help_cli!();
 
 pub fn help_text() -> &'static str {
     concat!(
-        "Openmi CLI Tutorial & Feature Guide\n",
-        "===================================\n\n",
-        help_steps!(),
-        "\n",
+        "Openmi Commands\n",
+        "===============\n\n",
         help_commands!(),
         "\n",
-        help_modes!(),
-        "\n",
-        help_keys!(),
-        "\n",
-        help_mcp!(),
-        "\n",
-        help_cli!(),
-        "\n",
-        "Tip: Use PageUp/PageDown to scroll, or run `/help <topic>` (steps|commands|modes|keys|mcp|cli)."
+        "More info: /help steps | /help modes | /help keys | /help mcp | /help cli"
     )
 }
 
@@ -713,13 +711,14 @@ mod tests {
             tmp.path(),
         ) {
             SlashOutcome::Message(m) => {
-                assert!(m.contains("STEP-BY-STEP TUTORIAL"));
-                assert!(m.contains("Step 1."));
-                assert!(m.contains("Step 7."));
+                assert!(m.contains("Openmi Commands"));
+                assert!(m.contains("Chat & Sessions"));
+                assert!(m.contains("Model & Reasoning"));
+                assert!(m.contains("Workspace & Files"));
+                assert!(m.contains("Safety & Settings"));
+                assert!(m.contains("Account & Info"));
                 assert!(m.contains("/undo"));
-                assert!(m.contains("PERMISSION MODES"));
-                assert!(m.contains("KEYBOARD SHORTCUTS"));
-                assert!(m.contains("CLI COMMANDS"));
+                assert!(m.contains("/model"));
             }
             other => panic!("expected Help message, got {other:?}"),
         }
