@@ -84,10 +84,17 @@ function fmtMinsLeft(iso) {
 
 function renderSettings(s) {
   state.settings = s;
+  const prevOpenIds = new Set(state.models.filter((m) => m._fallbacksOpen && m.id).map((m) => m.id));
   state.models = (s.models || []).map((m) => ({
     ...m,
     credit_cost: typeof m.credit_cost === "number" ? m.credit_cost : 3,
     paid_only: Boolean(m.paid_only),
+    fallbacks: (Array.isArray(m.fallbacks) ? m.fallbacks : []).slice(0, 10).map((fb, fbIdx) => ({
+      ...fb,
+      api_key: "",
+      _orig_idx: fbIdx,
+    })),
+    _fallbacksOpen: prevOpenIds.has(m.id),
   }));
 
   $("project-url").textContent = s.supabase_url || "Supabase";
@@ -238,15 +245,19 @@ function renderPayments(requests, pendingCount) {
   }
 }
 
+const MAX_MODEL_FALLBACKS = 10;
+
 function renderModels() {
   const tbody = $("models-tbody");
   tbody.innerHTML = "";
   if (state.models.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9" class="empty-cell">No models configured. Click "+ Add Model".</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="empty-cell">No models configured. Click "+ Add Model".</td></tr>`;
     return;
   }
 
   state.models.forEach((m, idx) => {
+    if (!Array.isArray(m.fallbacks)) m.fallbacks = [];
+    const fbCount = m.fallbacks.length;
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><input type="text" class="input mono" data-field="id" value="${escapeAttr(m.id)}" placeholder="provider/model-id" /></td>
@@ -257,6 +268,11 @@ function renderModels() {
         <input type="password" class="input mono" data-field="api_key" value="" autocomplete="new-password"
           placeholder="${m.has_api_key && !m.clear_api_key ? escapeAttr(m.api_key_masked || "saved") + " (saved)" : "blank = global key"}" />
         ${m.has_api_key ? `<button type="button" class="btn btn-sm btn-danger-ghost" data-clear-key="${idx}">${m.clear_api_key ? "Will clear" : "Clear key"}</button>` : ""}
+      </td>
+      <td>
+        <button type="button" class="btn btn-sm ${fbCount > 0 ? "btn-secondary" : "btn-ghost"}" data-toggle-fallbacks="${idx}">
+          ${m._fallbacksOpen ? "▾" : "▸"} ${fbCount}/${MAX_MODEL_FALLBACKS}
+        </button>
       </td>
       <td><input type="number" min="1000" step="1000" class="input mono" style="width:105px;" data-field="context_window" value="${Number(m.context_window) || 128000}" /></td>
       <td><input type="number" min="0" step="1" class="input mono" style="width:72px;" data-field="credit_cost" value="${Number(m.credit_cost ?? 3)}" /></td>
@@ -291,12 +307,111 @@ function renderModels() {
       });
     }
 
+    tr.querySelector("[data-toggle-fallbacks]").addEventListener("click", () => {
+      state.models[idx]._fallbacksOpen = !state.models[idx]._fallbacksOpen;
+      renderModels();
+    });
+
     tr.querySelector(`[data-remove]`).addEventListener("click", () => {
       state.models.splice(idx, 1);
       renderModels();
     });
 
     tbody.appendChild(tr);
+
+    if (m._fallbacksOpen) {
+      const fbTr = document.createElement("tr");
+      fbTr.className = "fallbacks-row";
+      const fbRowsHtml = m.fallbacks.length === 0
+        ? `<div class="fallbacks-empty">No fallbacks configured. Any upstream error on the primary model will fail immediately until you add fallbacks below.</div>`
+        : m.fallbacks.map((fb, fbIdx) => `
+            <div class="fallback-item" data-fb-idx="${fbIdx}">
+              <span class="fallback-order mono">#${fbIdx + 1}</span>
+              <div class="fallback-move">
+                <button type="button" class="btn btn-sm btn-ghost" data-fb-up="${fbIdx}" ${fbIdx === 0 ? "disabled" : ""} title="Move up">↑</button>
+                <button type="button" class="btn btn-sm btn-ghost" data-fb-down="${fbIdx}" ${fbIdx === m.fallbacks.length - 1 ? "disabled" : ""} title="Move down">↓</button>
+              </div>
+              <input type="text" class="input mono" data-fb-field="model" value="${escapeAttr(fb.model || "")}" placeholder="Fallback model ID (e.g. openai/gpt-4o-mini)" />
+              <input type="url" class="input mono" data-fb-field="base_url" value="${escapeAttr(fb.base_url || "")}" placeholder="Base URL (blank = global)" autocomplete="off" />
+              <div class="fallback-key-wrap">
+                <input type="password" class="input mono" data-fb-field="api_key" value="${escapeAttr(fb.api_key || "")}" autocomplete="new-password"
+                  placeholder="${fb.has_api_key && !fb.clear_api_key ? escapeAttr(fb.api_key_masked || "saved") + " (saved)" : "API Key (blank = global)"}" />
+                ${fb.has_api_key ? `<button type="button" class="btn btn-sm btn-danger-ghost" data-fb-clear-key="${fbIdx}">${fb.clear_api_key ? "Will clear" : "Clear"}</button>` : ""}
+              </div>
+              <button type="button" class="btn btn-sm btn-danger-ghost" data-fb-remove="${fbIdx}">Remove</button>
+            </div>
+          `).join("");
+
+      fbTr.innerHTML = `
+        <td colspan="10">
+          <div class="fallbacks-box">
+            <div class="fallbacks-head">
+              <div>
+                <strong>Fallback Chain for <code>${escapeHtml(m.id || "new model")}</code></strong>
+                <span class="hint">Tried in order (30s timeout each) on any upstream error before streaming starts. Max ${MAX_MODEL_FALLBACKS}.</span>
+              </div>
+              <button type="button" class="btn btn-sm btn-secondary" data-fb-add="${idx}" ${m.fallbacks.length >= MAX_MODEL_FALLBACKS ? "disabled" : ""}>
+                ${m.fallbacks.length >= MAX_MODEL_FALLBACKS ? "Max 10 Reached" : "+ Add Fallback"}
+              </button>
+            </div>
+            <div class="fallbacks-list">${fbRowsHtml}</div>
+          </div>
+        </td>
+      `;
+
+      fbTr.querySelectorAll(".fallback-item").forEach((item) => {
+        const fbIdx = Number(item.dataset.fbIdx);
+        item.querySelectorAll("input[data-fb-field]").forEach((inp) => {
+          inp.addEventListener("input", () => {
+            state.models[idx].fallbacks[fbIdx][inp.dataset.fbField] = inp.value;
+          });
+        });
+      });
+
+      fbTr.querySelectorAll("[data-fb-up]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const fbIdx = Number(btn.dataset.fbUp);
+          if (fbIdx <= 0) return;
+          const arr = state.models[idx].fallbacks;
+          [arr[fbIdx - 1], arr[fbIdx]] = [arr[fbIdx], arr[fbIdx - 1]];
+          renderModels();
+        });
+      });
+
+      fbTr.querySelectorAll("[data-fb-down]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const fbIdx = Number(btn.dataset.fbDown);
+          const arr = state.models[idx].fallbacks;
+          if (fbIdx >= arr.length - 1) return;
+          [arr[fbIdx], arr[fbIdx + 1]] = [arr[fbIdx + 1], arr[fbIdx]];
+          renderModels();
+        });
+      });
+
+      fbTr.querySelectorAll("[data-fb-clear-key]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const fbIdx = Number(btn.dataset.fbClearKey);
+          state.models[idx].fallbacks[fbIdx].clear_api_key = !state.models[idx].fallbacks[fbIdx].clear_api_key;
+          renderModels();
+        });
+      });
+
+      fbTr.querySelectorAll("[data-fb-remove]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const fbIdx = Number(btn.dataset.fbRemove);
+          state.models[idx].fallbacks.splice(fbIdx, 1);
+          renderModels();
+        });
+      });
+
+      fbTr.querySelector("[data-fb-add]").addEventListener("click", () => {
+        if (state.models[idx].fallbacks.length >= MAX_MODEL_FALLBACKS) return;
+        state.models[idx].fallbacks.push({ model: "", base_url: "", api_key: "" });
+        renderModels();
+      });
+
+      tbody.appendChild(fbTr);
+    }
   });
 }
 
@@ -729,7 +844,7 @@ document.querySelectorAll(".preset-btn").forEach((btn) => {
 });
 
 $("add-model-btn").addEventListener("click", () => {
-  state.models.push({ id: "", label: "", context_window: 128000, credit_cost: 3, paid_only: false });
+  state.models.push({ id: "", label: "", context_window: 128000, credit_cost: 3, paid_only: false, fallbacks: [] });
   renderModels();
 });
 
@@ -740,9 +855,12 @@ $("save-models-btn").addEventListener("click", async () => {
     const updated = await api("/api/settings", {
       method: "POST",
       body: JSON.stringify({
-        models: state.models.map(({ has_api_key, api_key_masked, ...m }) => ({
+        models: state.models.map(({ has_api_key, api_key_masked, _fallbacksOpen, fallbacks, ...m }) => ({
           ...m,
           label: (m.display_name || "").trim() || m.label || m.id,
+          fallbacks: (Array.isArray(fallbacks) ? fallbacks : [])
+            .slice(0, MAX_MODEL_FALLBACKS)
+            .map(({ has_api_key: _h, api_key_masked: _m, ...fb }) => fb),
         })),
       }),
     });

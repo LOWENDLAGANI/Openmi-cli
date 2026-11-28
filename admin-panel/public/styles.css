@@ -593,6 +593,74 @@ code, .mono {
   padding: 28px 12px !important;
 }
 
+/* Per-model fallbacks drawer */
+.fallbacks-row td {
+  background: var(--surface-subtle);
+  padding: 12px 16px;
+}
+
+.fallbacks-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.fallbacks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.fallbacks-head .hint {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.fallbacks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fallbacks-empty {
+  font-size: 12.5px;
+  color: var(--ink-muted);
+  padding: 8px 4px;
+}
+
+.fallback-item {
+  display: grid;
+  grid-template-columns: 34px 62px minmax(180px, 1.1fr) minmax(200px, 1.2fr) minmax(190px, 1.1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.fallback-order {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  text-align: center;
+}
+
+.fallback-move {
+  display: flex;
+  gap: 2px;
+}
+
+.fallback-key-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.fallback-key-wrap .input {
+  flex: 1;
+  min-width: 0;
+}
+
 .user-email {
   font-weight: 500;
   color: var(--ink);

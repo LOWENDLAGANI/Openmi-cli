@@ -20,23 +20,50 @@ async function fetchRow() {
   return Array.isArray(inserted) ? inserted[0] : inserted;
 }
 
+const MAX_MODEL_FALLBACKS = 10;
+
 // Normalizes the catalog. `existing` is the currently stored catalog so a blank per-model
 // `api_key` keeps the previously saved key (keys are never sent back to the browser).
 function normalizeModels(list, existing = []) {
   if (!Array.isArray(list) || list.length === 0) return DEFAULT_MODELS;
-  const storedKeys = new Map(
+  const existingById = new Map(
     (Array.isArray(existing) ? existing : [])
       .filter((m) => m && typeof m.id === "string")
-      .map((m) => [m.id.trim(), String(m.api_key || "")]),
+      .map((m) => [m.id.trim(), m]),
   );
   return list
     .filter((m) => m && typeof m.id === "string" && m.id.trim())
     .map((m) => {
       const id = m.id.trim();
+      const prev = existingById.get(id);
       let apiKey = typeof m.api_key === "string" ? m.api_key.trim() : "";
       if (m.clear_api_key === true) apiKey = "";
-      else if (!apiKey) apiKey = storedKeys.get(id) || "";
+      else if (!apiKey) apiKey = String(prev?.api_key || "");
       const baseUrl = typeof m.base_url === "string" ? m.base_url.trim().replace(/\/+$/, "") : "";
+
+      const prevFallbacks = Array.isArray(prev?.fallbacks) ? prev.fallbacks : [];
+      const rawFallbacks = Array.isArray(m.fallbacks) ? m.fallbacks : [];
+      const fallbacks = rawFallbacks
+        .filter((fb) => fb && typeof fb.model === "string" && fb.model.trim())
+        .slice(0, MAX_MODEL_FALLBACKS)
+        .map((fb, fbIdx) => {
+          const origIdx =
+            typeof fb._orig_idx === "number" && Number.isInteger(fb._orig_idx) && fb._orig_idx >= 0
+              ? fb._orig_idx
+              : fbIdx;
+          const prevFb = prevFallbacks[origIdx];
+          let fbApiKey = typeof fb.api_key === "string" ? fb.api_key.trim() : "";
+          if (fb.clear_api_key === true) fbApiKey = "";
+          else if (!fbApiKey) fbApiKey = String(prevFb?.api_key || "");
+          const fbBaseUrl =
+            typeof fb.base_url === "string" ? fb.base_url.trim().replace(/\/+$/, "") : "";
+          return {
+            model: fb.model.trim(),
+            base_url: /^https?:\/\//i.test(fbBaseUrl) ? fbBaseUrl : "",
+            api_key: fbApiKey,
+          };
+        });
+
       return {
         id,
         label: String(m.label || m.display_name || m.id).trim(),
@@ -44,6 +71,7 @@ function normalizeModels(list, existing = []) {
         description: String(m.description || "").trim().slice(0, 140),
         base_url: /^https?:\/\//i.test(baseUrl) ? baseUrl : "",
         api_key: apiKey,
+        fallbacks,
         _rest: m,
       };
     })
@@ -60,9 +88,21 @@ function normalizeModels(list, existing = []) {
 
 // Public/admin-safe view of a model: secrets are replaced by `has_api_key` + masked preview.
 function publicModel(m) {
-  const { api_key, ...rest } = m;
+  const { api_key, fallbacks, ...rest } = m;
   const key = String(api_key || "");
-  return { ...rest, has_api_key: key.length > 0, api_key_masked: maskApiKey(key) };
+  const safeFallbacks = (Array.isArray(fallbacks) ? fallbacks : [])
+    .slice(0, MAX_MODEL_FALLBACKS)
+    .map((fb) => {
+      const { api_key: fbKey, ...fbRest } = fb;
+      const k = String(fbKey || "");
+      return { ...fbRest, has_api_key: k.length > 0, api_key_masked: maskApiKey(k) };
+    });
+  return {
+    ...rest,
+    has_api_key: key.length > 0,
+    api_key_masked: maskApiKey(key),
+    fallbacks: safeFallbacks,
+  };
 }
 
 function formatSettings(row, supabaseUrl) {

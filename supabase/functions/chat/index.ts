@@ -38,6 +38,8 @@ const MAX_FREE_BODY_BYTES = 4 * 1024 * 1024; // 4 MB free tier body cap
 const MAX_PAID_BODY_BYTES = 8 * 1024 * 1024; // 8 MB paid tier body cap
 const MAX_EXTRA_TOOLS_BYTES = 32 * 1024; // 32 KB cap on client-registered MCP tool schemas
 const UPSTREAM_TIMEOUT_MS = 120_000;
+const FALLBACK_ATTEMPT_TIMEOUT_MS = 30_000;
+const MAX_MODEL_FALLBACKS = 10;
 const DEFAULT_MODEL = "openai/gpt-4o-mini";
 const DEFAULT_PAYMENT_LINK = "https://sociabuzz.com/minetallestmc/tribe";
 
@@ -416,6 +418,12 @@ interface IncomingMessage {
   content: unknown;
 }
 
+interface ModelFallback {
+  model: string;
+  base_url?: string;
+  api_key?: string;
+}
+
 interface CatalogModel {
   id: string;
   label?: string;
@@ -423,6 +431,14 @@ interface CatalogModel {
   paid_only?: boolean;
   base_url?: string;
   api_key?: string;
+  fallbacks?: ModelFallback[];
+}
+
+interface UpstreamCandidate {
+  model: string;
+  baseUrl: string;
+  apiKey: string;
+  label: string;
 }
 
 interface NormalizedMessagesResult {
@@ -710,6 +726,7 @@ Deno.serve(async (req: Request) => {
   let upstreamModel = requestedModel === "openmi-default" ? defaultModel : requestedModel;
   let llmApiKey = "";
   let llmBaseUrl = globalBaseUrl;
+  let upstreamCandidates: UpstreamCandidate[] = [];
   let purchasedSessionId: string | null = null;
   let passMeta: Record<string, unknown> = {};
 
@@ -770,9 +787,14 @@ Deno.serve(async (req: Request) => {
     byokProviderName = String(providerRow.name ?? "BYOK").trim() || "BYOK";
     llmBaseUrl = urlCheck.url;
     upstreamModel = byokParsed.upstreamModel;
+    upstreamCandidates = [{ model: upstreamModel, baseUrl: llmBaseUrl, apiKey: llmApiKey, label: "byok" }];
   } else {
     // 3a. Managed catalog path
-    if (!globalApiKey && !dbModels.some((m) => typeof m.api_key === "string" && m.api_key.trim())) {
+    const hasAnyKey = Boolean(globalApiKey) || dbModels.some((m) =>
+      (typeof m.api_key === "string" && m.api_key.trim()) ||
+      (Array.isArray(m.fallbacks) && m.fallbacks.some((fb) => typeof fb?.api_key === "string" && fb.api_key.trim()))
+    );
+    if (!hasAnyKey) {
       return jsonResponse(
         {
           error: "llm_not_configured",
@@ -803,7 +825,32 @@ Deno.serve(async (req: Request) => {
       : "";
     llmApiKey = modelKey || globalApiKey;
     llmBaseUrl = /^https?:\/\//i.test(modelBase) ? modelBase : globalBaseUrl;
-    if (!llmApiKey) {
+
+    if (llmApiKey) {
+      upstreamCandidates.push({
+        model: upstreamModel,
+        baseUrl: llmBaseUrl,
+        apiKey: llmApiKey,
+        label: "primary",
+      });
+    }
+    const rawFallbacks = Array.isArray(catalogEntry?.fallbacks) ? catalogEntry.fallbacks : [];
+    for (let i = 0; i < Math.min(rawFallbacks.length, MAX_MODEL_FALLBACKS); i++) {
+      const fb = rawFallbacks[i];
+      if (!fb || typeof fb.model !== "string" || !fb.model.trim()) continue;
+      const fbBaseRaw = typeof fb.base_url === "string" ? fb.base_url.trim().replace(/\/+$/, "") : "";
+      const fbBase = /^https?:\/\//i.test(fbBaseRaw) ? fbBaseRaw : globalBaseUrl;
+      const fbKey = (typeof fb.api_key === "string" ? fb.api_key.trim() : "") || globalApiKey;
+      if (!fbKey) continue;
+      upstreamCandidates.push({
+        model: fb.model.trim(),
+        baseUrl: fbBase,
+        apiKey: fbKey,
+        label: `fallback #${i + 1}`,
+      });
+    }
+
+    if (upstreamCandidates.length === 0) {
       return jsonResponse(
         {
           error: "llm_not_configured",
@@ -1103,65 +1150,125 @@ Deno.serve(async (req: Request) => {
   };
 
   // 5. Call upstream OpenAI-compatible chat completions API with streaming + usage reporting
-  const fetchUpstream = (includeStreamOptions: boolean, includeReasoningEffort: boolean) =>
-    fetch(`${llmBaseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${llmApiKey}`,
-        Accept: "text/event-stream",
-      },
-      body: JSON.stringify({
-        model: upstreamModel,
-        stream: true,
-        ...(isByok ? {} : { max_tokens: maxOutputTokens }),
-        ...(includeStreamOptions && !isByok ? { stream_options: { include_usage: true } } : {}),
-        ...(includeReasoningEffort && reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-        messages: upstreamMessages,
-        tools: allTools,
-        tool_choice: "auto",
-      }),
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-    });
+  //    If fallbacks are configured, silently reroute on any upstream error before streaming starts.
+  const attemptTimeoutMs = upstreamCandidates.length > 1
+    ? FALLBACK_ATTEMPT_TIMEOUT_MS
+    : UPSTREAM_TIMEOUT_MS;
 
-  let upstreamResp: Response;
-  try {
-    let useStreamOptions = true;
-    let useReasoningEffort = Boolean(reasoningEffort);
-    upstreamResp = await fetchUpstream(useStreamOptions, useReasoningEffort);
-    if (upstreamResp.status === 400) {
-      const probeText = await upstreamResp.clone().text().catch(() => "");
-      let shouldRetry = false;
-      if (!isByok && useStreamOptions && /stream_options/i.test(probeText)) {
-        useStreamOptions = false;
-        shouldRetry = true;
-      }
-      if (useReasoningEffort && /reasoning_effort|reasoning/i.test(probeText)) {
-        useReasoningEffort = false;
-        shouldRetry = true;
-      }
-      if (shouldRetry) {
-        upstreamResp = await fetchUpstream(useStreamOptions, useReasoningEffort);
-      }
-    }
-  } catch (err) {
-    await Promise.all([refundIfNewlyPurchased(), releaseSlot(0)]);
-    return jsonResponse(
-      { error: "upstream_unreachable", message: err instanceof Error ? err.message : String(err) },
-      502,
+  const fetchCandidate = async (
+    candidate: UpstreamCandidate,
+    includeStreamOptions: boolean,
+    includeReasoningEffort: boolean,
+  ): Promise<Response> => {
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(new Error(`Upstream timed out after ${attemptTimeoutMs}ms`)),
+      attemptTimeoutMs,
     );
+    try {
+      const resp = await fetch(`${candidate.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${candidate.apiKey}`,
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify({
+          model: candidate.model,
+          stream: true,
+          ...(isByok ? {} : { max_tokens: maxOutputTokens }),
+          ...(includeStreamOptions && !isByok ? { stream_options: { include_usage: true } } : {}),
+          ...(includeReasoningEffort && reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+          messages: upstreamMessages,
+          tools: allTools,
+          tool_choice: "auto",
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      return resp;
+    } catch (err) {
+      clearTimeout(timer);
+      throw err;
+    }
+  };
+
+  let upstreamResp: Response | null = null;
+  let lastErrorStatus = 502;
+  let lastErrorText = "";
+  let lastNetworkError = "";
+
+  for (let cIdx = 0; cIdx < upstreamCandidates.length; cIdx++) {
+    const candidate = upstreamCandidates[cIdx];
+    let resp: Response;
+    try {
+      let useStreamOptions = true;
+      let useReasoningEffort = Boolean(reasoningEffort);
+      resp = await fetchCandidate(candidate, useStreamOptions, useReasoningEffort);
+      if (resp.status === 400) {
+        const probeText = await resp.clone().text().catch(() => "");
+        let shouldRetry = false;
+        if (!isByok && useStreamOptions && /stream_options/i.test(probeText)) {
+          useStreamOptions = false;
+          shouldRetry = true;
+        }
+        if (useReasoningEffort && /reasoning_effort|reasoning/i.test(probeText)) {
+          useReasoningEffort = false;
+          shouldRetry = true;
+        }
+        if (shouldRetry) {
+          resp = await fetchCandidate(candidate, useStreamOptions, useReasoningEffort);
+        }
+      }
+    } catch (err) {
+      lastNetworkError = err instanceof Error ? err.message : String(err);
+      lastErrorStatus = 502;
+      lastErrorText = "";
+      if (cIdx + 1 < upstreamCandidates.length) {
+        console.warn(
+          `[chat] ${candidate.label} (${candidate.model}) network/timeout error: ${lastNetworkError} — rerouting to ${upstreamCandidates[cIdx + 1].label} (${upstreamCandidates[cIdx + 1].model})`,
+        );
+        continue;
+      }
+      break;
+    }
+
+    if (resp.ok && resp.body) {
+      if (cIdx > 0) {
+        console.info(
+          `[chat] Rerouted '${requestedModel}' successfully to ${candidate.label} (${candidate.model})`,
+        );
+      }
+      upstreamResp = resp;
+      break;
+    }
+
+    lastErrorStatus = resp.status;
+    lastErrorText = (await resp.text().catch(() => "")) || resp.statusText;
+    lastNetworkError = "";
+    if (cIdx + 1 < upstreamCandidates.length) {
+      console.warn(
+        `[chat] ${candidate.label} (${candidate.model}) returned HTTP ${resp.status} — rerouting to ${upstreamCandidates[cIdx + 1].label} (${upstreamCandidates[cIdx + 1].model})`,
+      );
+      continue;
+    }
   }
 
-  if (!upstreamResp.ok || !upstreamResp.body) {
+  if (!upstreamResp || !upstreamResp.ok || !upstreamResp.body) {
     await Promise.all([refundIfNewlyPurchased(), releaseSlot(0)]);
-    const errText = await upstreamResp.text().catch(() => "");
+    if (lastNetworkError && !lastErrorText) {
+      return jsonResponse(
+        { error: "upstream_unreachable", message: lastNetworkError },
+        502,
+      );
+    }
     if (isByok) {
-      const snippet = errText.slice(0, 400) || upstreamResp.statusText;
+      const snippet = lastErrorText.slice(0, 400);
       return jsonResponse(
         {
           error: "byok_upstream_error",
-          status: upstreamResp.status,
-          message: `BYOK provider '${byokProviderName}' returned HTTP ${upstreamResp.status}: ${snippet}`,
+          status: lastErrorStatus,
+          message: `BYOK provider '${byokProviderName}' returned HTTP ${lastErrorStatus}: ${snippet}`,
         },
         502,
       );
@@ -1169,10 +1276,10 @@ Deno.serve(async (req: Request) => {
     return jsonResponse(
       {
         error: "upstream_error",
-        status: upstreamResp.status,
-        message: errText.slice(0, 500) || upstreamResp.statusText,
+        status: lastErrorStatus,
+        message: lastErrorText.slice(0, 500),
       },
-      upstreamResp.status >= 400 && upstreamResp.status < 500 ? upstreamResp.status : 502,
+      lastErrorStatus >= 400 && lastErrorStatus < 500 ? lastErrorStatus : 502,
     );
   }
 
