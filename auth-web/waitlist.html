@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#FFB5D8" />
+  <meta name="description" content="Join the Openmi Windows App waitlist and get notified as soon as the native Windows desktop app is released." />
+  <title>Windows App Waitlist — Openmi</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:opsz,wght@6..72,600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/site.css" />
+  <style>
+    .waitlist-card {
+      max-width: 640px;
+      background: var(--surface);
+      border: 1.5px solid var(--pink-border);
+      border-radius: 18px;
+      padding: 32px 30px;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .waitlist-form {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .waitlist-input {
+      flex: 1 1 240px;
+      min-width: 0;
+      height: 44px;
+      padding: 0 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border-strong);
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--font-sans);
+      font-size: 16px;
+      outline: none;
+      transition: border-color 0.14s ease, box-shadow 0.14s ease, background 0.14s ease;
+    }
+
+    .waitlist-input:focus {
+      background: var(--surface);
+      border-color: var(--pink-border);
+      box-shadow: 0 0 0 3px rgba(255, 181, 216, 0.35);
+    }
+
+    .waitlist-status {
+      padding: 12px 14px;
+      border-radius: 10px;
+      font-size: 13.5px;
+      line-height: 1.5;
+      display: none;
+    }
+
+    .waitlist-status.is-visible {
+      display: block;
+    }
+
+    .waitlist-status.is-ok {
+      background: var(--lime-soft);
+      border: 1px solid var(--lime-border);
+      color: var(--lime-ink);
+    }
+
+    .waitlist-status.is-err {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #b91c1c;
+    }
+
+    .waitlist-perks {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--ink-secondary);
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    .waitlist-perks li {
+      margin-bottom: 6px;
+    }
+
+    @media (max-width: 760px) {
+      .waitlist-card {
+        padding: 22px 18px;
+      }
+      .waitlist-form .btn {
+        width: 100%;
+        height: 44px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="container site-header-inner">
+      <a href="/" class="brand-link">
+        <span class="brand-mark" aria-hidden="true">O</span>
+        <span>Openmi</span>
+      </a>
+
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a href="/download" class="nav-link">Download</a>
+        <a href="/waitlist" class="nav-link is-active">Windows App</a>
+        <a href="/pay" class="nav-link">Passes</a>
+        <a href="/dashboard" class="nav-link">Dashboard</a>
+        <a href="/support" class="nav-link">Support</a>
+      </nav>
+
+      <div class="header-cta">
+        <a href="/login?next=/dashboard" class="btn btn-secondary btn-sm">Sign in</a>
+        <a href="/download" class="btn btn-primary btn-sm">Get CLI</a>
+      </div>
+
+      <button
+        type="button"
+        class="menu-toggle"
+        id="menu-toggle"
+        aria-label="Toggle navigation menu"
+        aria-expanded="false"
+        aria-controls="mobile-drawer"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <line x1="4" y1="7" x2="20" y2="7" />
+          <line x1="4" y1="12" x2="20" y2="12" />
+          <line x1="4" y1="17" x2="20" y2="17" />
+        </svg>
+      </button>
+    </div>
+
+    <div class="mobile-drawer" id="mobile-drawer">
+      <div class="mobile-drawer-links">
+        <a href="/download" class="nav-link">Download CLI</a>
+        <a href="/waitlist" class="nav-link is-active">Windows App Waitlist</a>
+        <a href="/pay" class="nav-link">Passes &amp; Billing</a>
+        <a href="/dashboard" class="nav-link">Dashboard</a>
+        <a href="/support" class="nav-link">Support</a>
+      </div>
+      <div class="mobile-drawer-actions">
+        <a href="/login?next=/dashboard" class="btn btn-secondary" style="flex:1;">Sign in</a>
+        <a href="/download" class="btn btn-primary" style="flex:1;">Get CLI</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="legal-hero">
+      <div class="container">
+        <div class="section-kicker">Coming Soon · Windows Desktop</div>
+        <h1>Openmi Windows App Waitlist</h1>
+        <p class="legal-meta">Register your email to receive a confirmation right away and get notified the moment the Windows desktop app launches.</p>
+      </div>
+    </section>
+
+    <section class="legal-body">
+      <div class="container">
+        <div class="waitlist-card">
+          <div>
+            <span class="feature-tag is-pink">Early Access</span>
+            <h2 style="margin:10px 0 6px;font-size:20px;font-weight:650;">Get notified on launch</h2>
+            <p style="margin:0;color:var(--ink-secondary);font-size:14.5px;line-height:1.6;">
+              Enter your email below. We&rsquo;ll send you a confirmation email verifying your spot on the waitlist and notify you when the Windows app is ready to download.
+            </p>
+          </div>
+
+          <form id="waitlist-form" class="waitlist-form" autocomplete="on">
+            <input
+              type="email"
+              id="waitlist-email"
+              name="email"
+              class="waitlist-input"
+              placeholder="you@example.com"
+              autocomplete="email"
+              required
+            />
+            <button type="submit" id="waitlist-submit" class="btn btn-primary" style="height:44px;padding:0 20px;">
+              Join Waitlist
+            </button>
+          </form>
+
+          <div id="waitlist-status" class="waitlist-status" role="status" aria-live="polite"></div>
+
+          <ul class="waitlist-perks">
+            <li>Instant email confirmation so you know your spot is saved.</li>
+            <li>One launch notification email when the Windows app releases — no spam.</li>
+            <li>Want to use Openmi on Windows today? <a href="/download" style="color:var(--pink-ink);text-decoration:underline;">Install Openmi CLI</a> via PowerShell or npm.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <a href="/" class="brand-link" style="font-size:14px;">
+        <span class="brand-mark" style="width:28px;height:28px;font-size:13px;" aria-hidden="true">O</span>
+        <span>Openmi CLI</span>
+      </a>
+      <div class="footer-links">
+        <a href="/download">Download</a>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/pay">Passes</a>
+        <a href="/support">Support</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund-policy">Refund Policy</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/site.js"></script>
+  <script>
+    (function () {
+      var WAITLIST_ENDPOINT = "https://umjlmqeghfrfpduhkits.supabase.co/functions/v1/waitlist";
+      var form = document.getElementById("waitlist-form");
+      var emailInput = document.getElementById("waitlist-email");
+      var submitBtn = document.getElementById("waitlist-submit");
+      var statusEl = document.getElementById("waitlist-status");
+
+      function showStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = "waitlist-status is-visible " + (isError ? "is-err" : "is-ok");
+      }
+
+      form.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        var email = (emailInput.value || "").trim();
+        if (!email) {
+          showStatus("Please enter your email address.", true);
+          return;
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Registering…";
+        statusEl.className = "waitlist-status";
+
+        try {
+          var res = await fetch(WAITLIST_ENDPOINT, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: email, source: "waitlist_page" })
+          });
+          var data = await res.json().catch(function () { return {}; });
+          if (!res.ok) {
+            showStatus(data.message || data.error || "Could not register right now. Please try again.", true);
+          } else {
+            showStatus(data.message || "You're on the Windows App waitlist!", false);
+            if (!data.already_registered) {
+              emailInput.value = "";
+            }
+          }
+        } catch (err) {
+          showStatus("Network error. Please check your connection and try again.", true);
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Join Waitlist";
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

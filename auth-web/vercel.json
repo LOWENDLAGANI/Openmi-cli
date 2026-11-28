@@ -10,6 +10,7 @@
     { "source": "/privacy", "destination": "/privacy.html" },
     { "source": "/terms", "destination": "/terms.html" },
     { "source": "/refund-policy", "destination": "/refund-policy.html" },
-    { "source": "/support", "destination": "/support.html" }
+    { "source": "/support", "destination": "/support.html" },
+    { "source": "/waitlist", "destination": "/waitlist.html" }
   ]
 }

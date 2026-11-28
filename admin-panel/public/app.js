@@ -576,12 +576,13 @@ function escapeAttr(str) {
 async function loadAll() {
   setGlobalError(null);
   try {
-    const [settings, usersRes, devicesRes, paymentsRes, codesRes] = await Promise.all([
+    const [settings, usersRes, devicesRes, paymentsRes, codesRes, waitlistRes] = await Promise.all([
       api("/api/settings"),
       api("/api/users"),
       api("/api/devices").catch(() => ({ devices: [] })),
       api("/api/payments").catch(() => ({ requests: [], pending_count: 0 })),
       api("/api/codes").catch(() => ({ codes: [] })),
+      api("/api/waitlist").catch(() => ({ entries: [] })),
     ]);
     renderSettings(settings);
     state.users = usersRes.users || [];
@@ -589,6 +590,7 @@ async function loadAll() {
     renderDevices(devicesRes.devices || []);
     renderPayments(paymentsRes.requests || [], paymentsRes.pending_count || 0);
     renderCodes(codesRes.codes || []);
+    renderWaitlist(waitlistRes.entries || []);
   } catch (err) {
     setGlobalError(
       `Failed to load Supabase data: ${err.message}. Make sure the latest Supabase migrations are applied and SUPABASE_SERVICE_ROLE_KEY is set in Vercel.`,
@@ -975,5 +977,88 @@ $("create-code-form")?.addEventListener("submit", async (e) => {
 });
 
 $("refresh-codes-btn")?.addEventListener("click", () => loadAll());
+
+function renderWaitlist(entries) {
+  const tbody = $("waitlist-tbody");
+  const badge = $("waitlist-count-badge");
+  if (!tbody) return;
+
+  const activeCount = entries.filter((e) => e.status === "active").length;
+  if (badge) {
+    badge.textContent = `${activeCount} active / ${entries.length} total`;
+  }
+
+  tbody.innerHTML = "";
+  if (!entries.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 5;
+    td.className = "empty-cell";
+    td.textContent = "No Windows App waitlist signups yet.";
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    return;
+  }
+
+  for (const entry of entries) {
+    const tr = document.createElement("tr");
+
+    const tdEmail = document.createElement("td");
+    tdEmail.className = "mono";
+    tdEmail.textContent = entry.email || "—";
+
+    const tdStatus = document.createElement("td");
+    const pill = document.createElement("span");
+    const isActive = entry.status === "active";
+    pill.className = isActive ? "badge badge-ok" : "badge badge-danger";
+    pill.textContent = isActive ? "ACTIVE" : "CANCELLED";
+    tdStatus.appendChild(pill);
+
+    const tdSource = document.createElement("td");
+    tdSource.textContent = entry.source || "web";
+
+    const tdCreated = document.createElement("td");
+    tdCreated.className = "mono";
+    tdCreated.textContent = entry.created_at
+      ? new Date(entry.created_at).toLocaleString()
+      : "—";
+
+    const tdActions = document.createElement("td");
+    tdActions.className = "col-actions";
+
+    const actionBtn = document.createElement("button");
+    actionBtn.type = "button";
+    actionBtn.className = isActive ? "btn btn-danger btn-sm" : "btn btn-secondary btn-sm";
+    actionBtn.textContent = isActive ? "Cancel" : "Reactivate";
+    actionBtn.addEventListener("click", async () => {
+      actionBtn.disabled = true;
+      try {
+        await api("/api/waitlist", {
+          method: "POST",
+          body: JSON.stringify({
+            id: entry.id,
+            action: isActive ? "cancel" : "reactivate",
+          }),
+        });
+        showToast(
+          isActive
+            ? `Cancelled waitlist entry for ${entry.email}`
+            : `Reactivated waitlist entry for ${entry.email}`,
+        );
+        await loadAll();
+      } catch (err) {
+        showToast(err.message, true);
+      } finally {
+        actionBtn.disabled = false;
+      }
+    });
+    tdActions.appendChild(actionBtn);
+
+    tr.append(tdEmail, tdStatus, tdSource, tdCreated, tdActions);
+    tbody.appendChild(tr);
+  }
+}
+
+$("refresh-waitlist-btn")?.addEventListener("click", () => loadAll());
 
 bootAuth();
