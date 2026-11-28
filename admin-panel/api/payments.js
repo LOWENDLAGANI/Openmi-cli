@@ -26,18 +26,29 @@ export default async function handler(req, res) {
     const { url: supabaseUrl } = getSupabaseConfig();
 
     if (req.method === "GET") {
-      const [requests, authData, creditRows] = await Promise.all([
+      const fetchAllAuthUsers = async () => {
+        const all = [];
+        const perPage = 200;
+        for (let page = 1; page <= 50; page++) {
+          const data = await supabaseFetch(`/auth/v1/admin/users?page=${page}&per_page=${perPage}`).catch(() => ({ users: [] }));
+          const batch = Array.isArray(data?.users) ? data.users : [];
+          all.push(...batch);
+          if (batch.length < perPage) break;
+        }
+        return all;
+      };
+      const [requests, allUsers, creditRows] = await Promise.all([
         supabaseFetch(
           "/rest/v1/payment_requests?select=*&order=created_at.desc&limit=60",
         ),
-        supabaseFetch("/auth/v1/admin/users?page=1&per_page=200").catch(() => ({ users: [] })),
+        fetchAllAuthUsers(),
         supabaseFetch(
           "/rest/v1/user_credits?select=user_id,plan,balance,wallet_credit,paid_until",
         ).catch(() => []),
       ]);
 
       const emailMap = new Map();
-      for (const u of Array.isArray(authData?.users) ? authData.users : []) {
+      for (const u of allUsers) {
         emailMap.set(u.id, u.email || "(no email)");
       }
       const creditMap = new Map();

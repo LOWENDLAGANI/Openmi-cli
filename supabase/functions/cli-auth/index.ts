@@ -198,7 +198,6 @@ Deno.serve(async (req: Request) => {
     const body = await req.json().catch(() => ({}));
     const userCode = String(body.user_code ?? "").trim().toUpperCase();
     const action = String(body.action ?? "approve").toLowerCase();
-    const refreshToken = typeof body.refresh_token === "string" ? body.refresh_token : null;
 
     if (!userCode) {
       return jsonResponse({ error: "invalid_request", message: "user_code is required" }, 400);
@@ -234,15 +233,55 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ status: "denied" });
     }
 
-    const tokenExpiresAt = jwtExpiryIso(bearer, 3600);
+    // Mint an independent Supabase session for the CLI device so token rotation
+    // on the browser never invalidates the CLI session (and vice versa).
+    const userEmail = userData.user.email;
+    if (!userEmail) {
+      return jsonResponse(
+        { error: "session_mint_failed", message: "User account has no email for CLI session minting" },
+        400,
+      );
+    }
+
+    const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
+      type: "magiclink",
+      email: userEmail,
+    });
+    const hashedToken = linkData?.properties?.hashed_token;
+    if (linkErr || !hashedToken) {
+      return jsonResponse(
+        { error: "session_mint_failed", message: linkErr?.message ?? "Failed to generate CLI session link" },
+        500,
+      );
+    }
+
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    const verifyClient = createClient(Deno.env.get("SUPABASE_URL") ?? "", anonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data: otpData, error: otpErr } = await verifyClient.auth.verifyOtp({
+      token_hash: hashedToken,
+      type: "magiclink",
+    });
+    const cliSession = otpData?.session;
+    if (otpErr || !cliSession?.access_token || !cliSession?.refresh_token) {
+      return jsonResponse(
+        { error: "session_mint_failed", message: otpErr?.message ?? "Failed to mint independent CLI session" },
+        500,
+      );
+    }
+
+    const tokenExpiresAt = cliSession.expires_at
+      ? new Date(cliSession.expires_at * 1000).toISOString()
+      : jwtExpiryIso(cliSession.access_token, 3600);
     const { data: approvedRow, error: updateErr } = await admin
       .from("device_codes")
       .update({
         status: "approved",
         user_id: userData.user.id,
-        user_email: userData.user.email ?? null,
-        access_token: bearer,
-        refresh_token: refreshToken,
+        user_email: userEmail,
+        access_token: cliSession.access_token,
+        refresh_token: cliSession.refresh_token,
         token_expires_at: tokenExpiresAt,
       })
       .eq("device_code_hash", row.device_code_hash)

@@ -164,10 +164,23 @@ pub fn build_session_with_options(
     session.set_proxy_config(proxy_config);
 
     let workspace_trusted = crate::trust::is_workspace_trusted(session.workspace_root());
-    let merged_settings = crate::settings::UserSettings::load_merged_with_trust(
+    let mut merged_settings = crate::settings::UserSettings::load_merged_with_trust(
         session.workspace_root(),
         workspace_trusted,
     );
+    if permission_mode == PermissionMode::Trusted
+        && !workspace_trusted
+        && !merged_settings
+            .permissions
+            .ask
+            .iter()
+            .any(|r| r == "run_command" || r == "Bash(*)")
+    {
+        merged_settings
+            .permissions
+            .ask
+            .push("run_command".to_string());
+    }
     session.set_permission_rules(merged_settings.permissions);
     session.set_hooks(merged_settings.hooks);
 

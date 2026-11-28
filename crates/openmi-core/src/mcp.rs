@@ -145,7 +145,38 @@ impl McpStdioClient {
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::null())
+            .env_clear();
+        const MCP_ENV_ALLOWLIST: &[&str] = &[
+            "PATH",
+            "HOME",
+            "USER",
+            "LOGNAME",
+            "SHELL",
+            "TERM",
+            "LANG",
+            "LC_ALL",
+            "TMPDIR",
+            "TEMP",
+            "TMP",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "XDG_CACHE_HOME",
+            "SYSTEMROOT",
+            "COMSPEC",
+            "PATHEXT",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "USERPROFILE",
+            "PREFIX",
+            "ANDROID_DATA",
+            "ANDROID_ROOT",
+        ];
+        for key in MCP_ENV_ALLOWLIST {
+            if let Ok(val) = std::env::var(key) {
+                cmd.env(key, val);
+            }
+        }
         for (k, v) in &cfg.env {
             cmd.env(k, v);
         }

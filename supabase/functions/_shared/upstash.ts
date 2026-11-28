@@ -28,12 +28,15 @@ export function isUpstashConfigured(): boolean {
 }
 
 export function getClientIp(req: Request): string {
-  const cf = req.headers.get("cf-connecting-ip")?.trim();
-  if (cf) return cf;
+  // Prefer platform-set x-real-ip on Supabase Edge; never trust client-spoofable
+  // cf-connecting-ip or the left-most (client-supplied) x-forwarded-for entry.
   const real = req.headers.get("x-real-ip")?.trim();
   if (real) return real;
-  const xff = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  if (xff) return xff;
+  const xff = req.headers.get("x-forwarded-for");
+  if (xff) {
+    const hops = xff.split(",").map((s) => s.trim()).filter(Boolean);
+    if (hops.length > 0) return hops[hops.length - 1];
+  }
   return "unknown";
 }
 

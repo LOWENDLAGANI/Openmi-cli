@@ -7,12 +7,24 @@ function isCurrentlyBanned(user) {
   return Number.isFinite(ts) && ts > Date.now();
 }
 
+async function fetchAllAuthUsers() {
+  const all = [];
+  const perPage = 200;
+  for (let page = 1; page <= 50; page++) {
+    const data = await supabaseFetch(`/auth/v1/admin/users?page=${page}&per_page=${perPage}`);
+    const batch = Array.isArray(data?.users) ? data.users : [];
+    all.push(...batch);
+    if (batch.length < perPage) break;
+  }
+  return all;
+}
+
 export default async function handler(req, res) {
   try {
     if (!requireAdminAuth(req, res)) return;
     if (req.method === "GET") {
-      const [authData, creditRows] = await Promise.all([
-        supabaseFetch("/auth/v1/admin/users?page=1&per_page=200"),
+      const [rawUsers, creditRows] = await Promise.all([
+        fetchAllAuthUsers(),
         supabaseFetch(
           "/rest/v1/user_credits?select=user_id,plan,balance,wallet_credit,daily_tokens_used,total_tokens_used,paid_until,has_paid,active_model,pass_expires_at,updated_at",
         ),
@@ -26,7 +38,6 @@ export default async function handler(req, res) {
       }
 
       const nowMs = Date.now();
-      const rawUsers = Array.isArray(authData?.users) ? authData.users : [];
       const users = rawUsers.map((u) => {
         const c = creditMap.get(u.id);
         const paidUntil = c?.paid_until || null;
@@ -52,7 +63,7 @@ export default async function handler(req, res) {
         };
       });
 
-      return sendJson(res, 200, { users });
+      return sendJson(res, 200, { users, total: users.length });
     }
 
     if (req.method === "POST") {
@@ -203,36 +214,17 @@ export default async function handler(req, res) {
           label = `${mode === "add" ? "+" : ""}${rawVal} ${unit}`;
         }
 
-        const nextBalance = Math.max(Number(existing?.balance ?? 0), 15);
-        await supabaseFetch("/rest/v1/user_credits?on_conflict=user_id", {
-          method: "POST",
-          headers: { Prefer: "resolution=merge-duplicates" },
-          body: JSON.stringify({
-            user_id: userId,
-            plan: "paid",
-            has_paid: true,
-            paid_until: targetIso,
-            balance: nextBalance,
-            wallet_credit: Number(existing?.wallet_credit ?? 0),
-            updated_at: new Date().toISOString(),
-          }),
-        });
-
-        await supabaseFetch("/rest/v1/credit_ledger", {
+        const result = await supabaseFetch("/rest/v1/rpc/admin_set_pass", {
           method: "POST",
           body: JSON.stringify({
-            user_id: userId,
-            kind: "admin_pass",
-            daily_delta: 0,
-            wallet_delta: 0,
-            reference: "admin-panel",
-            note: String(body.note || `Admin granted Paid pass (${label})`).trim(),
+            p_user_id: userId,
+            p_days: 0,
+            p_paid_until: targetIso,
+            p_note: String(body.note || `Admin granted Paid pass (${label})`).trim(),
+            p_actor: "admin-panel",
           }),
-        }).catch((err) => {
-          console.error("Failed to record admin_pass ledger entry:", err?.message || err);
         });
-
-        return sendJson(res, 200, { ok: true, paid_until: targetIso, label });
+        return sendJson(res, 200, { ok: true, paid_until: targetIso, label, user_credits: result });
       }
 
       if (body.action === "update_credits") {

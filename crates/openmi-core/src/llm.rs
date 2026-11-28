@@ -131,6 +131,22 @@ fn default_err_code() -> String {
     "llm_error".to_string()
 }
 
+fn shared_http_client() -> Result<&'static reqwest::Client, CoreError> {
+    static CLIENT: std::sync::OnceLock<Result<reqwest::Client, String>> =
+        std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(15))
+                .build()
+                .map_err(|e| e.to_string())
+        })
+        .as_ref()
+        .map_err(|e| CoreError::Llm(e.clone()))
+}
+
+const STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
 /// Stream a single model step over Server-Sent Events (`text/event-stream`).
 #[allow(clippy::too_many_arguments)]
 pub async fn stream_step(
@@ -144,9 +160,7 @@ pub async fn stream_step(
     event_tx: &mpsc::Sender<AgentEvent>,
     cancel: &CancellationToken,
 ) -> Result<StepResponse, CoreError> {
-    let client = reqwest::Client::builder()
-        .build()
-        .map_err(|e| CoreError::Llm(e.to_string()))?;
+    let client = shared_http_client()?;
 
     let wire_messages: Vec<serde_json::Value> = messages
         .iter()
@@ -313,7 +327,17 @@ pub async fn stream_step(
     loop {
         let next_chunk = tokio::select! {
             _ = cancel.cancelled() => return Err(CoreError::Cancelled),
-            item = stream.next() => item,
+            item = tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.next()) => {
+                match item {
+                    Ok(chunk) => chunk,
+                    Err(_) => {
+                        return Err(CoreError::Llm(format!(
+                            "upstream stream stalled (no data received for {}s)",
+                            STREAM_IDLE_TIMEOUT.as_secs()
+                        )));
+                    }
+                }
+            }
         };
 
         let Some(chunk_res) = next_chunk else {
@@ -335,8 +359,10 @@ pub async fn stream_step(
                 continue;
             }
 
-            let parsed: SseChunk = serde_json::from_str(data)
-                .map_err(|e| CoreError::Llm(format!("invalid SSE JSON `{data}`: {e}")))?;
+            let Ok(parsed) = serde_json::from_str::<SseChunk>(data) else {
+                // Skip unknown or malformed SSE frames instead of aborting the step.
+                continue;
+            };
 
             match parsed {
                 SseChunk::ThinkingDelta { text: delta } => {

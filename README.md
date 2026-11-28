@@ -99,8 +99,8 @@ another Supabase project.
 | Mode | Behavior |
 | --- | --- |
 | `read-only` | Only `read_file`, `list_dir`, `grep`, and `glob`; writes and commands are blocked |
-| `ask` | Asks before `edit_file`, `write_file`, `run_command` and MCP tools |
-| `trusted` | **Default.** Auto-approves workspace tools within PathGuard; MCP tools still ask unless allowlisted |
+| `ask` | Asks before `edit_file`, `write_file`, `delete_file`, `move_file`, `run_command` and MCP tools |
+| `trusted` | **Default.** Auto-approves structured file tools within PathGuard (`read_file`, `write_file`, `edit_file`, `delete_file`, `move_file`, `list_dir`, `glob`, `grep`). **Note:** `run_command` executes arbitrary shell commands without PathGuard confinement (it requires workspace trust / explicit approval first); MCP tools still ask unless allowlisted |
 | `full-access` | No prompts; in the TUI requires typing `I UNDERSTAND FULL ACCESS` |
 
 The default comes from `settings.json` (managed by `/settings`): `auto_approve: true` → `trusted`, `false` → `ask`, `read_only: true` → `read-only`. `--permission` overrides it for one launch.

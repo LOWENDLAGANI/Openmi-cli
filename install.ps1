@@ -26,25 +26,18 @@ try {
     Invoke-WebRequest -Uri "$BaseUrl/$Asset" -OutFile $ArchivePath
 
     $SumsPath = Join-Path $WorkDir "SHA256SUMS.txt"
-    $SumsDownloaded = $false
-    try {
-        Invoke-WebRequest -Uri "$BaseUrl/SHA256SUMS.txt" -OutFile $SumsPath
-        $SumsDownloaded = $true
-    } catch {
-        Write-Warning "Could not download SHA256SUMS.txt; skipping checksum verification: $_"
+    Write-Host "Downloading SHA256SUMS.txt..."
+    Invoke-WebRequest -Uri "$BaseUrl/SHA256SUMS.txt" -OutFile $SumsPath
+    $Match = Select-String -Path $SumsPath -Pattern " $Asset$" | Select-Object -First 1
+    if (-not $Match) {
+        throw "SHA256SUMS.txt did not contain an entry for $Asset"
     }
-    if ($SumsDownloaded) {
-        $Match = Select-String -Path $SumsPath -Pattern " $Asset$" | Select-Object -First 1
-        if (-not $Match) {
-            throw "SHA256SUMS.txt did not contain an entry for $Asset"
-        }
-        $Expected = ($Match.Line -split "\s+")[0].ToLower()
-        $Actual = (Get-FileHash -Path $ArchivePath -Algorithm SHA256).Hash.ToLower()
-        if ($Actual -ne $Expected) {
-            throw "Checksum mismatch for $Asset (expected $Expected, got $Actual)"
-        }
-        Write-Host "Verified SHA-256 checksum."
+    $Expected = ($Match.Line -split "\s+")[0].ToLower()
+    $Actual = (Get-FileHash -Path $ArchivePath -Algorithm SHA256).Hash.ToLower()
+    if ($Actual -ne $Expected) {
+        throw "Checksum mismatch for $Asset (expected $Expected, got $Actual)"
     }
+    Write-Host "Verified SHA-256 checksum."
 
     Expand-Archive -Path $ArchivePath -DestinationPath $WorkDir -Force
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null

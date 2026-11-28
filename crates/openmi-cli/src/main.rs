@@ -304,7 +304,7 @@ async fn main() -> ExitCode {
                             cwd: cli.cwd,
                             output_format,
                             yes: cli.auto_approve,
-                            use_coins: cli.auto_approve,
+                            use_coins: false,
                             api_url: cli.api_url,
                             max_steps: cli.max_turns,
                         })

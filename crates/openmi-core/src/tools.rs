@@ -88,6 +88,35 @@ pub async fn execute_tool(
     }
 }
 
+const MAX_EDIT_READ_BYTES: u64 = 10 * 1024 * 1024; // 10 MiB
+const MAX_PAGED_READ_BYTES: u64 = 4 * 1024 * 1024; // 4 MiB for offset/limit reads
+
+fn read_bounded_regular_file(
+    file: std::fs::File,
+    max_bytes: u64,
+    tool_name: &str,
+) -> Result<(String, bool), CoreError> {
+    let meta = file
+        .metadata()
+        .map_err(|e| CoreError::Tool(format!("{tool_name} metadata failed: {e}")))?;
+    if !meta.is_file() {
+        return Err(CoreError::Tool(format!(
+            "{tool_name} only supports regular files (refusing special file/FIFO/directory)"
+        )));
+    }
+    let mut buf = Vec::new();
+    let mut limited = file.take(max_bytes.saturating_add(1));
+    limited
+        .read_to_end(&mut buf)
+        .map_err(|e| CoreError::Tool(format!("{tool_name} failed: {e}")))?;
+    let truncated = (buf.len() as u64) > max_bytes;
+    if truncated {
+        buf.truncate(max_bytes as usize);
+    }
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    Ok((text, truncated))
+}
+
 fn exec_read_file(args: &serde_json::Value, path_guard: &PathGuard) -> Result<String, CoreError> {
     let path = args
         .get("path")
@@ -102,10 +131,13 @@ fn exec_read_file(args: &serde_json::Value, path_guard: &PathGuard) -> Result<St
         .and_then(|v| v.as_u64())
         .map(|n| n.max(1) as usize);
 
-    let mut file = path_guard.open_existing_read(path)?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)
-        .map_err(|e| CoreError::Tool(format!("read_file failed: {e}")))?;
+    let file = path_guard.open_existing_read(path)?;
+    let cap = if offset.is_some() || limit.is_some() {
+        MAX_PAGED_READ_BYTES
+    } else {
+        MAX_READ_BYTES as u64
+    };
+    let (content, truncated) = read_bounded_regular_file(file, cap, "read_file")?;
 
     if offset.is_some() || limit.is_some() {
         let lines: Vec<&str> = content.lines().collect();
@@ -133,17 +165,15 @@ fn exec_read_file(args: &serde_json::Value, path_guard: &PathGuard) -> Result<St
         return Ok(out);
     }
 
-    if content.len() > MAX_READ_BYTES {
-        let mut cut = MAX_READ_BYTES;
+    if truncated {
+        let mut cut = content.len().min(MAX_READ_BYTES);
         while cut > 0 && !content.is_char_boundary(cut) {
             cut -= 1;
         }
-        let total_lines = content.lines().count();
         return Ok(format!(
-            "{}\n... (truncated at {} bytes; total {} lines — use offset/limit to read specific ranges)",
+            "{}\n... (truncated at {} bytes — use offset/limit to read specific ranges)",
             &content[..cut],
             cut,
-            total_lines
         ));
     }
 
@@ -201,11 +231,14 @@ fn exec_edit_file(
         ));
     }
 
-    let mut file = path_guard.open_existing_read(path)?;
-    let mut current = String::new();
-    file.read_to_string(&mut current)
-        .map_err(|e| CoreError::Tool(format!("edit_file read failed: {e}")))?;
-    drop(file);
+    let file = path_guard.open_existing_read(path)?;
+    let (current, truncated) = read_bounded_regular_file(file, MAX_EDIT_READ_BYTES, "edit_file")?;
+    if truncated {
+        return Err(CoreError::Tool(format!(
+            "edit_file refused `{path}` because it exceeds the {} byte safety limit",
+            MAX_EDIT_READ_BYTES
+        )));
+    }
 
     let occurrences = current.matches(old_string).count();
     if occurrences == 0 {

@@ -39,10 +39,6 @@ pub fn current_target_asset_name() -> &'static str {
     {
         "openmi-aarch64-unknown-linux-gnu.tar.gz"
     }
-    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    {
-        "openmi-x86_64-apple-darwin.tar.gz"
-    }
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
         "openmi-aarch64-apple-darwin.tar.gz"
@@ -55,12 +51,11 @@ pub fn current_target_asset_name() -> &'static str {
         all(target_os = "android", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64"),
         all(target_os = "linux", target_arch = "aarch64"),
-        all(target_os = "macos", target_arch = "x86_64"),
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "windows", target_arch = "x86_64"),
     )))]
     {
-        "openmi-unknown.tar.gz"
+        "openmi-unsupported-platform"
     }
 }
 
@@ -112,15 +107,37 @@ fn auto_update_disabled() -> bool {
     false
 }
 
-/// Check for a newer release before booting the CLI.
+const AUTO_UPDATE_CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60;
+
+fn should_check_for_update_now() -> bool {
+    let Ok(paths) = openmi_platform::AppPaths::resolve() else {
+        return true;
+    };
+    let stamp = paths.cache_dir.join("last_update_check");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Ok(raw) = std::fs::read_to_string(&stamp) {
+        if let Ok(last) = raw.trim().parse::<u64>() {
+            if now.saturating_sub(last) < AUTO_UPDATE_CHECK_INTERVAL_SECS {
+                return false;
+            }
+        }
+    }
+    let _ = std::fs::create_dir_all(&paths.cache_dir);
+    let _ = std::fs::write(&stamp, now.to_string());
+    true
+}
+
+/// Check for a newer release before booting the CLI (at most once per 24 hours).
 ///
 /// Uses a short 3-second timeout for the version check so offline or slow networks never
-/// stall startup. If a newer release exists, downloads, verifies SHA-256, replaces the
-/// binary in place, and re-launches the updated binary with the original arguments.
-/// Returns `Some(exit_code)` when the updated binary was re-launched and has finished;
-/// returns `None` to continue booting the current binary normally.
+/// stall startup. When a newer release is found, prompts the user interactively before
+/// downloading, verifying SHA-256, and replacing the binary (in non-interactive mode,
+/// prints a notice to stderr without replacing the binary).
 pub async fn auto_update_before_boot() -> Option<std::process::ExitCode> {
-    if auto_update_disabled() {
+    if auto_update_disabled() || !should_check_for_update_now() {
         return None;
     }
 
@@ -154,6 +171,23 @@ pub async fn auto_update_before_boot() -> Option<std::process::ExitCode> {
     }
 
     let latest = release.tag_name.trim_start_matches('v');
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        eprintln!(
+            "Update available: openmi v{current_version} -> v{latest}. Run `openmi update` to install."
+        );
+        return None;
+    }
+
+    eprint!("Update available: openmi v{current_version} -> v{latest}. Install now? [y/N]: ");
+    let _ = std::io::Write::flush(&mut std::io::stderr());
+    let mut answer = String::new();
+    if std::io::stdin().read_line(&mut answer).is_err() {
+        return None;
+    }
+    if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        return None;
+    }
+
     eprintln!("Updating openmi v{current_version} -> v{latest}...");
 
     let download_client = reqwest::Client::builder()
@@ -273,28 +307,29 @@ async fn install_release(
         .bytes()
         .await?;
 
-    // Verify SHA-256 if SHA256SUMS.txt or `<asset>.sha256` is published alongside the release.
-    if let Some(sums_asset) = release
+    // Fail closed: require SHA256SUMS.txt or `<asset>.sha256` alongside the release.
+    let sums_asset = release
         .assets
         .iter()
         .find(|a| a.name == "SHA256SUMS.txt" || a.name == format!("{asset_name}.sha256"))
-    {
-        ensure_safe_download_url(&sums_asset.browser_download_url)?;
-        let sums_txt = client
-            .get(&sums_asset.browser_download_url)
-            .send()
-            .await?
-            .error_for_status()?
-            .text()
-            .await?;
-        let expected = find_expected_sha256(&sums_txt, asset_name)
-            .ok_or_else(|| anyhow!("checksum file did not contain an entry for {asset_name}"))?;
-        let actual = sha256_hex(&archive_bytes);
-        ensure!(
-            actual == expected,
-            "checksum mismatch for {asset_name}: expected {expected}, got {actual}"
-        );
-    }
+        .ok_or_else(|| {
+            anyhow!("release is missing required checksum file (SHA256SUMS.txt or {asset_name}.sha256); aborting update")
+        })?;
+    ensure_safe_download_url(&sums_asset.browser_download_url)?;
+    let sums_txt = client
+        .get(&sums_asset.browser_download_url)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    let expected = find_expected_sha256(&sums_txt, asset_name)
+        .ok_or_else(|| anyhow!("checksum file did not contain an entry for {asset_name}"))?;
+    let actual = sha256_hex(&archive_bytes);
+    ensure!(
+        actual == expected,
+        "checksum mismatch for {asset_name}: expected {expected}, got {actual}"
+    );
 
     let binary_bytes = if asset_name.ends_with(".tar.gz") {
         extract_binary_from_tar_gz(&archive_bytes)?

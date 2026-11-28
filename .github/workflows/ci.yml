@@ -13,7 +13,7 @@ jobs:
     name: Format check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -23,7 +23,7 @@ jobs:
     name: Verify rustls-only (no openssl-sys)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Check dependency tree excludes openssl-sys
         run: |
@@ -36,7 +36,7 @@ jobs:
     name: Security audit (RustSec)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -49,7 +49,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -60,3 +60,25 @@ jobs:
         run: cargo test --workspace
       - name: Smoke test CLI
         run: cargo run -p openmi-cli -- smoke-test
+
+  js-ts-check:
+    name: Validate JS & Supabase Edge Functions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax check admin-panel & auth-web
+        run: |
+          for f in admin-panel/api/*.js auth-web/app.js; do
+            node --check "$f"
+          done
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Type check Supabase Edge Functions
+        run: |
+          for f in supabase/functions/*/index.ts; do
+            deno check "$f"
+          done

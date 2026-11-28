@@ -154,7 +154,8 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
     }
 
     raw_session.set_reasoning_effort(user_settings.reasoning_effort);
-    let session = Arc::new(tokio::sync::Mutex::new(raw_session));
+    let mut session: Option<openmi_core::AgentSession> = Some(raw_session);
+    let mut pending_updates = PendingSessionUpdates::default();
 
     install_panic_hook();
     enable_raw_mode().map_err(anyhow::Error::from)?;
@@ -170,10 +171,11 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
     app.settings = user_settings;
     if let Some(ref saved) = resumed {
         app.hydrate_from_history(&saved.messages);
-        app.push_system("Resumed your previous chat.");
+        app.push_system("Resumed your previous chat. (Note: /undo and /diff checkpoints are per-process and unavailable for turns from earlier sessions.)");
     }
 
     let (agent_tx, mut agent_rx) = mpsc::channel::<AgentEvent>(128);
+    let (turn_done_tx, mut turn_done_rx) = mpsc::channel::<openmi_core::AgentSession>(1);
     let (credit_tx, mut credit_rx) = mpsc::channel::<CreditStatus>(8);
     let (model_tx, mut model_rx) = mpsc::channel::<Vec<ModelInfo>>(2);
     let mut active_cancel: Option<CancellationToken> = None;
@@ -259,18 +261,32 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                             KeyAction::None => {}
                             KeyAction::ConfirmedFullAccess => {
                                 app.mode = PermissionMode::FullAccess;
-                                session.lock().await.set_permission_mode(PermissionMode::FullAccess);
+                                if let Some(s) = session.as_mut() {
+                                    s.set_permission_mode(PermissionMode::FullAccess);
+                                } else {
+                                    pending_updates.permission_mode =
+                                        Some(PermissionMode::FullAccess);
+                                }
+                                app.status_hint = "Mode: Full access".to_string();
                                 app.push_system("Permission mode switched to FullAccess.");
                             }
                             KeyAction::SelectedModel(chosen) => {
                                 app.model = chosen.id.clone();
-                                session.lock().await.set_model(chosen.id.clone());
+                                if let Some(s) = session.as_mut() {
+                                    s.set_model(chosen.id.clone());
+                                } else {
+                                    pending_updates.model = Some(chosen.id.clone());
+                                }
                                 app.push_system(format_model_switch_message(&app, &chosen));
                             }
                             KeyAction::SelectedEffort(effort) => {
                                 app.settings.reasoning_effort = effort;
                                 let _ = app.settings.save_default();
-                                session.lock().await.set_reasoning_effort(effort);
+                                if let Some(s) = session.as_mut() {
+                                    s.set_reasoning_effort(effort);
+                                } else {
+                                    pending_updates.reasoning_effort = Some(effort);
+                                }
                                 app.push_system(format!(
                                     "Reasoning effort set to `{}` ({}).",
                                     effort.as_str(),
@@ -312,28 +328,40 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                 }
                             }
                             KeyAction::SelectedFolder(chosen) => {
-                                switch_project_folder(
-                                    chosen,
-                                    &mut workdir,
-                                    &mut app,
-                                    &session,
-                                    &checkpoints,
-                                    &approval_handler,
-                                    &ask_user_handler,
-                                    &proxy_config,
-                                    &mut mcp_manager,
-                                )
-                                .await;
+                                if session.is_some() {
+                                    switch_project_folder(
+                                        chosen,
+                                        &mut workdir,
+                                        &mut app,
+                                        &mut session,
+                                        &checkpoints,
+                                        &approval_handler,
+                                        &ask_user_handler,
+                                        &proxy_config,
+                                        &mut mcp_manager,
+                                    )
+                                    .await;
+                                } else {
+                                    app.push_system("Wait for the current turn to finish before switching folders.");
+                                }
                             }
                             KeyAction::SettingsChanged(new_mode) => {
                                 if let Some(m) = new_mode {
-                                    session.lock().await.set_permission_mode(m);
+                                    if let Some(s) = session.as_mut() {
+                                        s.set_permission_mode(m);
+                                    } else {
+                                        pending_updates.permission_mode = Some(m);
+                                    }
                                 }
                                 let _ = app.settings.save_default();
                                 app.status_hint = "Settings saved".to_string();
                             }
                             KeyAction::CycleMode(next_mode) => {
-                                session.lock().await.set_permission_mode(next_mode);
+                                if let Some(s) = session.as_mut() {
+                                    s.set_permission_mode(next_mode);
+                                } else {
+                                    pending_updates.permission_mode = Some(next_mode);
+                                }
                                 let label = match next_mode {
                                     PermissionMode::Ask => "Ask (confirm edits)",
                                     PermissionMode::Trusted => "Trusted (auto-approve workspace)",
@@ -343,31 +371,34 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                 app.status_hint = format!("Mode: {label}");
                             }
                             KeyAction::SelectedSession(saved) => {
-                                session_id = saved.id.clone();
-                                app.model = saved.model.clone();
-                                app.transcript.clear();
-                                app.tools.clear();
-                                app.hydrate_from_history(&saved.messages);
-                                if saved.cwd.is_dir() && saved.cwd != workdir {
-                                    switch_project_folder(
-                                        saved.cwd.clone(),
-                                        &mut workdir,
-                                        &mut app,
-                                        &session,
-                                        &checkpoints,
-                                        &approval_handler,
-                                        &ask_user_handler,
-                                        &proxy_config,
-                                        &mut mcp_manager,
-                                    )
-                                    .await;
+                                if session.is_none() {
+                                    app.push_system("Wait for the current turn to finish before resuming a session.");
+                                } else {
+                                    session_id = saved.id.clone();
+                                    app.model = saved.model.clone();
+                                    app.transcript.clear();
+                                    app.tools.clear();
+                                    app.hydrate_from_history(&saved.messages);
+                                    if saved.cwd.is_dir() && saved.cwd != workdir {
+                                        switch_project_folder(
+                                            saved.cwd.clone(),
+                                            &mut workdir,
+                                            &mut app,
+                                            &mut session,
+                                            &checkpoints,
+                                            &approval_handler,
+                                            &ask_user_handler,
+                                            &proxy_config,
+                                            &mut mcp_manager,
+                                        )
+                                        .await;
+                                    }
+                                    if let Some(s) = session.as_mut() {
+                                        s.set_model(saved.model);
+                                        s.set_history(saved.messages);
+                                    }
+                                    app.push_system("Resumed your previous chat. (Note: /undo and /diff checkpoints are per-process and unavailable for turns from earlier sessions.)");
                                 }
-                                {
-                                    let mut guard = session.lock().await;
-                                    guard.set_model(saved.model);
-                                    guard.set_history(saved.messages);
-                                }
-                                app.push_system("Resumed your previous chat.");
                             }
                             KeyAction::Submit(input_text) => {
                                 // Check if the user invoked a loaded slash-command skill (`/name [args]`).
@@ -382,31 +413,34 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                 });
 
                                 if let Some((skill, trailing_args)) = matched_skill {
-                                    let expanded = skill.expand_prompt(trailing_args.as_deref());
-                                    let skill_allowed = skill.allowed_tools.clone();
-                                    checkpoints.lock().expect("checkpoint mutex").begin_run();
-                                    app.push_user(input_text.clone());
-                                    let cancel = CancellationToken::new();
-                                    active_cancel = Some(cancel.clone());
-                                    let sess = Arc::clone(&session);
-                                    let tx = agent_tx.clone();
-                                    tokio::spawn(async move {
-                                        let mut s = sess.lock().await;
-                                        s.set_allowed_tools(skill_allowed);
-                                        let res = s.run_turn(&expanded, tx.clone(), cancel).await;
-                                        s.set_allowed_tools(None);
-                                        if let Err(err) = res {
-                                            let _ = tx
-                                                .send(AgentEvent::Error {
-                                                    code: "turn_error".to_string(),
-                                                    message: err.to_string(),
-                                                })
-                                                .await;
-                                        }
-                                    });
+                                    if let Some(mut sess) = session.take() {
+                                        pending_updates.apply_to(&mut sess);
+                                        let expanded = skill.expand_prompt(trailing_args.as_deref());
+                                        let skill_allowed = skill.allowed_tools.clone();
+                                        checkpoints.lock().unwrap_or_else(|e| { eprintln!("Warning: checkpoint mutex poisoned; recovering"); e.into_inner() }).begin_run();
+                                        app.push_user(input_text.clone());
+                                        let cancel = CancellationToken::new();
+                                        active_cancel = Some(cancel.clone());
+                                        let tx = agent_tx.clone();
+                                        let done_tx = turn_done_tx.clone();
+                                        tokio::spawn(async move {
+                                            sess.set_allowed_tools(skill_allowed);
+                                            let res = sess.run_turn(&expanded, tx.clone(), cancel).await;
+                                            sess.set_allowed_tools(None);
+                                            if let Err(err) = res {
+                                                let _ = tx
+                                                    .send(AgentEvent::Error {
+                                                        code: "turn_error".to_string(),
+                                                        message: err.to_string(),
+                                                    })
+                                                    .await;
+                                            }
+                                            let _ = done_tx.send(sess).await;
+                                        });
+                                    }
                                 } else if let Some(slash_cmd) = parse_slash(&input_text) {
                                     let outcome = {
-                                        let cp = checkpoints.lock().expect("checkpoint mutex");
+                                        let cp = checkpoints.lock().unwrap_or_else(|e| { eprintln!("Warning: checkpoint mutex poisoned; recovering"); e.into_inner() });
                                         execute_slash(slash_cmd, &app.model, app.mode, &cp, &workdir)
                                     };
                                     match outcome {
@@ -441,10 +475,9 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                                     content.as_bytes(),
                                                 ) {
                                                     Ok(()) => {
-                                                        session
-                                                            .lock()
-                                                            .await
-                                                            .set_system_prompt(Some(content));
+                                                        if let Some(s) = session.as_mut() {
+                                                            s.set_system_prompt(Some(content));
+                                                        }
                                                         app.push_system(
                                                             "Created OPENMI.md in your project folder and loaded it.",
                                                         );
@@ -460,19 +493,23 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                                 Some(FolderPickerState::new(workdir.clone()));
                                         }
                                         SlashOutcome::SetFolder(raw) => {
-                                            let target = resolve_folder_input(&raw, &workdir);
-                                            switch_project_folder(
-                                                target,
-                                                &mut workdir,
-                                                &mut app,
-                                                &session,
-                                                &checkpoints,
-                                                &approval_handler,
-                                                &ask_user_handler,
-                                                &proxy_config,
-                                                &mut mcp_manager,
-                                            )
-                                            .await;
+                                            if session.is_some() {
+                                                let target = resolve_folder_input(&raw, &workdir);
+                                                switch_project_folder(
+                                                    target,
+                                                    &mut workdir,
+                                                    &mut app,
+                                                    &mut session,
+                                                    &checkpoints,
+                                                    &approval_handler,
+                                                    &ask_user_handler,
+                                                    &proxy_config,
+                                                    &mut mcp_manager,
+                                                )
+                                                .await;
+                                            } else {
+                                                app.push_system("Wait for the current turn to finish before switching folders.");
+                                            }
                                         }
                                         SlashOutcome::OpenModelSelector => {
                                             let endpoint = base_url_for_credits
@@ -502,7 +539,11 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                                 .map(|(id, _)| id.clone())
                                                 .unwrap_or(m);
                                             app.model = m.clone();
-                                            session.lock().await.set_model(m.clone());
+                                            if let Some(s) = session.as_mut() {
+                                                s.set_model(m.clone());
+                                            } else {
+                                                pending_updates.model = Some(m.clone());
+                                            }
                                             let active_note = app
                                                 .credit_status
                                                 .as_ref()
@@ -526,7 +567,11 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                         SlashOutcome::SetEffort(effort) => {
                                             app.settings.reasoning_effort = effort;
                                             let _ = app.settings.save_default();
-                                            session.lock().await.set_reasoning_effort(effort);
+                                            if let Some(s) = session.as_mut() {
+                                                s.set_reasoning_effort(effort);
+                                            } else {
+                                                pending_updates.reasoning_effort = Some(effort);
+                                            }
                                             app.push_system(format!(
                                                 "Reasoning effort set to `{}` ({}).",
                                                 effort.as_str(),
@@ -534,64 +579,82 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                             ));
                                         }
                                         SlashOutcome::TogglePlan(desired) => {
-                                            let mut sess = session.lock().await;
-                                            let next = desired.unwrap_or(!sess.plan_mode());
-                                            let effective_mode = sess.set_plan_mode(next);
-                                            app.plan_mode = sess.plan_mode();
-                                            app.mode = effective_mode;
-                                            if app.plan_mode {
-                                                app.push_system("Entered Plan Mode (read-only). Openmi will explore and propose a plan without modifying files. Run `/plan off` when ready to implement.");
+                                            if let Some(sess) = session.as_mut() {
+                                                let next = desired.unwrap_or(!sess.plan_mode());
+                                                let effective_mode = sess.set_plan_mode(next);
+                                                app.plan_mode = sess.plan_mode();
+                                                app.mode = effective_mode;
+                                                if app.plan_mode {
+                                                    app.push_system("Entered Plan Mode (read-only). Openmi will explore and propose a plan without modifying files. Run `/plan off` when ready to implement.");
+                                                } else {
+                                                    app.push_system(format!("Exited Plan Mode (restored {effective_mode:?} mode)."));
+                                                }
                                             } else {
-                                                app.push_system(format!("Exited Plan Mode (restored {effective_mode:?} mode)."));
+                                                app.push_system("Wait for the current turn to finish before toggling Plan Mode.");
                                             }
                                         }
                                         SlashOutcome::Compact(focus) => {
-                                            app.push_system("Compacting conversation history…");
-                                            let cancel = CancellationToken::new();
-                                            let mut sess = session.lock().await;
-                                            match sess.compact_history(focus.as_deref(), &cancel).await {
-                                                Ok(report) => {
-                                                    if report.messages_before == report.messages_after {
-                                                        app.push_system(report.summary);
-                                                    } else {
-                                                        app.transcript.clear();
-                                                        app.tools.clear();
-                                                        app.push_system(format!(
-                                                            "Compacted {} -> {} messages (~{} -> ~{} chars).\n\n{}",
-                                                            report.messages_before,
-                                                            report.messages_after,
-                                                            report.chars_before,
-                                                            report.chars_after,
-                                                            report.summary
-                                                        ));
+                                            if let Some(sess) = session.as_mut() {
+                                                app.push_system("Compacting conversation history…");
+                                                let cancel = CancellationToken::new();
+                                                match sess.compact_history(focus.as_deref(), &cancel).await {
+                                                    Ok(report) => {
+                                                        if report.messages_before == report.messages_after {
+                                                            app.push_system(report.summary);
+                                                        } else {
+                                                            app.transcript.clear();
+                                                            app.tools.clear();
+                                                            app.push_system(format!(
+                                                                "Compacted {} -> {} messages (~{} -> ~{} chars).\n\n{}",
+                                                                report.messages_before,
+                                                                report.messages_after,
+                                                                report.chars_before,
+                                                                report.chars_after,
+                                                                report.summary
+                                                            ));
+                                                        }
                                                     }
+                                                    Err(err) => app.push_error(format!("Compaction failed: {err}")),
                                                 }
-                                                Err(err) => app.push_error(format!("Compaction failed: {err}")),
+                                            } else {
+                                                app.push_system("Wait for the current turn to finish before compacting history.");
                                             }
                                         }
                                         SlashOutcome::SetMode(new_mode) => {
                                             app.mode = new_mode;
-                                            let mut sess = session.lock().await;
-                                            sess.set_permission_mode(new_mode);
-                                            app.plan_mode = sess.plan_mode();
+                                            if let Some(sess) = session.as_mut() {
+                                                sess.set_permission_mode(new_mode);
+                                                app.plan_mode = sess.plan_mode();
+                                            } else {
+                                                pending_updates.permission_mode = Some(new_mode);
+                                            }
                                             app.push_system(format!("Switched permission mode to {new_mode:?}."));
                                         }
                                         SlashOutcome::RequireFullAccessConfirm => {
                                             app.full_access_modal = Some(FullAccessModalState::default());
                                         }
                                         SlashOutcome::ClearHistory => {
-                                            session.lock().await.clear_history();
-                                            app.transcript.clear();
-                                            app.tools.clear();
-                                            app.todos.clear();
-                                            app.status_hint.clear();
+                                            if let Some(sess) = session.as_mut() {
+                                                sess.clear_history();
+                                                app.transcript.clear();
+                                                app.tools.clear();
+                                                app.todos.clear();
+                                                app.status_hint.clear();
+                                            } else {
+                                                app.push_system("Wait for the current turn to finish before clearing history.");
+                                            }
                                         }
                                         SlashOutcome::RefreshCredits => {
                                             if let (Some(base), Some(tok)) = (base_url_for_credits.as_deref(), bearer_for_credits.as_deref()) {
                                                 let ep = format!("{base}/functions/v1/credits");
                                                 match fetch_credit_status(&ep, tok).await {
                                                     Ok(status) => {
-                                                        session.lock().await.set_max_steps(status.effective_max_steps());
+                                                        let max_steps = status.effective_max_steps();
+                                                        if let Some(s) = session.as_mut() {
+                                                            s.set_max_steps(max_steps);
+                                                        } else {
+                                                            pending_updates.max_steps = Some(max_steps);
+                                                        }
                                                         let summary = format_credit_summary(&status);
                                                         app.apply_credit_status(status);
                                                         app.push_system(summary);
@@ -649,13 +712,16 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                         }
                                         SlashOutcome::McpRestart(target) => {
                                             if let Some(mgr) = mcp_manager.as_mut() {
-                                                let mut sess = session.lock().await;
-                                                match mgr.restart(target.as_deref(), sess.tool_registry_mut()).await {
-                                                    Ok(()) => app.push_system(format!(
-                                                        "Restarted MCP server(s): {}",
-                                                        target.as_deref().unwrap_or("all")
-                                                    )),
-                                                    Err(err) => app.push_error(format!("MCP restart failed: {err}")),
+                                                if let Some(sess) = session.as_mut() {
+                                                    match mgr.restart(target.as_deref(), sess.tool_registry_mut()).await {
+                                                        Ok(()) => app.push_system(format!(
+                                                            "Restarted MCP server(s): {}",
+                                                            target.as_deref().unwrap_or("all")
+                                                        )),
+                                                        Err(err) => app.push_error(format!("MCP restart failed: {err}")),
+                                                    }
+                                                } else {
+                                                    app.push_system("Wait for the current turn to finish before restarting MCP servers.");
                                                 }
                                             } else {
                                                 app.push_system("No MCP servers configured.");
@@ -665,20 +731,20 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                             app.should_quit = true;
                                         }
                                     }
-                                } else {
+                                } else if let Some(mut sess) = session.take() {
+                                    pending_updates.apply_to(&mut sess);
                                     let attachments = crate::tui::mention::load_image_attachments(
                                         &input_text,
                                         &workdir,
                                     );
-                                    checkpoints.lock().expect("checkpoint mutex").begin_run();
+                                    checkpoints.lock().unwrap_or_else(|e| { eprintln!("Warning: checkpoint mutex poisoned; recovering"); e.into_inner() }).begin_run();
                                     app.push_user(input_text.clone());
                                     let cancel = CancellationToken::new();
                                     active_cancel = Some(cancel.clone());
-                                    let sess = Arc::clone(&session);
                                     let tx = agent_tx.clone();
+                                    let done_tx = turn_done_tx.clone();
                                     tokio::spawn(async move {
-                                        let mut s = sess.lock().await;
-                                        if let Err(err) = s
+                                        if let Err(err) = sess
                                             .run_turn_with_attachments(
                                                 &input_text,
                                                 attachments,
@@ -692,6 +758,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                                 message: err.to_string(),
                                             }).await;
                                         }
+                                        let _ = done_tx.send(sess).await;
                                     });
                                 }
                             }
@@ -700,36 +767,35 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                     _ => {}
                 }
             }
-            Some(agent_ev) = agent_rx.recv() => {
-                let became_idle = matches!(
-                    agent_ev,
-                    AgentEvent::ControlStateChanged { state: openmi_core::ControlState::Idle }
+            Some(mut returned_sess) = turn_done_rx.recv() => {
+                pending_updates.apply_to(&mut returned_sess);
+                let msgs = returned_sess.history().to_vec();
+                session = Some(returned_sess);
+                active_cancel = None;
+                // Persist session snapshot after each completed turn.
+                let snap = SessionStore::make_snapshot(
+                    session_id.clone(),
+                    app.model.clone(),
+                    workdir.clone(),
+                    msgs,
                 );
-                if became_idle {
-                    active_cancel = None;
-                    // Persist session snapshot after each completed turn.
-                    let msgs = session.lock().await.history().to_vec();
-                    let snap = SessionStore::make_snapshot(
-                        session_id.clone(),
-                        app.model.clone(),
-                        workdir.clone(),
-                        msgs,
-                    );
-                    let _ = session_store.save(&snap);
-                    // Refresh credit/pass status in background so status bar updates live.
-                    if let (Some(base), Some(tok)) = (
-                        base_url_for_credits.clone(),
-                        bearer_for_credits.clone(),
-                    ) {
-                        let tx = credit_tx.clone();
-                        tokio::spawn(async move {
-                            let ep = format!("{base}/functions/v1/credits");
-                            if let Ok(status) = fetch_credit_status(&ep, &tok).await {
-                                let _ = tx.send(status).await;
-                            }
-                        });
-                    }
+                let _ = session_store.save(&snap);
+                // Refresh credit/pass status in background so status bar updates live.
+                if let (Some(base), Some(tok)) = (
+                    base_url_for_credits.clone(),
+                    bearer_for_credits.clone(),
+                ) {
+                    let tx = credit_tx.clone();
+                    tokio::spawn(async move {
+                        let ep = format!("{base}/functions/v1/credits");
+                        if let Ok(status) = fetch_credit_status(&ep, &tok).await {
+                            let _ = tx.send(status).await;
+                        }
+                    });
                 }
+                dirty = true;
+            }
+            Some(agent_ev) = agent_rx.recv() => {
                 app.apply_agent_event(agent_ev);
                 dirty = true;
             }
@@ -738,7 +804,12 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                 dirty = true;
             }
             Some(status) = credit_rx.recv() => {
-                session.lock().await.set_max_steps(status.effective_max_steps());
+                let max_steps = status.effective_max_steps();
+                if let Some(s) = session.as_mut() {
+                    s.set_max_steps(max_steps);
+                } else {
+                    pending_updates.max_steps = Some(max_steps);
+                }
                 app.apply_credit_status(status);
                 dirty = true;
             }
@@ -763,15 +834,25 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
         cancel.cancel();
     }
 
+    if session.is_none() {
+        if let Ok(Some(returned)) =
+            tokio::time::timeout(Duration::from_secs(2), turn_done_rx.recv()).await
+        {
+            session = Some(returned);
+        }
+    }
+
     if let Some(mgr) = mcp_manager.as_mut() {
         mgr.shutdown_all().await;
     }
 
     // Final session save on clean exit if any history exists.
-    let final_msgs = session.lock().await.history().to_vec();
-    if !final_msgs.is_empty() {
-        let snap = SessionStore::make_snapshot(session_id, app.model, workdir, final_msgs);
-        let _ = session_store.save(&snap);
+    if let Some(sess) = session.as_ref() {
+        let final_msgs = sess.history().to_vec();
+        if !final_msgs.is_empty() {
+            let snap = SessionStore::make_snapshot(session_id, app.model, workdir, final_msgs);
+            let _ = session_store.save(&snap);
+        }
     }
 
     Ok(())
@@ -876,7 +957,7 @@ async fn switch_project_folder(
     target: PathBuf,
     workdir: &mut PathBuf,
     app: &mut TuiApp,
-    session: &Arc<tokio::sync::Mutex<openmi_core::AgentSession>>,
+    session: &mut Option<openmi_core::AgentSession>,
     checkpoints: &Arc<Mutex<CheckpointStore>>,
     approval_handler: &Arc<TuiApprovalHandler>,
     ask_user_handler: &Arc<TuiAskUserHandler>,
@@ -919,12 +1000,11 @@ async fn switch_project_folder(
     }
     *mcp_manager = next_mgr;
 
-    {
-        let mut guard = session.lock().await;
-        let prev_history = guard.history().to_vec();
+    if let Some(prev) = session.as_ref() {
+        let prev_history = prev.history().to_vec();
         new_session.set_history(prev_history);
-        *guard = new_session;
     }
+    *session = Some(new_session);
 
     *workdir = canonical.clone();
     app.skills = crate::skills::load_merged_skills(&canonical);
@@ -1253,3 +1333,67 @@ fn handle_key_event(
     app.refresh_mention_suggestions();
     action
 }
+
+/// Mutations queued while an agent turn owns the `AgentSession`, applied
+/// immediately when the turn returns control to the TUI event loop.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct PendingSessionUpdates {
+    permission_mode: Option<PermissionMode>,
+    model: Option<String>,
+    reasoning_effort: Option<ReasoningEffort>,
+    max_steps: Option<u32>,
+}
+
+impl PendingSessionUpdates {
+    fn apply_to(&mut self, session: &mut openmi_core::AgentSession) {
+        if let Some(mode) = self.permission_mode.take() {
+            session.set_permission_mode(mode);
+        }
+        if let Some(model) = self.model.take() {
+            session.set_model(model);
+        }
+        if let Some(effort) = self.reasoning_effort.take() {
+            session.set_reasoning_effort(effort);
+        }
+        if let Some(max_steps) = self.max_steps.take() {
+            session.set_max_steps(max_steps);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_session_updates_queues_and_clears_on_apply() {
+        let mut updates = PendingSessionUpdates {
+            permission_mode: Some(PermissionMode::Trusted),
+            model: Some("openai/gpt-5".to_string()),
+            reasoning_effort: Some(ReasoningEffort::High),
+            max_steps: Some(42),
+        };
+
+        let tmp = std::env::temp_dir().join("openmi-tui-pending-updates-test");
+        let _ = std::fs::create_dir_all(&tmp);
+        let cp = Arc::new(Mutex::new(CheckpointStore::new()));
+        let (tx, _rx) = mpsc::channel(1);
+        let handler = Arc::new(TuiApprovalHandler::new(tx));
+        let mut sess = build_session_with_options(
+            &tmp,
+            "initial-model",
+            PermissionMode::Ask,
+            cp,
+            handler as Arc<dyn openmi_core::ApprovalHandler>,
+            None,
+        )
+        .expect("build session");
+
+        updates.apply_to(&mut sess);
+
+        assert_eq!(updates, PendingSessionUpdates::default());
+        assert_eq!(sess.model(), "openai/gpt-5");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+

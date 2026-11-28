@@ -4,9 +4,12 @@
 //   POST /functions/v1/waitlist -> Register email for Windows App waitlist & send Resend confirmation.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { checkSimpleRateLimit, getClientIp } from "../_shared/upstash.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const MAX_WAITLIST_BODY_BYTES = 4096;
+const WAITLIST_GLOBAL_HOURLY_EMAIL_CAP = 200;
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -97,19 +100,70 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "method_not_allowed", message: "Use POST to join the waitlist." }, 405);
   }
 
-  let body: { email?: string; source?: string };
+  const clientIp = getClientIp(req);
+  const ipRl = await checkSimpleRateLimit("waitlist_ip", clientIp, 5, 300);
+  if (!ipRl.allowed) {
+    return jsonResponse(
+      { error: "rate_limited", message: "Too many waitlist requests from your network. Please try again in a few minutes." },
+      429,
+    );
+  }
+
+  const rawText = await req.text().catch(() => "");
+  if (!rawText || rawText.length > MAX_WAITLIST_BODY_BYTES) {
+    return jsonResponse({ error: "invalid_payload", message: "Request body is empty or too large." }, 400);
+  }
+
+  let body: { email?: unknown; source?: unknown; captcha_token?: unknown };
   try {
-    body = await req.json();
+    const parsed = JSON.parse(rawText);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return jsonResponse({ error: "invalid_json", message: "Invalid request body." }, 400);
+    }
+    body = parsed;
   } catch (_) {
     return jsonResponse({ error: "invalid_json", message: "Invalid request body." }, 400);
   }
 
-  const rawEmail = String(body.email ?? "").trim();
+  const rawEmail = typeof body.email === "string" ? body.email.trim() : "";
   const normalized = rawEmail.toLowerCase();
-  const source = String(body.source ?? "web").trim().slice(0, 40) || "web";
+  const source = typeof body.source === "string"
+    ? body.source.trim().replace(/[^a-zA-Z0-9._-]/g, "").slice(0, 40) || "web"
+    : "web";
 
   if (!isValidEmail(normalized)) {
     return jsonResponse({ error: "invalid_email", message: "Please enter a valid email address." }, 400);
+  }
+
+  // TODO: Set WAITLIST_TURNSTILE_SECRET in Supabase Secrets and pass `captcha_token`
+  // from the frontend form to enforce Cloudflare Turnstile verification.
+  const turnstileSecret = (Deno.env.get("WAITLIST_TURNSTILE_SECRET") ?? "").trim();
+  if (turnstileSecret) {
+    const token = typeof body.captcha_token === "string" ? body.captcha_token.trim() : "";
+    if (!token) {
+      return jsonResponse({ error: "captcha_required", message: "Please complete the verification challenge." }, 400);
+    }
+    try {
+      const verifyResp = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret: turnstileSecret, response: token, remoteip: clientIp }),
+      });
+      const verifyJson = (await verifyResp.json().catch(() => ({}))) as { success?: boolean };
+      if (!verifyJson.success) {
+        return jsonResponse({ error: "captcha_failed", message: "Verification failed. Please try again." }, 403);
+      }
+    } catch (_) {
+      return jsonResponse({ error: "captcha_error", message: "Could not verify challenge right now." }, 503);
+    }
+  }
+
+  const emailRl = await checkSimpleRateLimit("waitlist_email", normalized, 2, 3600);
+  if (!emailRl.allowed) {
+    return jsonResponse(
+      { error: "rate_limited", message: "This email was recently submitted. Please wait before trying again." },
+      429,
+    );
   }
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
@@ -162,7 +216,14 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  const emailSent = await sendWaitlistConfirmationEmail(rawEmail);
+  // Global hourly email cap to protect Resend quota and sender reputation.
+  const globalCap = await checkSimpleRateLimit(
+    "waitlist_global_hour",
+    "all",
+    WAITLIST_GLOBAL_HOURLY_EMAIL_CAP,
+    3600,
+  );
+  const emailSent = globalCap.allowed ? await sendWaitlistConfirmationEmail(rawEmail) : false;
 
   return jsonResponse({
     ok: true,

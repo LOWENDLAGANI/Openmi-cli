@@ -72,7 +72,7 @@ pub async fn execute(opts: RunOptions) -> Result<(), CliError> {
     };
 
     let checkpoints = Arc::new(Mutex::new(CheckpointStore::new()));
-    checkpoints.lock().expect("checkpoint mutex").begin_run();
+    checkpoints.lock().unwrap_or_else(|e| { eprintln!("Warning: checkpoint mutex poisoned; recovering"); e.into_inner() }).begin_run();
 
     let approval_handler = select_headless_approval_handler(opts.yes);
     let mut session = build_session_with_options(
@@ -84,7 +84,7 @@ pub async fn execute(opts: RunOptions) -> Result<(), CliError> {
         proxy_config,
     )?;
     session.set_reasoning_effort(UserSettings::load_default().reasoning_effort);
-    session.set_auto_allow_coins(opts.use_coins || opts.yes);
+    session.set_auto_allow_coins(opts.use_coins);
     match (tier_max_steps, opts.max_steps) {
         (Some(tier_cap), Some(requested)) => session.set_max_steps(requested.min(tier_cap)),
         (Some(tier_cap), None) => session.set_max_steps(tier_cap),

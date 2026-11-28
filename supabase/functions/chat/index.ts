@@ -1235,8 +1235,14 @@ Deno.serve(async (req: Request) => {
       try {
         while (true) {
           const { done, value } = await upstreamReader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
+          if (done) {
+            buffer += decoder.decode();
+            if (buffer.length > 0 && !buffer.endsWith("\n")) {
+              buffer += "\n";
+            }
+          } else {
+            buffer += decoder.decode(value, { stream: true });
+          }
 
           let nl: number;
           while ((nl = buffer.indexOf("\n")) !== -1) {
@@ -1248,7 +1254,9 @@ Deno.serve(async (req: Request) => {
 
             let parsed: Record<string, unknown>;
             try {
-              parsed = JSON.parse(data);
+              const raw = JSON.parse(data);
+              if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+              parsed = raw as Record<string, unknown>;
             } catch (_) {
               continue;
             }
@@ -1338,6 +1346,7 @@ Deno.serve(async (req: Request) => {
               finishReason = choice.finish_reason;
             }
           }
+          if (done) break;
         }
 
         flushToolCalls();

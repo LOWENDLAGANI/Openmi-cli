@@ -211,7 +211,6 @@ async function submitDecision(action) {
       body: JSON.stringify({
         user_code: code,
         action,
-        refresh_token: currentSession.refresh_token || null,
       }),
     });
     const data = await resp.json().catch(() => ({}));

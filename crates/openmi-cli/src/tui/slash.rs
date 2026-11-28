@@ -391,11 +391,15 @@ macro_rules! help_commands {
             "  /effort [off|low|medium|high]   Set AI reasoning effort (default: off)\n",
             "  /resume                         Pick a previous chat to continue\n",
             "  /new (or /clear)                Start a fresh chat (clears history)\n",
+            "  /compact [focus]                Summarize & compact conversation history\n",
+            "  /plan [on|off]                  Toggle read-only Plan Mode\n",
             "  /init                           Create a starter OPENMI.md in the project folder\n",
+            "  /memory                         Show persistent project memory file path\n",
             "  /mode [mode]                    Show or switch mode (read-only|ask|trusted|full-access)\n",
             "  /diff                           Show colored unified diff for the latest run\n",
             "  /undo [file|run]                Restore latest run, run ID, or file to pre-write bytes\n",
             "  /credits, /balance              Refresh plan, daily credits, Wallet Coins, and pass status\n",
+            "  /upgrade                        Open the upgrade / Paid pass page in your browser\n",
             "  /mcp [status|restart [server]]  Inspect or restart configured stdio MCP servers\n",
             "  /help [topic]                   Show full guide or topic (steps|commands|modes|keys|mcp|cli)\n",
             "  /version                        Show the running Openmi CLI version and platform\n",
@@ -408,12 +412,13 @@ macro_rules! help_modes {
     () => {
         concat!(
             "=== PERMISSION MODES & TOOLS ===\n",
-            "  read-only    Allow `read_file` & `list_dir` only; block all writes and commands.\n",
-            "  ask          Prompt [y/a/n] before writes/commands.\n",
-            "  trusted      Auto-approve workspace tools within PathGuard boundaries (default)\n",
+            "  read-only    Allow `read_file`, `list_dir`, `grep`, `glob`, `web_fetch`, `todo_write`, and `ask_user` only; block all writes and commands.\n",
+            "  ask          Prompt [y/a/n] before writes (`write_file`, `edit_file`, `delete_file`, `move_file`), `run_command`, and MCP tools.\n",
+            "  trusted      Auto-approve structured file tools within PathGuard (`read_file`, `write_file`, `edit_file`, `delete_file`, `move_file`, `list_dir`, `glob`, `grep`).\n",
+            "               NOTE: `run_command` runs arbitrary shell commands outside PathGuard (requires workspace trust/approval).\n",
             "               (MCP tools still ask unless listed in the server's `allowlist`).\n",
             "  full-access  Unrestricted tool execution; requires typing `I UNDERSTAND FULL ACCESS`.\n",
-            "  Built-in tools: `read_file`, `list_dir`, `write_file`, `run_command`.\n"
+            "  Built-in tools: `read_file`, `list_dir`, `grep`, `glob`, `write_file`, `edit_file`, `delete_file`, `move_file`, `run_command`, `web_fetch`, `todo_write`, `ask_user`.\n"
         )
     };
 }

@@ -13,12 +13,20 @@ function getUpstashConfig() {
 }
 
 export function getRequestIp(req) {
-  const cf = req.headers?.["cf-connecting-ip"];
-  if (typeof cf === "string" && cf.trim()) return cf.trim();
+  // Prefer platform-appended headers; never trust client-spoofable cf-connecting-ip
+  // or the left-most x-forwarded-for entry.
+  const vercelXff = req.headers?.["x-vercel-forwarded-for"];
+  if (typeof vercelXff === "string" && vercelXff.trim()) {
+    const hops = vercelXff.split(",").map((s) => s.trim()).filter(Boolean);
+    if (hops.length > 0) return hops[hops.length - 1];
+  }
   const real = req.headers?.["x-real-ip"];
   if (typeof real === "string" && real.trim()) return real.trim();
   const xff = req.headers?.["x-forwarded-for"];
-  if (typeof xff === "string" && xff.trim()) return xff.split(",")[0].trim();
+  if (typeof xff === "string" && xff.trim()) {
+    const hops = xff.split(",").map((s) => s.trim()).filter(Boolean);
+    if (hops.length > 0) return hops[hops.length - 1];
+  }
   return req.socket?.remoteAddress || "unknown";
 }
 

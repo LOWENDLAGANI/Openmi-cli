@@ -73,12 +73,21 @@ impl<W: Write + Send> EventRenderer for SingleJsonRenderer<W> {
     }
 
     fn finish(&mut self) -> std::io::Result<()> {
+        let mut error = self.error.clone();
+        if error.is_none() && self.finish_reason == "cancelled" {
+            error = Some("turn cancelled".to_string());
+        } else if error.is_none()
+            && !self.tool_calls.is_empty()
+            && self.tool_calls.iter().all(|tc| !tc.ok)
+        {
+            error = Some("all tool calls were denied or failed".to_string());
+        }
         let payload = FinalJsonOutput {
-            ok: self.error.is_none(),
+            ok: error.is_none(),
             text: self.text.clone(),
             finish_reason: self.finish_reason.clone(),
             tool_calls: self.tool_calls.clone(),
-            error: self.error.clone(),
+            error,
         };
         let encoded = serde_json::to_string_pretty(&payload)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -112,5 +121,28 @@ mod tests {
         assert_eq!(parsed["ok"], true);
         assert_eq!(parsed["text"], "Hello CI");
         assert_eq!(parsed["finish_reason"], "stop");
+    }
+
+    #[test]
+    fn single_json_renderer_marks_all_denied_tools_not_ok() {
+        let mut buf = Vec::new();
+        {
+            let mut r = SingleJsonRenderer::new(&mut buf);
+            r.render_event(&AgentEvent::ToolCompleted {
+                call_id: "c1".into(),
+                tool_name: "write_file".into(),
+                ok: false,
+                output: "denied".into(),
+            })
+            .unwrap();
+            r.render_event(&AgentEvent::TurnCompleted {
+                finish_reason: "stop".into(),
+            })
+            .unwrap();
+            r.finish().unwrap();
+        }
+        let parsed: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+        assert_eq!(parsed["ok"], false);
+        assert!(parsed["error"].as_str().is_some());
     }
 }
