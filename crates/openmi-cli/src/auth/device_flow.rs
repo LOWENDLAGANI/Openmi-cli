@@ -434,7 +434,7 @@ mod tests {
                     serde_json::json!({
                         "device_code": "dev-secret-1",
                         "user_code": "ABCD-EFGH",
-                        "verify_url": "https://openmi.dev/verify?code=ABCD-EFGH",
+                        "verify_url": "https://www.openmi.space/verify?code=ABCD-EFGH",
                         "expires_in": 600,
                         "interval": 1
                     })

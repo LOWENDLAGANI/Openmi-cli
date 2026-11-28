@@ -301,7 +301,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                             .ok()
                                             .filter(|s| !s.trim().is_empty())
                                     })
-                                    .unwrap_or_else(|| "https://openmi.app/provider".to_string());
+                                    .unwrap_or_else(|| "https://www.openmi.space/provider".to_string());
                                 if crate::browser::open_url(&provider_url) {
                                     app.push_system(format!(
                                         "Opened your BYOK provider settings in the browser:\n  {provider_url}\nAdd your API key & models there, then run `/model` to see them here."
@@ -617,7 +617,7 @@ pub async fn execute(opts: TuiOptions) -> Result<(), CliError> {
                                                     }
                                                 }
                                             }
-                                            let target = url.unwrap_or_else(|| "https://sociabuzz.com/minetallestmc/tribe".to_string());
+                                            let target = url.unwrap_or_else(|| "https://www.openmi.space/pay".to_string());
                                             if crate::browser::open_url(&target) {
                                                 app.push_system(format!("Opened upgrade page in your browser: {target}"));
                                             } else {
@@ -840,7 +840,7 @@ fn format_model_switch_message(app: &TuiApp, chosen: &ModelInfo) -> String {
             .credit_status
             .as_ref()
             .map(|cs| cs.effective_upgrade_url())
-            .unwrap_or("https://sociabuzz.com/minetallestmc/tribe");
+            .unwrap_or("https://www.openmi.space/pay");
         return format!(
             "Selected {} ({} cr/hr) — Paid pass required before prompting. Upgrade: {url}",
             chosen.name(),

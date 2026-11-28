@@ -156,7 +156,7 @@ Deno.serve(async (req: Request) => {
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const publicVerifyBase =
     (Deno.env.get("OPENMI_CLI_VERIFY_URL") ?? "").trim() ||
-    `${supabaseUrl || new URL(req.url).origin.replace(/^http:\/\//, "https://")}/functions/v1/cli-auth/verify`;
+    "https://www.openmi.space/verify";
 
   const admin = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },

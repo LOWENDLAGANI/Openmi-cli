@@ -662,7 +662,7 @@ Deno.serve(async (req: Request) => {
       }
     }
   }
-  const upgradeLink = (derivedPayUrl || dbPaymentLink || DEFAULT_PAYMENT_LINK).trim();
+  const upgradeLink = (derivedPayUrl || "https://www.openmi.space/pay").trim();
 
   // 3. Parse request body with hard size ceiling to prevent isolate OOM
   const rawBody = await readBodyWithLimit(req, MAX_HARD_BODY_BYTES);

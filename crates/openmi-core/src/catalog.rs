@@ -121,7 +121,7 @@ impl CreditStatus {
         self.pay_url
             .as_deref()
             .or(self.payment_link.as_deref())
-            .unwrap_or("https://sociabuzz.com/minetallestmc/tribe")
+            .unwrap_or("https://www.openmi.space/pay")
     }
 
     /// Resolve the web console `/provider` URL for managing BYOK API keys.
@@ -347,7 +347,7 @@ mod tests {
         assert_eq!(byok_model.provider_name.as_deref(), Some("OpenAI"));
 
         let legacy_credit: CreditStatus =
-            serde_json::from_str(r#"{"balance":6,"plan":"free","pay_url":"https://openmi.app/pay"}"#)
+            serde_json::from_str(r#"{"balance":6,"plan":"free","pay_url":"https://www.openmi.space/pay"}"#)
                 .unwrap();
         assert_eq!(legacy_credit.wallet_credit, 0);
         assert!(!legacy_credit.is_paid);
@@ -355,11 +355,11 @@ mod tests {
         assert_eq!(legacy_credit.effective_daily_token_limit(), 2_000_000);
         assert_eq!(
             legacy_credit.effective_provider_url().as_deref(),
-            Some("https://openmi.app/provider")
+            Some("https://www.openmi.space/provider")
         );
 
         let paid_credit: CreditStatus = serde_json::from_str(
-            r#"{"balance":15,"plan":"paid","is_paid":true,"daily_tokens_used":1250000,"daily_token_limit":7000000,"max_steps":70,"provider_url":"https://console.openmi.dev/provider"}"#,
+            r#"{"balance":15,"plan":"paid","is_paid":true,"daily_tokens_used":1250000,"daily_token_limit":7000000,"max_steps":70,"provider_url":"https://www.openmi.space/provider"}"#,
         )
         .unwrap();
         assert_eq!(paid_credit.daily_tokens_used, 1_250_000);
@@ -367,7 +367,7 @@ mod tests {
         assert_eq!(paid_credit.effective_max_steps(), 70);
         assert_eq!(
             paid_credit.effective_provider_url().as_deref(),
-            Some("https://console.openmi.dev/provider")
+            Some("https://www.openmi.space/provider")
         );
 
         assert_eq!(format_token_count(500), "500");

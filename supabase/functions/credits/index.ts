@@ -31,6 +31,8 @@ function safeHttpUrl(raw: unknown, fallback: string): string {
   return fallback;
 }
 
+const DEFAULT_WEB_BASE_URL = "https://www.openmi.space";
+
 function derivePayUrl(): string {
   const explicit = safeHttpUrl(Deno.env.get("OPENMI_PAY_URL"), "");
   if (explicit) return explicit;
@@ -42,7 +44,7 @@ function derivePayUrl(): string {
       // ignore invalid URL
     }
   }
-  return "";
+  return `${DEFAULT_WEB_BASE_URL}/pay`;
 }
 
 function deriveProviderUrl(): string {
@@ -64,7 +66,7 @@ function deriveProviderUrl(): string {
       // ignore invalid URL
     }
   }
-  return "";
+  return `${DEFAULT_WEB_BASE_URL}/provider`;
 }
 
 Deno.serve(async (req: Request) => {

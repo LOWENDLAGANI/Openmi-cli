@@ -24,14 +24,14 @@ Set secrets in Supabase Dashboard → Edge Functions → Secrets (or `supabase s
 | `LLM_BASE_URL` | `chat` | `https://openrouter.ai/api/v1` | OpenAI-compatible `/v1` base URL |
 | `LLM_DEFAULT_MODEL` | `chat` | `openai/gpt-4o-mini` | Upstream model used for `openmi-default` |
 | `OPENMI_MODELS_JSON` | `models` | built-in list | JSON array of models served by `models` |
-| `OPENMI_PAY_URL` | `chat`, `credits` | `app_settings.payment_link` | Top-up link shown when credits run out |
-| `OPENMI_PROVIDER_URL` | `credits` | `<console-origin>/provider` | Web console BYOK `/provider` URL opened from `/model` |
+| `OPENMI_PAY_URL` | `chat`, `credits` | `https://www.openmi.space/pay` | Top-up link shown when credits run out |
+| `OPENMI_PROVIDER_URL` | `credits` | `https://www.openmi.space/provider` | Web console BYOK `/provider` URL opened from `/model` |
 | `BYOK_ENCRYPTION_KEY` | `providers`, `chat` | — | High-entropy secret used to AES-256-GCM encrypt user BYOK API keys at rest (required for BYOK) |
-| `OPENMI_CLI_VERIFY_URL` | `cli-auth` | `<origin>/functions/v1/cli-auth/verify` | Custom web approval URL shown during `openmi login` |
+| `OPENMI_CLI_VERIFY_URL` | `cli-auth` | `https://www.openmi.space/verify` | Custom web approval URL shown during `openmi login` |
 | `PAYMENT_LINK` | `payments` | built-in link | Payment page link |
 | `TOPUP_PAUSED` | `payments` | off | Pause new top-up submissions |
 | `RESEND_API_KEY` | `payments` | — | Send receipt emails via Resend (optional) |
-| `RECEIPT_FROM_EMAIL` | `payments` | `Openmi Billing <billing@openmi.local>` | Sender address for receipt emails |
+| `RECEIPT_FROM_EMAIL` | `payments` | `Openmi Billing <billing@openmi.space>` | Sender address for receipt emails |
 | `RECEIPT_NOTIFY_EMAIL` | `payments` | — | Admin address notified of new receipts |
 
 Credit costs and daily allowances are configured in `app_settings` (`credit_cost`, per-model `credit_cost` in `models`, `free_daily_credits`, `paid_daily_credits`, `pass_duration_minutes`), not via env vars. New users start with the `user_credits.balance` column default (6 after migration 4).

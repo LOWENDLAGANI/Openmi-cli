@@ -138,7 +138,7 @@ async function notifyOperatorEmail(params: {
 }): Promise<void> {
   const apiKey = (Deno.env.get("RESEND_API_KEY") ?? "").trim();
   const toEmail = (Deno.env.get("RECEIPT_NOTIFY_EMAIL") ?? "").trim();
-  const fromEmail = (Deno.env.get("RECEIPT_FROM_EMAIL") ?? "Openmi Billing <billing@openmi.local>").trim();
+  const fromEmail = (Deno.env.get("RECEIPT_FROM_EMAIL") ?? "Openmi Billing <billing@openmi.space>").trim();
   if (!apiKey || !toEmail) return;
 
   try {
