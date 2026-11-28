@@ -194,8 +194,8 @@ export async function decryptApiKey(encoded: string): Promise<string> {
     throw new Error("Invalid encrypted API key format.");
   }
   const key = await getAesKey();
-  const iv = base64ToBytes(parts[1]);
-  const ct = base64ToBytes(parts[2]);
+  const iv = new Uint8Array(base64ToBytes(parts[1]));
+  const ct = new Uint8Array(base64ToBytes(parts[2]));
   const plainBuf = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct);
   return new TextDecoder().decode(plainBuf);
 }
