@@ -60,7 +60,7 @@ jobs:
             ext: ""
             archive: tar.gz
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-latest
             npm_dir: darwin-arm64
             ext: ""
             archive: tar.gz
