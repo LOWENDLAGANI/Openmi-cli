@@ -135,6 +135,11 @@ function renderCredits(c) {
   $("sidebar-tier").className = tierClass;
   $("metric-tier-badge").textContent = tierText;
   $("metric-tier-badge").className = tierClass;
+  const mobileTier = $("mobile-tier");
+  if (mobileTier) {
+    mobileTier.textContent = tierText;
+    mobileTier.className = tierClass;
+  }
   $("btn-upgrade-cta").textContent = isPaid ? "Extend Pass" : "Upgrade Pass";
 
   const paidNote = isPaid && c.paid_until ? `Paid until ${fmtDate(c.paid_until)}` : "Free tier · 00:00 UTC reset";
@@ -240,14 +245,14 @@ function renderModels() {
 
       return `
         <tr>
-          <td>
+          <td class="cell-primary">
             <div class="model-name">${escapeHtml(name)}</div>
             <div class="model-id mono">${escapeHtml(m.id)}</div>
             ${m.description ? `<div class="model-desc">${escapeHtml(m.description)}</div>` : ""}
           </td>
-          <td class="mono">${escapeHtml(fmtContext(m.context_window))}</td>
-          <td class="mono">${cost} cr/hr</td>
-          <td>${availHtml}</td>
+          <td class="mono" data-label="Context">${escapeHtml(fmtContext(m.context_window))}</td>
+          <td class="mono" data-label="Hourly cost">${cost} cr/hr</td>
+          <td data-label="Availability">${availHtml}</td>
         </tr>
       `;
     })
@@ -283,11 +288,11 @@ function renderLedger(rows) {
       const k = kindLabels[r.kind] || { label: r.kind || "Event", cls: "badge-free" };
       return `
         <tr>
-          <td class="mono" style="white-space:nowrap;">${escapeHtml(fmtDateTime(r.created_at))}</td>
-          <td><span class="badge ${k.cls}">${escapeHtml(k.label)}</span></td>
-          <td class="mono">${fmtDelta(r.daily_delta)}</td>
-          <td class="mono">${fmtDelta(r.wallet_delta)}</td>
-          <td>${escapeHtml(r.note || r.reference || "—")}</td>
+          <td class="mono" style="white-space:nowrap;" data-label="Time">${escapeHtml(fmtDateTime(r.created_at))}</td>
+          <td data-label="Event"><span class="badge ${k.cls}">${escapeHtml(k.label)}</span></td>
+          <td class="mono" data-label="Daily Δ">${fmtDelta(r.daily_delta)}</td>
+          <td class="mono" data-label="Coins Δ">${fmtDelta(r.wallet_delta)}</td>
+          <td data-label="Details">${escapeHtml(r.note || r.reference || "—")}</td>
         </tr>
       `;
     })
@@ -418,9 +423,12 @@ function applyAuth(session) {
   $("signed-out-section").classList.toggle("hidden", signedIn);
   $("usage-section").classList.toggle("hidden", !signedIn);
   $("activity").classList.toggle("hidden", !signedIn);
+  $("mobile-account")?.classList.toggle("hidden", !signedIn);
 
   if (signedIn) {
     $("sidebar-email").textContent = session.user.email || session.user.id;
+    const mobileEmail = $("mobile-account-email");
+    if (mobileEmail) mobileEmail.textContent = session.user.email || session.user.id;
   } else {
     currentCredits = null;
   }
@@ -444,6 +452,11 @@ $("btn-refresh").addEventListener("click", async () => {
 });
 
 $("btn-signout").addEventListener("click", async () => {
+  await supabase.auth.signOut();
+  window.location.reload();
+});
+
+$("btn-signout-mobile")?.addEventListener("click", async () => {
   await supabase.auth.signOut();
   window.location.reload();
 });
